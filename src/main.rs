@@ -2,6 +2,13 @@
 #![no_main]
 #![allow(dead_code)]
 
+// The part of Rust's own library with lists and text that grow as needed.
+// Like `core`, it comes with Rust. It gets its memory from this kernel's heap.
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::alloc::{GlobalAlloc, Layout};
 use core::arch::{asm, naked_asm};
 use core::ffi::c_void;
 use core::fmt::{self, Write};
@@ -585,6 +592,230 @@ fn load_interrupt_table() {
     unsafe { asm!("lidt [{}]", in(reg) &pointer) };
 }
 
+// ---------- Managing memory ----------
+
+// Memory is handed out in "frames": pieces of 4096 bytes. The processor's
+// page tables work in pieces of that size too.
+const FRAME_SIZE: u64 = 4096;
+
+// ----- Frames -----
+
+// The pile of free frames. It takes no space of its own: each free frame
+// holds, in its first 8 bytes, the address of the next free frame. Only the
+// address of the frame on top is kept here, and 0 means the pile is empty.
+static mut TOP_FREE_FRAME: u64 = 0;
+static mut FREE_FRAMES: u64 = 0; // How many frames are on the pile.
+
+// Puts a frame on the pile.
+fn frame_give_back(frame: u64) {
+    unsafe {
+        *(frame as *mut u64) = TOP_FREE_FRAME;
+        TOP_FREE_FRAME = frame;
+        FREE_FRAMES += 1;
+    }
+}
+
+// Takes a frame off the pile and returns its address.
+fn frame_take() -> u64 {
+    unsafe {
+        let frame = TOP_FREE_FRAME;
+        if frame == 0 {
+            panic!("the machine is out of memory");
+        }
+        TOP_FREE_FRAME = *(frame as *const u64);
+        FREE_FRAMES -= 1;
+        frame
+    }
+}
+
+// Walks the saved memory map once and puts every frame of free memory on the
+// pile. Returns the address where the machine's memory ends.
+fn frames_setup(map_size: usize, entry_size: usize) -> u64 {
+    let map = (&raw const MEMORY_MAP) as *const u8;
+    let mut memory_end = 0;
+    let mut offset = 0;
+    while offset < map_size {
+        let entry = unsafe { &*(map.add(offset) as *const MemoryEntry) };
+        let end = entry.physical_start + entry.page_count * FRAME_SIZE;
+
+        // Kinds 1 to 7, 9 and 10 are real memory. The other kinds are devices
+        // and stretches nobody can use, often far above the memory itself.
+        if matches!(entry.kind, 1..=7 | 9 | 10) && end > memory_end {
+            memory_end = end;
+        }
+
+        // Kind 7 is free memory. The first megabyte is left alone: it holds
+        // leftovers of the old PC design, and skipping it keeps address 0
+        // free to mean "no frame".
+        if entry.kind == 7 {
+            let mut frame = entry.physical_start;
+            while frame < end {
+                if frame >= 0x10_0000 {
+                    frame_give_back(frame);
+                }
+                frame += FRAME_SIZE;
+            }
+        }
+        offset += entry_size;
+    }
+    memory_end
+}
+
+// ----- Page tables -----
+
+// The processor never uses an address as it is. It looks every address up in
+// the page tables, which say what really sits behind it. The lookup goes down
+// through four tables, from level 4 at the top to level 1. Each table is one
+// frame holding 512 lines of 8 bytes, and each level uses its own 9 bits of
+// the address to pick a line. A line at level 1 names one frame. A line at
+// level 2 may instead name a "big page", 2 MB of memory in one go.
+const BIG_PAGE: u64 = 2 * 1024 * 1024;
+const GIGABYTE: u64 = 1024 * 1024 * 1024;
+
+// A line of a page table holds an address and a few yes/no marks.
+const IN_USE: u64 = 0x01;
+const WRITABLE: u64 = 0x02;
+const IS_BIG_PAGE: u64 = 0x80;
+const ADDRESS_PART: u64 = 0x000F_FFFF_FFFF_F000;
+
+// The address of the kernel's top table (level 4).
+static mut TOP_TABLE: u64 = 0;
+
+// Takes a frame and fills it with zeros, which makes it a table of empty lines.
+fn empty_table() -> u64 {
+    let table = frame_take();
+    unsafe { core::ptr::write_bytes(table as *mut u8, 0, FRAME_SIZE as usize) };
+    table
+}
+
+// Finds the line that `address` uses in a table of the given level.
+fn table_line(table: u64, level: u32, address: u64) -> *mut u64 {
+    let line_number = (address >> (12 + 9 * (level - 1))) & 511;
+    (table + line_number * 8) as *mut u64
+}
+
+// Follows a line down to the table below it. If the line is still empty, a
+// new table is made for it first.
+fn table_below(line: *mut u64) -> u64 {
+    unsafe {
+        if *line & IN_USE == 0 {
+            *line = empty_table() | IN_USE | WRITABLE;
+        }
+        *line & ADDRESS_PART
+    }
+}
+
+// Makes the 4096 bytes starting at `address` lead to `frame`.
+fn map_page(address: u64, frame: u64) {
+    let level_3 = table_below(table_line(unsafe { TOP_TABLE }, 4, address));
+    let level_2 = table_below(table_line(level_3, 3, address));
+    let level_1 = table_below(table_line(level_2, 2, address));
+    unsafe { *table_line(level_1, 1, address) = frame | IN_USE | WRITABLE };
+}
+
+// Makes the 2 MB starting at `address` lead to the 2 MB of memory starting at `memory`.
+fn map_big_page(address: u64, memory: u64) {
+    let level_3 = table_below(table_line(unsafe { TOP_TABLE }, 4, address));
+    let level_2 = table_below(table_line(level_3, 3, address));
+    unsafe { *table_line(level_2, 2, address) = memory | IN_USE | WRITABLE | IS_BIG_PAGE };
+}
+
+// Builds the kernel's own page tables and switches the processor over to
+// them. In these tables every address leads to itself, as in the firmware's
+// tables, so all the addresses already in use keep working. Returns how many
+// bytes the tables cover.
+fn page_tables_setup(memory_end: u64) -> u64 {
+    unsafe { TOP_TABLE = empty_table() };
+
+    // Cover the first 4 GB, which is where a PC keeps its devices, and all of
+    // the memory if the machine has more than that, rounded up to a whole GB.
+    let covered = memory_end.max(4 * GIGABYTE).next_multiple_of(GIGABYTE);
+    let mut address = 0;
+    while address < covered {
+        map_big_page(address, address);
+        address += BIG_PAGE;
+    }
+
+    // The processor keeps the address of the top table in its register "cr3".
+    unsafe { asm!("mov cr3, {}", in(reg) TOP_TABLE) };
+    covered
+}
+
+// ----- The heap -----
+
+// The heap hands out memory in pieces of any size, where frames only come in
+// one size. It lives at made-up addresses far above the real memory, starting
+// 64 TB up. The page tables make those addresses lead to whichever frames
+// were free, so scattered frames look like one unbroken stretch.
+const HEAP_START: u64 = 0x4000_0000_0000;
+static mut HEAP_END: u64 = HEAP_START; // Where the next new piece is cut.
+static mut HEAP_MAPPED: u64 = HEAP_START; // How far the heap has frames behind it.
+
+// Pieces come in the sizes 16, 32, 64, ... bytes, each double the one before.
+// Every size has a pile of returned pieces, built like the pile of frames.
+// Pile 4 holds the pieces of 16 bytes, pile 5 those of 32, and so on.
+static mut HEAP_PILES: [u64; 64] = [0; 64];
+
+// The size of the piece that is handed out for a request. `align` is the
+// number the piece's address must be a multiple of.
+fn heap_piece_size(size: usize, align: usize) -> u64 {
+    size.max(align).max(16).next_power_of_two() as u64
+}
+
+// Hands out a piece of memory of at least `size` bytes.
+fn heap_take(size: usize, align: usize) -> *mut u8 {
+    let piece = heap_piece_size(size, align);
+    let pile = piece.trailing_zeros() as usize;
+    unsafe {
+        // Hand out a returned piece of this size if there is one.
+        let returned = HEAP_PILES[pile];
+        if returned != 0 {
+            HEAP_PILES[pile] = *(returned as *const u64);
+            return returned as *mut u8;
+        }
+
+        // Otherwise cut a new piece from the end of the heap, at an address
+        // that is a multiple of the piece's own size. That may skip some
+        // addresses, and no frames are spent on the ones skipped.
+        let start = HEAP_END.next_multiple_of(piece);
+        if HEAP_MAPPED < start {
+            HEAP_MAPPED = start;
+        }
+        while HEAP_MAPPED < start + piece {
+            map_page(HEAP_MAPPED, frame_take());
+            HEAP_MAPPED += FRAME_SIZE;
+        }
+        HEAP_END = start + piece;
+        start as *mut u8
+    }
+}
+
+// Takes a piece back, to be handed out again later.
+fn heap_give_back(piece: *mut u8, size: usize, align: usize) {
+    let pile = heap_piece_size(size, align).trailing_zeros() as usize;
+    unsafe {
+        *(piece as *mut u64) = HEAP_PILES[pile];
+        HEAP_PILES[pile] = piece as u64;
+    }
+}
+
+// Tells Rust's `alloc` library to get its memory from this heap and to return
+// it there. A `Vec` (a list) or a `String` (a text) calls these by itself.
+struct KernelHeap;
+
+unsafe impl GlobalAlloc for KernelHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        heap_take(layout.size(), layout.align())
+    }
+
+    unsafe fn dealloc(&self, piece: *mut u8, layout: Layout) {
+        heap_give_back(piece, layout.size(), layout.align());
+    }
+}
+
+#[global_allocator]
+static KERNEL_HEAP: KernelHeap = KernelHeap;
+
 // ---------- The kernel starts here ----------
 
 #[unsafe(no_mangle)]
@@ -605,18 +836,26 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     let mut serial = Serial;
     write!(serial, "The firmware has stepped aside. This machine is mine.\r\n").ok();
 
-    // Add up the free memory listed in the map.
-    let map = (&raw const MEMORY_MAP) as *const u8;
-    let mut free_pages: u64 = 0;
-    let mut offset = 0;
-    while offset < map_size {
-        let entry = unsafe { &*(map.add(offset) as *const MemoryEntry) };
-        if entry.kind == 7 {
-            free_pages += entry.page_count;
+    // Collect the free memory listed in the map.
+    let memory_end = frames_setup(map_size, entry_size);
+    let free_frames = unsafe { FREE_FRAMES };
+    write!(serial, "Free memory: {} MB\r\n", free_frames * FRAME_SIZE / (1024 * 1024)).ok();
+
+    // Stop relying on the firmware's page tables.
+    let covered = page_tables_setup(memory_end);
+    write!(serial, "Page tables: the kernel's own, covering {} GB\r\n", covered / GIGABYTE).ok();
+
+    // Try the heap: a text and a list, both growing as they are filled. At
+    // the closing brace Rust hands their memory back to the heap by itself.
+    {
+        let mut greeting = String::from("Hello");
+        greeting.push_str(" from the heap!");
+        let mut squares = Vec::new();
+        for number in 1..=10 {
+            squares.push(number * number);
         }
-        offset += entry_size;
+        write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
     }
-    write!(serial, "Free memory: {} MB\r\n", free_pages * 4096 / (1024 * 1024)).ok();
 
     // Get the devices ready, then let their signals through.
     controller_setup();
