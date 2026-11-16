@@ -6,6 +6,7 @@ use core::arch::{asm, naked_asm};
 use core::ffi::c_void;
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
 // ---------- What the firmware hands over at startup ----------
 
@@ -342,26 +343,244 @@ fn load_segment_table() {
     }
 }
 
-// Fills in the interrupt table's lines for the 32 failures and hands the
-// table to the processor.
-fn load_interrupt_table() {
-    let table = &raw mut INTERRUPT_TABLE;
-    for (number, fault) in FAULTS.iter().enumerate() {
-        let address = fault.1 as usize as u64;
-        let entry = InterruptEntry {
-            address_low: address as u16,
-            code_segment: CODE_SEGMENT,
-            spare_stack: 0,
-            kind: 0x8E, // "In use, kernel only, no other signals while it runs."
-            address_middle: (address >> 16) as u16,
-            address_high: (address >> 32) as u32,
-            unused: 0,
-        };
-        unsafe { (*table)[number] = entry };
+// ---------- Listening to devices ----------
+
+// A device that wants attention sends a signal (an "interrupt"). The signals
+// first reach the interrupt controller (PIC): a pair of chips with 8 input
+// lines each, 16 lines in all. It passes the signals on to the processor one
+// at a time. The timer is wired to line 0 and the keyboard to line 1.
+const CONTROLLER_1_COMMAND: u16 = 0x20;
+const CONTROLLER_1_SETTING: u16 = 0x21;
+const CONTROLLER_2_COMMAND: u16 = 0xA0;
+const CONTROLLER_2_SETTING: u16 = 0xA1;
+
+// The 16 device lines use lines 32 to 47 of the interrupt table, right after
+// the 32 failures.
+const FIRST_DEVICE_ENTRY: usize = 32;
+const TIMER_LINE: usize = 0;
+const KEYBOARD_LINE: usize = 1;
+
+// Sets up the interrupt controller from scratch, so that nothing depends on
+// how the firmware left it.
+fn controller_setup() {
+    // "Start over. Three settings follow."
+    port_write(CONTROLLER_1_COMMAND, 0x11);
+    port_write(CONTROLLER_2_COMMAND, 0x11);
+    // Setting 1: the line of the interrupt table that each chip's first line uses.
+    port_write(CONTROLLER_1_SETTING, FIRST_DEVICE_ENTRY as u8);
+    port_write(CONTROLLER_2_SETTING, FIRST_DEVICE_ENTRY as u8 + 8);
+    // Setting 2: how the chips are wired. The second chip hangs off line 2 of the first.
+    port_write(CONTROLLER_1_SETTING, 0x04);
+    port_write(CONTROLLER_2_SETTING, 0x02);
+    // Setting 3: work the way a PC expects.
+    port_write(CONTROLLER_1_SETTING, 0x01);
+    port_write(CONTROLLER_2_SETTING, 0x01);
+
+    // Which lines to hold back: one bit per line, and a 1 means "hold back".
+    // Only the timer (line 0) and the keyboard (line 1) are let through.
+    port_write(CONTROLLER_1_SETTING, 0b1111_1100);
+    port_write(CONTROLLER_2_SETTING, 0b1111_1111);
+}
+
+// Tells the interrupt controller that a signal has been dealt with. Until it
+// hears this, it holds back the next one.
+fn signal_done() {
+    port_write(CONTROLLER_1_COMMAND, 0x20);
+}
+
+// Writes the machine instructions the processor jumps to for one device
+// signal. A failure stops the kernel, but a signal only interrupts it: the
+// code that was running must carry on afterwards as if nothing had happened.
+// So these instructions save the registers that Rust code is free to change,
+// call the handler, put the registers back and return.
+macro_rules! device_entry {
+    ($handler:ident) => {{
+        #[unsafe(naked)]
+        extern "sysv64" fn entry() {
+            naked_asm!(
+                "push rax",
+                "push rcx",
+                "push rdx",
+                "push rsi",
+                "push rdi",
+                "push r8",
+                "push r9",
+                "push r10",
+                "push r11",
+                "cld", // Rust code expects text to be copied front to back.
+                "call {handler}",
+                "pop r11",
+                "pop r10",
+                "pop r9",
+                "pop r8",
+                "pop rdi",
+                "pop rsi",
+                "pop rdx",
+                "pop rcx",
+                "pop rax",
+                "iretq", // Return to the interrupted code.
+                handler = sym $handler,
+            )
+        }
+        entry
+    }};
+}
+
+// For the device lines nobody listens to: go straight back.
+#[unsafe(naked)]
+extern "sysv64" fn ignore_signal() {
+    naked_asm!("iretq")
+}
+
+// ----- The timer -----
+
+// The timer chip (PIT) counts down from a number of your choice, 1,193,182
+// steps per second, and sends a signal each time it reaches zero. Counting
+// down from 11,931 gives 100 signals ("ticks") per second.
+const TIMER_STEPS_PER_SECOND: u64 = 1_193_182;
+const TICKS_PER_SECOND: u64 = 100;
+
+// How many ticks have arrived since the kernel started. It is an "atomic"
+// number: one that both the main code and a signal handler may use, because
+// every read or change of it happens in a single step that cannot be
+// interrupted halfway.
+static TICKS: AtomicU64 = AtomicU64::new(0);
+
+fn timer_setup() {
+    let count = (TIMER_STEPS_PER_SECOND / TICKS_PER_SECOND) as u16;
+    port_write(0x43, 0x36); // "Counter 0, start again after each zero. The count follows."
+    port_write(0x40, count as u8); // The count's low half,
+    port_write(0x40, (count >> 8) as u8); // and its high half.
+}
+
+// Runs on every tick.
+extern "sysv64" fn on_timer() {
+    TICKS.fetch_add(1, Ordering::Relaxed);
+    signal_done();
+}
+
+// ----- The keyboard -----
+
+// The keyboard controller hands over key numbers at one port, and reports its
+// state and takes commands at another.
+const KEYBOARD_DATA: u16 = 0x60;
+const KEYBOARD_COMMAND: u16 = 0x64;
+
+// A waiting line for keys. The handler only puts the key's number here, and
+// the main loop picks it up later. That keeps the handler short, so other
+// signals are not held back for long.
+static KEY_QUEUE: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
+static KEYS_ARRIVED: AtomicUsize = AtomicUsize::new(0); // How many were ever put in.
+static KEYS_TAKEN: AtomicUsize = AtomicUsize::new(0); // How many were ever picked up.
+
+fn keyboard_setup() {
+    // When nothing answers at a port, every bit reads as 1. No real keyboard
+    // controller reports that, so it means there is none.
+    if port_read(KEYBOARD_COMMAND) == 0xFF {
+        return;
     }
+
+    // Wait until the controller is ready to listen, then give it new settings.
+    let mut tries = 0;
+    while port_read(KEYBOARD_COMMAND) & 0x02 != 0 && tries < 100_000 {
+        tries += 1;
+    }
+    port_write(KEYBOARD_COMMAND, 0x60); // "New settings follow."
+    tries = 0;
+    while port_read(KEYBOARD_COMMAND) & 0x02 != 0 && tries < 100_000 {
+        tries += 1;
+    }
+    // Keyboard on, a signal for each key, the classic key numbers, mouse off.
+    port_write(KEYBOARD_DATA, 0x65);
+
+    // Throw away any key that arrived before the kernel was listening. The
+    // controller sends no new signal while an old key is still waiting.
+    tries = 0;
+    while port_read(KEYBOARD_COMMAND) & 0x01 != 0 && tries < 100_000 {
+        port_read(KEYBOARD_DATA);
+        tries += 1;
+    }
+}
+
+// Runs each time a key is pressed or let go.
+extern "sysv64" fn on_keyboard() {
+    // Check that a key number is really waiting, then take it. Taking it also
+    // lets the controller send the next one.
+    if port_read(KEYBOARD_COMMAND) & 0x01 != 0 {
+        let key = port_read(KEYBOARD_DATA);
+        let arrived = KEYS_ARRIVED.load(Ordering::Relaxed);
+        let taken = KEYS_TAKEN.load(Ordering::Relaxed);
+        // If the waiting line is full, the key is dropped.
+        if arrived - taken < KEY_QUEUE.len() {
+            KEY_QUEUE[arrived % KEY_QUEUE.len()].store(key, Ordering::Relaxed);
+            KEYS_ARRIVED.store(arrived + 1, Ordering::Relaxed);
+        }
+    }
+    signal_done();
+}
+
+// Picks up the key that has waited longest, if any.
+fn next_key() -> Option<u8> {
+    let taken = KEYS_TAKEN.load(Ordering::Relaxed);
+    if taken == KEYS_ARRIVED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let key = KEY_QUEUE[taken % KEY_QUEUE.len()].load(Ordering::Relaxed);
+    KEYS_TAKEN.store(taken + 1, Ordering::Relaxed);
+    Some(key)
+}
+
+// Turns a key number into its letter on a US keyboard. A key number says where
+// the key sits, not what is printed on it: the keys are numbered row by row.
+// Letting a key go sends its number plus 128, which has no letter here.
+fn key_letter(key: u8) -> Option<u8> {
+    let (first_key, row): (u8, &[u8]) = match key {
+        2..=13 => (2, b"1234567890-="),
+        16..=27 => (16, b"qwertyuiop[]"),
+        28 => return Some(b'\n'), // Enter.
+        30..=41 => (30, b"asdfghjkl;'`"),
+        43..=53 => (43, b"\\zxcvbnm,./"),
+        57 => return Some(b' '), // The space bar.
+        _ => return None,
+    };
+    Some(row[(key - first_key) as usize])
+}
+
+// ---------- Filling in the interrupt table ----------
+
+// Fills in one line of the interrupt table: the code to jump to for one event.
+fn set_interrupt_entry(number: usize, code: extern "sysv64" fn()) {
+    let address = code as usize as u64;
+    let entry = InterruptEntry {
+        address_low: address as u16,
+        code_segment: CODE_SEGMENT,
+        spare_stack: 0,
+        kind: 0x8E, // "In use, kernel only, no other signals while it runs."
+        address_middle: (address >> 16) as u16,
+        address_high: (address >> 32) as u32,
+        unused: 0,
+    };
+    unsafe { (*(&raw mut INTERRUPT_TABLE))[number] = entry };
+}
+
+// Fills in the interrupt table's lines for the 32 failures and the 16 device
+// lines, then hands the table to the processor.
+fn load_interrupt_table() {
+    for (number, fault) in FAULTS.iter().enumerate() {
+        set_interrupt_entry(number, fault.1);
+    }
+
+    // Only the timer and the keyboard are listened to. A signal on any other
+    // device line is ignored, instead of counting as a failure.
+    for line in 0..16 {
+        set_interrupt_entry(FIRST_DEVICE_ENTRY + line, ignore_signal);
+    }
+    set_interrupt_entry(FIRST_DEVICE_ENTRY + TIMER_LINE, device_entry!(on_timer));
+    set_interrupt_entry(FIRST_DEVICE_ENTRY + KEYBOARD_LINE, device_entry!(on_keyboard));
+
     let pointer = TablePointer {
         last_byte: (size_of::<[InterruptEntry; 256]>() - 1) as u16,
-        address: table as u64,
+        address: (&raw const INTERRUPT_TABLE) as u64,
     };
     unsafe { asm!("lidt [{}]", in(reg) &pointer) };
 }
@@ -399,12 +618,45 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     }
     write!(serial, "Free memory: {} MB\r\n", free_pages * 4096 / (1024 * 1024)).ok();
 
-    loop {}
+    // Get the devices ready, then let their signals through.
+    controller_setup();
+    timer_setup();
+    keyboard_setup();
+    unsafe { asm!("sti") };
+
+    let mut seconds_shown = 0;
+    loop {
+        // Sleep until the next signal from a device.
+        unsafe { asm!("hlt") };
+
+        // Show the first three seconds going by, as proof that the timer works.
+        let seconds = TICKS.load(Ordering::Relaxed) / TICKS_PER_SECOND;
+        if seconds > seconds_shown && seconds <= 3 {
+            seconds_shown = seconds;
+            write!(serial, "Timer: {} s\r\n", seconds).ok();
+            if seconds == 3 {
+                write!(serial, "Click the QEMU window and type. The letters appear here:\r\n").ok();
+            }
+        }
+
+        // Print the letters of the keys that arrived in the meantime.
+        while let Some(key) = next_key() {
+            match key_letter(key) {
+                Some(b'\n') => serial_print("\r\n"),
+                Some(letter) => {
+                    write!(serial, "{}", letter as char).ok();
+                }
+                None => {} // A key without a letter, or a key being let go.
+            }
+        }
+    }
 }
 
 // Runs when Rust code gives up, for example on a list index that is out of range.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // No device signals while the kernel reports its own end.
+    unsafe { asm!("cli") };
     let mut serial = Serial;
     if let Some(place) = info.location() {
         write!(serial, "Kernel panic: {}:{}: ", place.file(), place.line()).ok();
