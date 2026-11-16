@@ -45,6 +45,8 @@ The firmware's map lists stretches of memory, each with a kind:
 - Before the switch, the kernel itself, its stack and every frame must lie inside the covered range. They do, because all of them are real memory.
 - `map_page(address, frame)` makes one 4096-byte page lead to a frame, creating the tables it needs on the way. `table_line` picks a line of a table; `table_below` follows a line down or creates the next table.
 - **`map_page` must not be used inside the range covered by 2 MB pages.** `table_below` would mistake a 2 MB line for a table and corrupt memory.
+- `map_device_memory(address, size)` makes a device's controls reachable, each address leading to itself. Pages inside the self-leading range are skipped, because they are reachable already and `map_page` must not touch them. `COVERED` remembers where that range ends. A device may sit on either side: QEMU puts the network card's controls at `0xc000000000`, far above the range, and another of its fields at `0x81040000`, inside it.
+- Device memory is mapped like ordinary memory. On real hardware it should also carry the "do not cache" mark, which no code sets yet.
 - Every page is writable and nothing is protected. The firmware left write protection on (`cr0` bit 16), so a page mapped without the writable mark would refuse writes even from the kernel.
 - Nothing is ever unmapped. If that changes, the processor must be told to forget the page (`invlpg`), which no code does yet.
 - The kernel assumes 4-level tables. See [open-points.md](open-points.md) for 5-level machines.
@@ -81,6 +83,6 @@ The frame pile, the page tables and the heap are plain global state. Several tas
 - `KernelHeap` switches device signals off around every request and every return, with `signals_off` and `signals_back`. So everything that goes through Rust's lists and text is safe.
 - `heap_take` and `heap_give_back` themselves are not protected. Call them directly only with signals off, as `task_add` does.
 - The frame pile and the page tables are reached only through the heap once startup is over, so the same protection covers them. During startup signals are off anyway.
-- Anything new that uses `frame_take` or `map_page` directly must switch signals off itself.
+- Anything new that uses `frame_take` or `map_page` directly must switch signals off itself. `map_device_memory` and the network card's setup do.
 
 This was tested by taking the protection out: two tasks taking and returning pieces of the same size then got each other's pieces. See [testing.md](testing.md).

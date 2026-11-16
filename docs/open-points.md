@@ -24,11 +24,12 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Network
 
-- The kernel only finds the network card. It has no driver for it: nothing is set up, sent or received.
-- Only virtio cards are recognised. Real PCs have cards of other makes, each needing its own driver.
-- The card's signal line (11 in QEMU) is on the second chip of the interrupt controller. The kernel holds that chip back entirely, and `signal_done` tells only the first chip. Listening to the card by signal needs both changed.
-- The card's newer interface sits in memory far above the 4 GB the page tables cover, and would have to be mapped. Its older interface uses ports that work with 1, 2 and 4 bytes at a time; the kernel has port functions for 1 and 4 bytes, not for 2.
-- The frame pile hands out single frames. A device that needs several neighbouring frames in one piece cannot be served yet.
+- The network card is found and set up, but nothing is sent or received. Its waiting lines are empty: the card has no memory to put arriving packets into.
+- Only virtio cards are recognised, and only through the newer way of working. Real PCs have cards of other makes, each needing its own driver.
+- The card is told not to send signals, and the driver is meant to look by itself. The card's signal line (11 in QEMU) is on the second chip of the interrupt controller; the kernel holds that chip back entirely, and `signal_done` tells only the first chip. Listening to the card by signal needs all three changed.
+- Device memory is mapped like ordinary memory. Real hardware wants it marked "do not cache".
+- The frame pile hands out single frames. A device that needs several neighbouring frames in one piece cannot be served yet. The network card's newer way of working was chosen partly because it does not need that.
+- The setup runs once. Nothing handles a card that reports a failure later, and nothing sets it up a second time.
 - `pci_find` tries all 256 buses rather than following bridges. That is simple and was fast in QEMU; its speed on real hardware is not known.
 
 ## Keyboard

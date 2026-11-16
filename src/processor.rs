@@ -26,6 +26,34 @@ pub fn port_read_32(port: u16) -> u32 {
     value
 }
 
+// Some devices keep their controls in memory instead of behind ports. These
+// read and write such a control, 1, 2 or 4 bytes wide. "Volatile" tells Rust
+// that this memory belongs to a device: every read and every write must
+// really happen, once, and in the order written.
+pub fn device_read_8(address: u64) -> u8 {
+    unsafe { core::ptr::read_volatile(address as *const u8) }
+}
+
+pub fn device_read_16(address: u64) -> u16 {
+    unsafe { core::ptr::read_volatile(address as *const u16) }
+}
+
+pub fn device_read_32(address: u64) -> u32 {
+    unsafe { core::ptr::read_volatile(address as *const u32) }
+}
+
+pub fn device_write_8(address: u64, value: u8) {
+    unsafe { core::ptr::write_volatile(address as *mut u8, value) };
+}
+
+pub fn device_write_16(address: u64, value: u16) {
+    unsafe { core::ptr::write_volatile(address as *mut u16, value) };
+}
+
+pub fn device_write_32(address: u64, value: u32) {
+    unsafe { core::ptr::write_volatile(address as *mut u32, value) };
+}
+
 // Switches device signals off and says whether they were on. While they are
 // off nothing can interrupt the running code, so no other task gets a turn.
 pub fn signals_off() -> bool {

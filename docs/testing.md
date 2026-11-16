@@ -43,6 +43,9 @@ Monitor commands that proved useful:
 | `info pic`, `info irq` | The interrupt controller's state and how many signals each line sent |
 | `info pci` | QEMU's own PCI list: each device's place, maker and model, signal line, ports and memory |
 | `info network` | The network cards and what they are attached to |
+| `info virtio` | The path of each virtio device, needed by the next two |
+| `info virtio-status <path>` | How far a virtio device's handshake has got, and which features are in use |
+| `info virtio-queue-status <path> <line>` | The length of one of its waiting lines and the addresses of its three areas |
 | `quit` | Ends QEMU |
 
 The serial file can be read while QEMU runs if it is opened with shared read and write access (`[System.IO.File]::Open(path, 'Open', 'Read', 'ReadWrite')`).
@@ -59,6 +62,8 @@ Other QEMU options that proved useful:
 | `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
 | `-device e1000,netdev=net0` | A network card of another make |
+| `-device virtio-net-pci,netdev=net0,mac=52:54:00:aa:bb:cc` | The card with another address of its own |
+| `-device virtio-net-pci,netdev=net0,disable-modern=on` | The card with its newer way of working switched off |
 | `-device virtio-net-pci,netdev=net0,addr=0x10` | The card in another slot |
 | `-device pci-bridge,id=bridge1,chassis_nr=1 -device virtio-net-pci,netdev=net0,bus=bridge1,addr=2` | The card behind a bridge, on bus 1 |
 
@@ -106,7 +111,7 @@ A panic line names the file the panic is in, so the file name changes when code 
 
 ## What has been verified
 
-All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16. Nothing has run on real hardware.
+All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 2026-11-17. Nothing has run on real hardware.
 
 **Serial output and the takeover**
 
@@ -159,6 +164,19 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16. Nothin
 - The task lines, the key echo and a page-fault report still work. Ten boots in a row reached the prompt.
 - A person ran `run.bat` with its window after the change and saw the "Network card: found" line.
 - Not verified: any real hardware.
+
+**Setting the network card up**
+
+- The kernel prints the card's address, `52:54:00:12:34:56`. With another address given to the card in QEMU, it prints that one.
+- QEMU's own view agrees with the kernel's. `info virtio-status` shows all four handshake marks, the card started and not broken, and exactly the two features the driver chose. `info virtio-queue-status` shows both waiting lines 256 long, with their three areas at the very addresses the kernel printed in a temporary test.
+- `info mem` shows the card's three pages of controls reachable at `0xc000000000`, and not the fourth, which the driver does not use. Reading that fourth page prints a page fault report.
+- `map_device_memory` called on a device range below 4 GB changed nothing and broke nothing.
+- The newer-only card, the card in another slot and the card behind a bridge are set up too. A card with the newer way switched off prints "not set up, because it does not offer the newer way of working".
+- With every packet recorded, a whole boot still recorded none.
+- The task lines, the key echo and a page-fault report still work. It boots with 64 MB and 512 MB. Fifteen boots in a row reached the prompt.
+- A person ran `run.bat` and saw the "Network card: ready" line with the card's address.
+- With the driver changed on purpose to need a feature the card lacks, the kernel prints "not set up, because it lacks a feature this driver needs", and `info virtio-status` shows the card not started, with the driver's "failed" mark and not the card's own.
+- Not verified: the older way of working (not written), the other ways the handshake can fail, that the card really sends no signals (no packets flow yet to cause one), and any real hardware.
 
 **The split into files**
 

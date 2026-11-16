@@ -4,6 +4,7 @@
 use core::arch::asm;
 
 use crate::frames::{FRAME_SIZE, frame_take};
+use crate::processor::{signals_back, signals_off};
 
 // The processor never uses an address as it is. It looks every address up in
 // the page tables, which say what really sits behind it. The lookup goes down
@@ -80,5 +81,26 @@ pub fn page_tables_setup(memory_end: u64) -> u64 {
 
     // The processor keeps the address of the top table in its register "cr3".
     unsafe { asm!("mov cr3, {}", in(reg) TOP_TABLE) };
+    unsafe { COVERED = covered };
     covered
+}
+
+// How many bytes, counted from address 0, lead to themselves through 2 MB pages.
+static mut COVERED: u64 = 0;
+
+// Makes a device's memory reachable: `size` bytes starting at `address`, with
+// every address leading to itself. A device's controls may sit far above the
+// range that `page_tables_setup` covered.
+pub fn map_device_memory(address: u64, size: u64) {
+    let were_on = signals_off();
+    let mut page = address & !(FRAME_SIZE - 1);
+    while page < address + size {
+        // Inside the covered range the address leads to itself already, and
+        // `map_page` must not be used where 2 MB pages are.
+        if page >= unsafe { COVERED } {
+            map_page(page, page);
+        }
+        page += FRAME_SIZE;
+    }
+    signals_back(were_on);
 }

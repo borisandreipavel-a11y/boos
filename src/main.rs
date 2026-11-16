@@ -40,7 +40,7 @@ use firmware::{SystemTable, print, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
-use network_card::network_card_find;
+use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::stop;
 use segments::load_segment_table;
@@ -109,9 +109,21 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
     }
 
-    // Look for the network card among the machine's cards and devices.
+    // Look for the network card among the machine's cards and devices, and set it up.
     if let Some(card) = network_card_find() {
         write!(serial, "Network card: found, device {} on bus {} of the PCI list\r\n", card.device, card.bus).ok();
+        match network_card_setup(card) {
+            Ok(address) => {
+                write!(serial, "Network card: ready, its address is").ok();
+                for (number, byte) in address.iter().enumerate() {
+                    write!(serial, "{}{:02x}", if number == 0 { ' ' } else { ':' }, byte).ok();
+                }
+                write!(serial, "\r\n").ok();
+            }
+            Err(reason) => {
+                write!(serial, "Network card: not set up, because {}\r\n", reason).ok();
+            }
+        }
     } else {
         write!(serial, "Network card: none found\r\n").ok();
     }
