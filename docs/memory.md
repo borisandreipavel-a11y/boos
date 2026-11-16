@@ -23,7 +23,7 @@ The firmware's map lists stretches of memory, each with a kind:
 
 - Kinds 1 to 7, 9 and 10 count as real memory when working out where memory ends.
 - QEMU's map also has a kind 0 stretch at `0xfd00000000`, 12 GB long. It is not memory. Counting it would make the page tables cover a terabyte.
-- Kinds 3 and 4 are about 42 MB of QEMU's 256 MB. The firmware no longer needs them, but they are not handed out, because the kernel still runs on the firmware's stack, which sits in a kind 4 stretch (near `0xfe65600` in QEMU). The firmware's old page tables are in kind 4 too. They can be reclaimed once the kernel runs on a stack of its own.
+- Kinds 3 and 4 are about 42 MB of QEMU's 256 MB. The firmware no longer needs them, but they are not handed out, because the kernel still runs on the firmware's stack, which sits in a kind 4 stretch (near `0xfe65600` in QEMU). The firmware's old page tables are in kind 4 too. They can be reclaimed once the kernel runs on a stack of its own. The sizes and addresses in this section were measured without a network card; with one, the firmware uses about 1 MB more and the addresses shift a little.
 
 ## Frames
 
@@ -35,7 +35,7 @@ The firmware's map lists stretches of memory, each with a kind:
 - `frame_take` panics with "the machine is out of memory" when the pile is empty.
 - A frame's contents are whatever was there before. Zero it if that matters, as `empty_table` does.
 - Building the pile writes to every free frame once at startup. On a virtual machine that makes the host really provide all of the guest's memory.
-- "Free memory" at boot reads 206 MB on QEMU's 256 MB machine. Before frames existed it read 207, because the first megabyte was still counted.
+- "Free memory" at boot reads 205 MB on QEMU's 256 MB machine with the network card that `run.bat` attaches, and 206 MB without a card: the firmware uses about 1 MB more during startup when the card is there. Before frames existed it read 207, because the first megabyte was still counted.
 
 ## Page tables
 

@@ -22,6 +22,15 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - Mark code pages read-only and data pages non-executable. Today every page is writable and nothing is protected.
 - `map_page` cannot be used inside the range covered by 2 MB pages. Mapping something small there would need the 2 MB page split up first.
 
+## Network
+
+- The kernel only finds the network card. It has no driver for it: nothing is set up, sent or received.
+- Only virtio cards are recognised. Real PCs have cards of other makes, each needing its own driver.
+- The card's signal line (11 in QEMU) is on the second chip of the interrupt controller. The kernel holds that chip back entirely, and `signal_done` tells only the first chip. Listening to the card by signal needs both changed.
+- The card's newer interface sits in memory far above the 4 GB the page tables cover, and would have to be mapped. Its older interface uses ports that work with 1, 2 and 4 bytes at a time; the kernel has port functions for 1 and 4 bytes, not for 2.
+- The frame pile hands out single frames. A device that needs several neighbouring frames in one piece cannot be served yet.
+- `pci_find` tries all 256 buses rather than following bridges. That is simple and was fast in QEMU; its speed on real hardware is not known.
+
 ## Keyboard
 
 - Shift and capitals, Backspace, and layouts other than US are left out.

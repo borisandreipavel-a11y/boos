@@ -15,6 +15,17 @@ pub fn port_read(port: u16) -> u8 {
     value
 }
 
+// The same for ports that work with 4 bytes at a time.
+pub fn port_write_32(port: u16, value: u32) {
+    unsafe { asm!("out dx, eax", in("dx") port, in("eax") value) };
+}
+
+pub fn port_read_32(port: u16) -> u32 {
+    let value: u32;
+    unsafe { asm!("in eax, dx", in("dx") port, out("eax") value) };
+    value
+}
+
 // Switches device signals off and says whether they were on. While they are
 // off nothing can interrupt the running code, so no other task gets a turn.
 pub fn signals_off() -> bool {

@@ -23,6 +23,8 @@ mod frames; // Free memory, in frames of 4096 bytes.
 mod page_tables; // The kernel's own page tables.
 mod heap; // The heap, and Rust's lists and text on top of it.
 mod tasks; // Several tasks taking turns, switched by the timer.
+mod pci; // The PCI list of the machine's cards and devices.
+mod network_card; // The network card.
 
 use alloc::format;
 use alloc::string::String;
@@ -38,6 +40,7 @@ use firmware::{SystemTable, print, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
+use network_card::network_card_find;
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::stop;
 use segments::load_segment_table;
@@ -104,6 +107,13 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             squares.push(number * number);
         }
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
+    }
+
+    // Look for the network card among the machine's cards and devices.
+    if let Some(card) = network_card_find() {
+        write!(serial, "Network card: found, device {} on bus {} of the PCI list\r\n", card.device, card.bus).ok();
+    } else {
+        write!(serial, "Network card: none found\r\n").ok();
     }
 
     // Two more tasks, next to the one that has run so far. They get their

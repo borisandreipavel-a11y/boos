@@ -7,7 +7,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 ## Build and run
 
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
-- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, no network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
+- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
 - The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
 
@@ -41,6 +41,8 @@ Monitor commands that proved useful:
 | `info registers` | Where the processor is (`RIP`), whether it sleeps (`HLT=1`), `CR3` |
 | `info mem` | What the current page tables cover |
 | `info pic`, `info irq` | The interrupt controller's state and how many signals each line sent |
+| `info pci` | QEMU's own PCI list: each device's place, maker and model, signal line, ports and memory |
+| `info network` | The network cards and what they are attached to |
 | `quit` | Ends QEMU |
 
 The serial file can be read while QEMU runs if it is opened with shared read and write access (`[System.IO.File]::Open(path, 'Open', 'Read', 'ReadWrite')`).
@@ -53,6 +55,12 @@ Other QEMU options that proved useful:
 | `-m 64M`, `-m 512M` | Other memory sizes (a later `-m` overrides the first) |
 | `-machine pc,max-ram-below-4g=128M` | Puts the rest of the guest's memory above 4 GB, without needing a large guest |
 | `-machine pc,i8042=off` | A machine without a keyboard controller |
+| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header). A file of 24 bytes means no packet passed |
+| `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
+| `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
+| `-device e1000,netdev=net0` | A network card of another make |
+| `-device virtio-net-pci,netdev=net0,addr=0x10` | The card in another slot |
+| `-device pci-bridge,id=bridge1,chassis_nr=1 -device virtio-net-pci,netdev=net0,bus=bridge1,addr=2` | The card behind a bridge, on bus 1 |
 
 ## Temporary tests
 
@@ -140,6 +148,17 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16. Nothin
 - A divide by zero and an out-of-range index inside a task each print their report.
 - The page-fault and out-of-memory bugs still print their reports. It boots with 64 MB and 512 MB. Twenty boots in a row all reached the prompt.
 - A person ran it with a visible QEMU window and saw the two tasks' lines come in turn. Whether they came at the intended pace was not reported.
+
+**Finding the network card**
+
+- With the card `run.bat` attaches, the kernel reports it at device 3 on bus 0, where `info pci` shows it.
+- A temporary test printed every place on the list that answers, trying all of them without shortcuts: the same six places with the same makers and models as `info pci`, two of them at a function other than 0. `pci_find` found each of the six at its place and reported a made-up model as not found.
+- The card is also found in another slot (device 16), behind a bridge (device 2 on bus 1), and as the newer-only model.
+- With no card, and with a card of another make, the kernel prints "none found". Looking for a card that is not there does not visibly slow the boot.
+- With every packet on the card's network recorded, a whole boot recorded none: neither the firmware nor the kernel sends anything yet.
+- The task lines, the key echo and a page-fault report still work. Ten boots in a row reached the prompt.
+- A person ran `run.bat` with its window after the change and saw the "Network card: found" line.
+- Not verified: any real hardware.
 
 **The split into files**
 

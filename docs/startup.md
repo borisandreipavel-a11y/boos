@@ -14,10 +14,11 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 6. **`frames_setup(...)`** collects the free memory. It runs after step 5 on purpose: it writes to every free frame, and if the firmware had protected one, the failure would be reported.
 7. **`page_tables_setup(...)`** needs frames for its tables, so it follows step 6.
 8. **The heap** needs both frames and `map_page`. It has no setup step; it starts working at the first request. The demonstration in `efi_main` is that first request.
-9. **`task_add(...)`** adds the two demonstration tasks. Tasks need the heap for their stacks, so this follows step 8. They get their first turn only after step 11.
-10. **`controller_setup()`, `timer_setup()`, `keyboard_setup()`**, in that order. The controller is set up first and the keyboard's waiting byte is emptied last. The other way round, a key arriving in between would send its signal before the controller was listening, and the keyboard would stay silent.
-11. **`sti`** lets device signals through. It comes last, after the interrupt table is loaded and every device is ready. From the first tick on, the timer switches between the tasks.
-12. **The main loop** is task 0. It sleeps with `hlt`, wakes on every device signal, prints the typing prompt once four seconds have gone by, and prints the letters of the keys that arrived.
+9. **`network_card_find()`** looks for the network card on the PCI list and the result is printed. It only reads, so its position does not matter to anything else yet.
+10. **`task_add(...)`** adds the two demonstration tasks. Tasks need the heap for their stacks, so this follows step 8. They get their first turn only after step 12.
+11. **`controller_setup()`, `timer_setup()`, `keyboard_setup()`**, in that order. The controller is set up first and the keyboard's waiting byte is emptied last. The other way round, a key arriving in between would send its signal before the controller was listening, and the keyboard would stay silent.
+12. **`sti`** lets device signals through. It comes last, after the interrupt table is loaded and every device is ready. From the first tick on, the timer switches between the tasks.
+13. **The main loop** is task 0. It sleeps with `hlt`, wakes on every device signal, prints the typing prompt once four seconds have gone by, and prints the letters of the keys that arrived.
 
 ## What the firmware hands over
 
@@ -37,7 +38,7 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 - Step through the map by the entry size the firmware reports, not by the size of `MemoryEntry`. The firmware's entries are larger than the struct (48 bytes in QEMU).
 - Anything else wanted from the firmware must be fetched before `take_over`. See [open-points.md](open-points.md) for the screen.
 
-State of the processor at handover, as seen in QEMU with its UEFI firmware:
+State of the processor at handover, as seen in QEMU with its UEFI firmware. The addresses were measured without a network card; with the card `run.bat` now attaches, the kernel and the stack sit a little lower (a fault then reports code near `0xde2c000`):
 
 - `cr0 = 0x80010033`: paging on, write protection on.
 - `cr4 = 0x668`: 4-level page tables, no global pages.
@@ -61,9 +62,10 @@ State of the processor at handover, as seen in QEMU with its UEFI firmware:
 ```
 Hello from my kernel!
 The firmware has stepped aside. This machine is mine.
-Free memory: 206 MB
+Free memory: 205 MB
 Page tables: the kernel's own, covering 4 GB
 Heap: Hello from the heap! [1, 4, 9, 16, 25, 36, 49, 64, 81, 100], kept at 0x400000000020
+Network card: found, device 3 on bus 0 of the PCI list
 Task A: 1
 Task B: 1
 Task A: 2
@@ -73,6 +75,6 @@ Task B: 3
 Click the QEMU window and type. The letters appear here:
 ```
 
-That is with QEMU's 256 MB. The task lines arrive half a second apart, taking turns. The prompt follows a second after the last one. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
+That is with QEMU's 256 MB and the network card `run.bat` attaches. Without a card, "Free memory" reads 206 MB and the card line reads "Network card: none found". The task lines arrive half a second apart, taking turns. The prompt follows a second after the last one. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
 
 The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks.

@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), and runs several tasks that take turns under the timer.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer, and finds its network card.
 
 ## Read in this order
 
@@ -17,8 +17,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 3. [interrupts.md](interrupts.md): failures, device signals, the interrupt controller, the timer, the keyboard.
 4. [memory.md](memory.md): the memory map, frames, page tables, the heap.
 5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
-6. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-7. [open-points.md](open-points.md): known limits and what later work must deal with.
+6. [network.md](network.md): the PCI list, the network card, QEMU's built-in network.
+7. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+8. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -28,7 +29,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | --- | --- | --- |
 | `main.rs` | `efi_main` (the order of startup and the main loop) and the panic handler | [startup.md](startup.md) |
 | `firmware.rs` | The firmware's tables, `print` through the firmware, `take_over`, the saved memory map | [startup.md](startup.md) |
-| `processor.rs` | `port_read`, `port_write`, `signals_off`, `signals_back`, `stop`, `TablePointer` | used everywhere |
+| `processor.rs` | `port_read`, `port_write` and their 4-byte pair, `signals_off`, `signals_back`, `stop`, `TablePointer` | used everywhere |
 | `serial.rs` | `serial_setup`, `serial_print`, `Serial` for `write!` | [startup.md](startup.md) |
 | `segments.rs` | The segment table (GDT) and `load_segment_table` | [interrupts.md](interrupts.md) |
 | `faults.rs` | The 32 processor failures: `fault_entry!`, `FAULTS`, `report_fault` | [interrupts.md](interrupts.md) |
@@ -40,6 +41,8 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `page_tables.rs` | The kernel's page tables: `page_tables_setup`, `map_page` | [memory.md](memory.md) |
 | `heap.rs` | The heap: `heap_take`, `heap_give_back`, and `KernelHeap` for Rust's `alloc` | [memory.md](memory.md) |
 | `tasks.rs` | Tasks: `timer_entry` (the switch), the list of tasks, `next_task`, `task_add` | [tasks.md](tasks.md) |
+| `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_find` | [network.md](network.md) |
+| `network_card.rs` | The network card: `network_card_find` | [network.md](network.md) |
 
 Which file uses which:
 
@@ -51,11 +54,12 @@ Which file uses which:
 - `interrupts.rs` uses `faults.rs`, `controller.rs`, `tasks.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
 - `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
 - `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
+- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`.
 
 Outside `src/`:
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`.
-- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU.
+- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a virtio network card on QEMU's built-in network.
 - Not in the repository: `esp/` and `target/` (build output) and `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder).
 
 ## Conventions
