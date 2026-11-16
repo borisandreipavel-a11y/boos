@@ -18,7 +18,7 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 10. **`task_add(...)`** adds the two demonstration tasks. Tasks need the heap for their stacks, so this follows step 8. They get their first turn only after step 12.
 11. **`controller_setup()`, `timer_setup()`, `keyboard_setup()`**, in that order. The controller is set up first and the keyboard's waiting byte is emptied last. The other way round, a key arriving in between would send its signal before the controller was listening, and the keyboard would stay silent.
 12. **`sti`** lets device signals through. It comes last, after the interrupt table is loaded and every device is ready. From the first tick on, the timer switches between the tasks.
-13. **The main loop** is task 0. It sleeps with `hlt`, wakes on every device signal, prints the typing prompt once four seconds have gone by, and prints the letters of the keys that arrived.
+13. **The main loop** is task 0. It prints the rest count and the typing prompt once four seconds have gone by, prints the letters of the keys that arrived, and then calls `task_rest()`: the other tasks run if they have something to do, and otherwise the processor sleeps until the next device signal.
 
 ## What the firmware hands over
 
@@ -74,9 +74,10 @@ Task A: 2
 Task B: 2
 Task A: 3
 Task B: 3
+The processor rested through 399 of the first 400 ticks.
 Click the QEMU window and type. The letters appear here:
 ```
 
-That is with QEMU's 256 MB and the network card `run.bat` attaches. Without a card, "Free memory" reads 206 MB and the three network lines become one, "Network card: none found". A card that cannot be set up gives "Network card: not set up, because ..." with the reason, and no gateway line. If nobody answers the question, the last line reads "Network: the gateway 10.0.2.2 did not answer", after a wait of about a second. The task lines arrive half a second apart, taking turns. The prompt follows a second after the last one. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
+That is with QEMU's 256 MB and the network card `run.bat` attaches. Without a card, "Free memory" reads 206 MB and the three network lines become one, "Network card: none found". A card that cannot be set up gives "Network card: not set up, because ..." with the reason, and no gateway line. If nobody answers the question, the last line reads "Network: the gateway 10.0.2.2 did not answer", after a wait of about a second. The task lines arrive half a second apart, taking turns. The rest count and the prompt follow a second after the last one; the count may be a tick or two lower. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
 
-The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks.
+The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks. The rest count shows that a waiting task uses no processor time.

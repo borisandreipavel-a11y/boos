@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer, and finds and sets up its network card. It can send and receive single packets, and at startup it asks the network one question by hand. It has no network address and no network stack yet.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. It can send and receive single packets, and at startup it asks the network one question by hand. It has no network address and no network stack yet.
 
 ## Read in this order
 
@@ -40,7 +40,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `frames.rs` | Free memory as a pile of frames: `frames_setup`, `frame_take`, `frame_give_back` | [memory.md](memory.md) |
 | `page_tables.rs` | The kernel's page tables: `page_tables_setup`, `map_page`, `map_device_memory` | [memory.md](memory.md) |
 | `heap.rs` | The heap: `heap_take`, `heap_give_back`, and `KernelHeap` for Rust's `alloc` | [memory.md](memory.md) |
-| `tasks.rs` | Tasks: `timer_entry` (the switch), the list of tasks, `next_task`, `task_add` | [tasks.md](tasks.md) |
+| `tasks.rs` | Tasks: `switch_entry!` (the switch, for the timer and for a task stepping aside), the list of tasks, `task_add`, `task_wait`, `task_rest` | [tasks.md](tasks.md) |
 | `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_memory_address` | [network.md](network.md) |
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
 | `network.rs` | The first words on the network, by hand: `gateway_ask` | [network.md](network.md) |
@@ -84,7 +84,7 @@ The code is written to be readable without a background in kernels: plain words,
 - One topic per file. `main.rs` holds only the startup order, the main loop and the panic handler.
 - Each file starts with a `//!` header: what the file is for and which note covers it.
 - Functions keep their topic in the name (`serial_setup`, `frame_take`) and are imported by name, so a call reads `frame_take()`, not `frames::take()`.
-- A macro must be defined above the place that uses it, in the same file. `fault_entry!` lives with `FAULTS`, and `device_entry!` lives with `load_interrupt_table`. Do not split them apart.
+- A macro must be defined above the place that uses it, in the same file. `fault_entry!` lives with `FAULTS`, `device_entry!` lives with `load_interrupt_table`, and `switch_entry!` lives in `tasks.rs` with the two entries it produces. Do not split them apart.
 - Only what another file needs is `pub`.
 
 **Shared values**

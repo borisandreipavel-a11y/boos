@@ -85,6 +85,7 @@ A snippet that needs something private in another file can add `pub` there for t
 A test should be able to fail. For each protection or saved register that a test is meant to check, break that one thing on purpose once and see the test report it. Two lessons from doing that:
 
 - Swapping two registers in the timer's stub is not a good break: every switch swaps them back, and the test passes by luck. Leaving one register unrestored cannot cancel out.
+- A register test must compare after every single switch, not once at the end. With one register left unrestored, a test that set the registers once, gave up its turn many times and compared at the end reported nothing: the task that finished first put the right value back as its function ended, and the other task then found it. Comparing all 15 registers after every turn reported 99,995 changes in 100,000 turns.
 - Two tasks doing ordinary work with lists did not catch a heap without protection in three seconds; a switch rarely lands inside the heap. Two tasks that do almost nothing but take and return pieces of one size caught it at once.
 
 ## Deliberate bugs
@@ -97,6 +98,7 @@ These prove that problems are reported. Each stops the kernel with one line.
 | `unsafe { *(0xFFFF_8000_0000_0000u64 as *mut u8) = 1 };` | `CPU fault: page fault at 0x..., touching 0xffff800000000000, detail code 0x2` |
 | `let list = alloc::vec![1u8, 2, 3]; let index = seconds as usize + 5; write!(serial, "{}", list[index]).ok();` | `Kernel panic: src\main.rs:<line>: index out of bounds: the len is 3 but the index is 7` |
 | `let huge: Vec<u8> = Vec::with_capacity(300 * 1024 * 1024);` on a 256 MB machine | `Kernel panic: src\frames.rs:<line>: the machine is out of memory` |
+| `unsafe { asm!("int 49") };` (an event on an empty line of the interrupt table) | `CPU fault: general protection fault at 0x..., detail code 0x18a` |
 
 A panic line names the file the panic is in, so the file name changes when code moves.
 
@@ -154,6 +156,21 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - A divide by zero and an out-of-range index inside a task each print their report.
 - The page-fault and out-of-memory bugs still print their reports. It boots with 64 MB and 512 MB. Twenty boots in a row all reached the prompt.
 - A person ran it with a visible QEMU window and saw the two tasks' lines come in turn. Whether they came at the intended pace was not reported.
+
+**Tasks that wait**
+
+- The two demonstration tasks print in turn, half a second apart, waiting instead of spinning. The kernel then reports that the processor rested through 399 of the first 400 ticks. With the same tasks spinning, it reports 100 of 400.
+- From outside: while the two tasks were at work, QEMU used about 1.9 s of the host's processor time with the kernel whose tasks spin, and about 0.1 s with the one whose tasks wait. At the end `info registers` shows the processor asleep (`HLT=1`).
+- Registers: two tasks filled all 15 general registers with their own values and gave up their turn 100,000 times each, with timer switches in between, comparing every register after every turn. Nothing had changed. With one register left unrestored on purpose, one task found it changed 99,995 times.
+- Length: 28 waits of 1 to 50 ticks were never early and exactly on time when alone; next to two busy tasks, never early and at most 1 tick late. A thousand waits of 0 took less than a tick.
+- A wait entered with device signals off comes back with them off.
+- Waves of four tasks that each wait a different length and then end woke in the order of their waits, ten times over; 40 tasks ended and the free-frame count stayed put.
+- An event on an empty line of the interrupt table (`int 49`) prints a general protection fault with detail code `0x18a`, which shifted right by 3 is 49.
+- The earlier task tests still pass, and tasks that never step aside get more done than before, because the main loop no longer sleeps through its turns: the heap test ran 665,000 rounds per task where it ran 260,000.
+- Keys typed while both tasks wait are echoed at once. The network lines, a page-fault report and failures inside a task still work. It boots with 64 MB and 512 MB. Fifteen boots in a row reached the prompt.
+- A person ran `run.bat` and saw the line with the rest count.
+- The same register test with tasks that never step aside, so that only the timer switches them: two tasks compared all 15 registers 6 million times each while spinning, and nothing had changed. With one register left unrestored on purpose, one task found it changed 5.4 million times.
+- Not verified: any real hardware.
 
 **Finding the network card**
 

@@ -4,8 +4,9 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Tasks
 
-- **A task cannot give up its turn or wait for something.** It can only spin or sleep with `hlt` until the next signal. Waiting for a moment in time, for a key or for another task needs a way to say "skip me until then".
-- **The main loop sleeps through its turns.** Task 0 spends each of its turns in `hlt`, so a third of the processor's time is idle while two other tasks work.
+- **A task can wait for a time, not for an event.** Waiting for a key, a packet or another task means looking again and again with short waits in between. A way to say "wake me when this happens" is missing.
+- **Waits are counted in ticks.** The shortest real wait is one tick, 10 ms, and the clock behind it only counts timer signals.
+- **Task 0 cannot wait.** It is the task that rests the processor, so its own work has to fit into its main loop.
 - **There are 8 places and no priorities.** Every ready task gets the same turn of one tick.
 - **Nothing notices a stack that overflows.** A task that uses more than its 64 KB writes into whatever lies below it on the heap. An unmapped page below each stack would turn that into a page fault.
 - **A finished task's stack is given back only when its place is reused.**
@@ -26,7 +27,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 - The kernel can send and receive single packets, and asks one question by hand. It has no network address of its own and no network stack: no connections, no names, no encryption.
 - The gateway question assumes the kernel's network address (`10.0.2.15`) instead of being given one.
-- Waiting for an answer is counted in looks, not in time, because it happens at startup with signals off. Once tasks can wait, it should be timed.
+- Waiting for the gateway's answer is counted in looks, not in time, because it happens at startup with signals off. Tasks can wait for a time now, so network code that runs in a task should use that instead.
 - There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. At startup that harms nothing, but once a task sends packets it breaks the rule to keep such stretches short: ticks and keys would wait too.
 - Sixteen frames are lent for arriving packets. If more arrive before the kernel looks, the card has nowhere to put them and they are lost.
 - Only virtio cards are recognised, and only through the newer way of working. Real PCs have cards of other makes, each needing its own driver.

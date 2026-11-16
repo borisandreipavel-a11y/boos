@@ -12,10 +12,10 @@ Both go through the interrupt table.
 ## The two tables
 
 - **Segment table (GDT)**, `SEGMENT_TABLE` in `segments.rs`: an empty entry, a code entry (selector 8, `CODE_SEGMENT`) and a data entry (selector 16). The firmware's copy lives in memory the kernel does not own, so the kernel loads its own with `load_segment_table`.
-- **Interrupt table (IDT)**, `INTERRUPT_TABLE` in `interrupts.rs`: 256 lines, one per event. Lines 0 to 31 are the processor's failures. Lines 32 to 47 are the 16 device lines. The rest are empty.
-- `set_interrupt_entry` fills one line. `load_interrupt_table` fills all 48 and hands the table to the processor.
+- **Interrupt table (IDT)**, `INTERRUPT_TABLE` in `interrupts.rs`: 256 lines, one per event. Lines 0 to 31 are the processor's failures. Lines 32 to 47 are the 16 device lines. Line 48 is not for a device: a task reaches it with the instruction `int 48` to step aside; see [tasks.md](tasks.md). The rest are empty.
+- `set_interrupt_entry` fills one line. `load_interrupt_table` fills all 49 and hands the table to the processor.
 - Every line uses kind `0x8E`: in use, kernel only, and no other signals while its code runs. So handlers never interrupt each other.
-- An event that arrives on an empty line becomes a general protection fault. Its detail code, shifted right by 3, is the number of the line that was empty. That is the first thing to check if a fault appears right after `sti`.
+- An event that arrives on an empty line becomes a general protection fault. Its detail code, shifted right by 3, is the number of the line that was empty: `int 49` gives detail code `0x18a`, and `0x18a` shifted right by 3 is 49. That is the first thing to check if a fault appears right after `sti`.
 
 ## Failures
 
@@ -53,7 +53,7 @@ Limits:
 
 ## Device stubs
 
-- There are two kinds of stub. The keyboard uses `device_entry!`, described here. The timer has its own, `timer_entry` in `tasks.rs`, which saves every register so that it can switch to another task; see [tasks.md](tasks.md).
+- There are two kinds of stub. The keyboard uses `device_entry!`, described here. The timer has its own, `timer_entry` in `tasks.rs`, which saves every register so that it can switch to another task; line 48 uses the same instructions as `wait_entry`. See [tasks.md](tasks.md).
 - `device_entry!(handler)` in `interrupts.rs` makes the stub for one device line. It saves the nine registers that Rust code may change (`rax rcx rdx rsi rdi r8 r9 r10 r11`), runs `cld`, calls the handler, restores the registers and returns with `iretq`. It always returns to the code it interrupted.
 - The handler is an `extern "sysv64" fn()`. Under that convention the other registers are restored by the handler itself.
 - Nine pushes leave the stack aligned to 16 bytes at the `call`, as Rust code expects. Changing the number of pushes breaks that.
@@ -66,7 +66,7 @@ Limits:
 - The timer chip counts down from a chosen number, 1,193,182 steps per second, and signals at zero. `timer_setup` sets it to 100 signals per second (`TICKS_PER_SECOND`).
 - `on_timer` adds one to `TICKS`, an `AtomicU64`, calls `signal_done`, and then lets the next task have its turn by calling `next_task`. It is given the address where the interrupted task's registers were saved and answers with the address to restore from; see [tasks.md](tasks.md).
 - `TICKS` is the kernel's only clock. It only counts signals, so signals that arrive late or get lost make it run slow.
-- A tick is also the length of one task's turn.
+- A tick is also the longest one task's turn can last; a task that waits gives the rest of its turn away.
 
 ## The keyboard
 
