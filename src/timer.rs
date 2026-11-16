@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::controller::signal_done;
 use crate::processor::port_write;
+use crate::tasks::next_task;
 
 // The timer chip (PIT) counts down from a number of your choice, 1,193,182
 // steps per second, and sends a signal each time it reaches zero. Counting
@@ -25,8 +26,11 @@ pub fn timer_setup() {
     port_write(0x40, (count >> 8) as u8); // and its high half.
 }
 
-// Runs on every tick.
-pub extern "sysv64" fn on_timer() {
+// Runs on every tick: counts it, then gives the next task its turn. It is
+// given the place where the interrupted task's registers were saved, and
+// answers with the place to put the registers back from.
+pub extern "sysv64" fn on_timer(saved_registers: u64) -> u64 {
     TICKS.fetch_add(1, Ordering::Relaxed);
     signal_done();
+    next_task(saved_registers)
 }

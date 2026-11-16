@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, and manages memory (frames, its own page tables, a heap).
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), and runs several tasks that take turns under the timer.
 
 ## Read in this order
 
@@ -16,8 +16,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 2. [startup.md](startup.md): what the firmware hands over, the takeover, and the order of startup.
 3. [interrupts.md](interrupts.md): failures, device signals, the interrupt controller, the timer, the keyboard.
 4. [memory.md](memory.md): the memory map, frames, page tables, the heap.
-5. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-6. [open-points.md](open-points.md): known limits and what later work must deal with.
+5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
+6. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+7. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -27,7 +28,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | --- | --- | --- |
 | `main.rs` | `efi_main` (the order of startup and the main loop) and the panic handler | [startup.md](startup.md) |
 | `firmware.rs` | The firmware's tables, `print` through the firmware, `take_over`, the saved memory map | [startup.md](startup.md) |
-| `processor.rs` | `port_read`, `port_write`, `stop`, `TablePointer` | used everywhere |
+| `processor.rs` | `port_read`, `port_write`, `signals_off`, `signals_back`, `stop`, `TablePointer` | used everywhere |
 | `serial.rs` | `serial_setup`, `serial_print`, `Serial` for `write!` | [startup.md](startup.md) |
 | `segments.rs` | The segment table (GDT) and `load_segment_table` | [interrupts.md](interrupts.md) |
 | `faults.rs` | The 32 processor failures: `fault_entry!`, `FAULTS`, `report_fault` | [interrupts.md](interrupts.md) |
@@ -38,6 +39,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `frames.rs` | Free memory as a pile of frames: `frames_setup`, `frame_take`, `frame_give_back` | [memory.md](memory.md) |
 | `page_tables.rs` | The kernel's page tables: `page_tables_setup`, `map_page` | [memory.md](memory.md) |
 | `heap.rs` | The heap: `heap_take`, `heap_give_back`, and `KernelHeap` for Rust's `alloc` | [memory.md](memory.md) |
+| `tasks.rs` | Tasks: `timer_entry` (the switch), the list of tasks, `next_task`, `task_add` | [tasks.md](tasks.md) |
 
 Which file uses which:
 
@@ -45,9 +47,10 @@ Which file uses which:
 - `firmware.rs` uses `serial.rs`.
 - `serial.rs`, `segments.rs`, `controller.rs` use `processor.rs`.
 - `faults.rs` uses `processor.rs` and `serial.rs`.
-- `timer.rs` and `keyboard.rs` use `controller.rs` and `processor.rs`.
-- `interrupts.rs` uses `faults.rs`, `controller.rs`, `timer.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
-- `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs`. `heap.rs` uses `frames.rs` and `page_tables.rs`.
+- `keyboard.rs` uses `controller.rs` and `processor.rs`. `timer.rs` uses those two and `tasks.rs`.
+- `interrupts.rs` uses `faults.rs`, `controller.rs`, `tasks.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
+- `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
+- `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
 
 Outside `src/`:
 
@@ -81,10 +84,12 @@ The code is written to be readable without a background in kernels: plain words,
 
 **Shared values**
 
-- A value shared between a signal handler and the main code is an atomic from `core::sync::atomic`, used with `Ordering::Relaxed`.
+- A value shared between a signal handler and other code is an atomic from `core::sync::atomic`, used with `Ordering::Relaxed`.
 - Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed.
-- Signal handlers only count or store. All printing happens in the main loop.
+- Several tasks run at once, and a switch can happen between any two instructions. State that more than one task changes is changed with device signals off: `let were_on = signals_off(); ... signals_back(were_on);`. See [tasks.md](tasks.md).
+- Signal handlers only count or store. They never print.
 
 **Output**
 
 - Everything the kernel says goes through the serial port: `serial_print("...")` or `write!(serial, "...")` with `let mut serial = Serial;`. Lines end in `\r\n`.
+- From a task, build the line first and send it in one go, `serial_print(&format!(...))`, so another task's line cannot land in the middle of it.

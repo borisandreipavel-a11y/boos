@@ -53,7 +53,8 @@ Limits:
 
 ## Device stubs
 
-- `device_entry!(handler)` in `interrupts.rs` makes the stub for one device line. It saves the nine registers that Rust code may change (`rax rcx rdx rsi rdi r8 r9 r10 r11`), runs `cld`, calls the handler, restores the registers and returns with `iretq`.
+- There are two kinds of stub. The keyboard uses `device_entry!`, described here. The timer has its own, `timer_entry` in `tasks.rs`, which saves every register so that it can switch to another task; see [tasks.md](tasks.md).
+- `device_entry!(handler)` in `interrupts.rs` makes the stub for one device line. It saves the nine registers that Rust code may change (`rax rcx rdx rsi rdi r8 r9 r10 r11`), runs `cld`, calls the handler, restores the registers and returns with `iretq`. It always returns to the code it interrupted.
 - The handler is an `extern "sysv64" fn()`. Under that convention the other registers are restored by the handler itself.
 - Nine pushes leave the stack aligned to 16 bytes at the `call`, as Rust code expects. Changing the number of pushes breaks that.
 - The build target has no SSE, so there are no other registers to save. If SSE is ever switched on, the stubs must save those registers too.
@@ -63,8 +64,9 @@ Limits:
 ## The timer (PIT)
 
 - The timer chip counts down from a chosen number, 1,193,182 steps per second, and signals at zero. `timer_setup` sets it to 100 signals per second (`TICKS_PER_SECOND`).
-- `on_timer` adds one to `TICKS`, an `AtomicU64`, and calls `signal_done`.
+- `on_timer` adds one to `TICKS`, an `AtomicU64`, calls `signal_done`, and then lets the next task have its turn by calling `next_task`. It is given the address where the interrupted task's registers were saved and answers with the address to restore from; see [tasks.md](tasks.md).
 - `TICKS` is the kernel's only clock. It only counts signals, so signals that arrive late or get lost make it run slow.
+- A tick is also the length of one task's turn.
 
 ## The keyboard
 
@@ -84,6 +86,7 @@ Left out on purpose, as possible additions: Shift and capitals, Backspace, any l
 
 ## Rules for handlers
 
-- A handler only counts or stores. Printing and anything slow happens in the main loop.
-- Anything a handler shares with the main code is an atomic.
-- Handlers must not use the frame pile, the page tables or the heap. Those are not protected against signals; see [memory.md](memory.md).
+- A handler only counts or stores. Printing and anything slow happens in a task.
+- Anything a handler shares with other code is an atomic.
+- Handlers stay away from the heap and from printing. `next_task`, which runs inside the timer's handler, uses a fixed list for that reason.
+- Code outside handlers that must not be interrupted switches signals off with `signals_off` and back with `signals_back`; see [tasks.md](tasks.md).

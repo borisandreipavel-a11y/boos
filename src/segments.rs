@@ -9,7 +9,7 @@ use crate::processor::TablePointer;
 // the kernel brings its own: an empty entry, one for code and one for data.
 static SEGMENT_TABLE: [u64; 3] = [0, 0x00AF_9B00_0000_FFFF, 0x00CF_9300_0000_FFFF];
 pub const CODE_SEGMENT: u16 = 8; // The second entry (each entry is 8 bytes).
-const DATA_SEGMENT: u16 = 16; // The third entry.
+pub const DATA_SEGMENT: u16 = 16; // The third entry.
 
 // Hands the processor the kernel's segment table and switches over to it.
 pub fn load_segment_table() {

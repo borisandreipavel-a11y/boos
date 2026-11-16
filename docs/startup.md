@@ -14,9 +14,10 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 6. **`frames_setup(...)`** collects the free memory. It runs after step 5 on purpose: it writes to every free frame, and if the firmware had protected one, the failure would be reported.
 7. **`page_tables_setup(...)`** needs frames for its tables, so it follows step 6.
 8. **The heap** needs both frames and `map_page`. It has no setup step; it starts working at the first request. The demonstration in `efi_main` is that first request.
-9. **`controller_setup()`, `timer_setup()`, `keyboard_setup()`**, in that order. The controller is set up first and the keyboard's waiting byte is emptied last. The other way round, a key arriving in between would send its signal before the controller was listening, and the keyboard would stay silent.
-10. **`sti`** lets device signals through. It comes last, after the interrupt table is loaded and every device is ready.
-11. **The main loop** sleeps with `hlt`, wakes on every device signal, prints the first three seconds going by, and prints the letters of the keys that arrived.
+9. **`task_add(...)`** adds the two demonstration tasks. Tasks need the heap for their stacks, so this follows step 8. They get their first turn only after step 11.
+10. **`controller_setup()`, `timer_setup()`, `keyboard_setup()`**, in that order. The controller is set up first and the keyboard's waiting byte is emptied last. The other way round, a key arriving in between would send its signal before the controller was listening, and the keyboard would stay silent.
+11. **`sti`** lets device signals through. It comes last, after the interrupt table is loaded and every device is ready. From the first tick on, the timer switches between the tasks.
+12. **The main loop** is task 0. It sleeps with `hlt`, wakes on every device signal, prints the typing prompt once four seconds have gone by, and prints the letters of the keys that arrived.
 
 ## What the firmware hands over
 
@@ -52,6 +53,7 @@ State of the processor at handover, as seen in QEMU with its UEFI firmware:
 - `serial_setup` sets the speed and format (115200 bits per second, 8 bits, no check bit, 1 stop bit). QEMU's port works without this; a real PC's port does not.
 - `serial_setup` then does a loop-back test: it sends one byte to itself and checks that it comes back. The result is kept in `SERIAL_FOUND`. When no port was found, `serial_print` does nothing, so a machine without a serial port still runs but says nothing.
 - `serial_print` waits without limit for the port to be ready for each letter.
+- `serial_print` switches device signals off while it sends a text, so that the text stays in one piece when several tasks print; see [tasks.md](tasks.md).
 - Tested only in QEMU, with and without a serial port. Never run on real hardware.
 
 ## What a normal boot prints
@@ -62,12 +64,15 @@ The firmware has stepped aside. This machine is mine.
 Free memory: 206 MB
 Page tables: the kernel's own, covering 4 GB
 Heap: Hello from the heap! [1, 4, 9, 16, 25, 36, 49, 64, 81, 100], kept at 0x400000000020
-Timer: 1 s
-Timer: 2 s
-Timer: 3 s
+Task A: 1
+Task B: 1
+Task A: 2
+Task B: 2
+Task A: 3
+Task B: 3
 Click the QEMU window and type. The letters appear here:
 ```
 
-That is with QEMU's 256 MB. The three timer lines arrive one second apart. After them, keys typed in the QEMU window (not in the terminal) are echoed in the terminal.
+That is with QEMU's 256 MB. The task lines arrive half a second apart, taking turns. The prompt follows a second after the last one. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
 
-The timer lines and the heap line are demonstrations kept from the parts that added them. They can go when something better shows that those pieces work.
+The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks.

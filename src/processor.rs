@@ -15,6 +15,21 @@ pub fn port_read(port: u16) -> u8 {
     value
 }
 
+// Switches device signals off and says whether they were on. While they are
+// off nothing can interrupt the running code, so no other task gets a turn.
+pub fn signals_off() -> bool {
+    let flags: u64;
+    unsafe { asm!("pushfq", "pop {}", "cli", out(reg) flags) };
+    flags & 0x200 != 0
+}
+
+// Switches device signals back on, but only if they were on before.
+pub fn signals_back(were_on: bool) {
+    if were_on {
+        unsafe { asm!("sti") };
+    }
+}
+
 // Stops the processor for good.
 pub fn stop() -> ! {
     loop {

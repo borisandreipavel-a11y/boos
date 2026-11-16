@@ -2,16 +2,20 @@
 
 What is known to be missing, limited or waiting. Nothing here is done. Remove a point when it is dealt with, and say so in the matching note.
 
-## Before several tasks can run
+## Tasks
 
-- **The device stub saves only nine registers.** Switching from one task to another from the timer needs every register saved, so `device_entry!` will need revisiting.
-- **Each task needs a stack of its own.** The heap or the frame pile can provide one.
-- **The memory code is not protected.** The frame pile, the page tables and the heap must not be entered twice at once. Before a task can be switched away in the middle of them, they need protection, for example by switching device signals off around them.
-- **The kernel has no stack of its own.** It still runs on the firmware's. There is also no spare stack for failures, so a failure inside the failure report, or running out of stack, resets the machine without a message.
+- **A task cannot give up its turn or wait for something.** It can only spin or sleep with `hlt` until the next signal. Waiting for a moment in time, for a key or for another task needs a way to say "skip me until then".
+- **The main loop sleeps through its turns.** Task 0 spends each of its turns in `hlt`, so a third of the processor's time is idle while two other tasks work.
+- **There are 8 places and no priorities.** Every ready task gets the same turn of one tick.
+- **Nothing notices a stack that overflows.** A task that uses more than its 64 KB writes into whatever lies below it on the heap. An unmapped page below each stack would turn that into a page fault.
+- **A finished task's stack is given back only when its place is reused.**
+- **A failure in one task stops everything.** Tasks are not isolated from each other.
+- **Printing holds signals off for a whole text.** On a real serial port a long line takes several milliseconds, which could delay a tick.
+- **The first task has no stack of its own.** Task 0 still runs on the firmware's stack. There is also no spare stack for failures, so a failure inside the failure report, or running out of stack, resets the machine without a message.
 
 ## Memory
 
-- Reclaim the firmware's startup memory (kinds 3 and 4, about 42 MB of QEMU's 256 MB) once the kernel has its own stack.
+- Reclaim the firmware's startup memory (kinds 3 and 4, about 42 MB of QEMU's 256 MB) once task 0 has a stack of its own.
 - Leave the lowest page unmapped, so that a broken pointer near zero gives a page fault instead of quietly reading memory.
 - Return heap memory to the frame pile.
 - Make a request that cannot be met fail, instead of stopping the kernel.

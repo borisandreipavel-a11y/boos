@@ -58,14 +58,20 @@ Other QEMU options that proved useful:
 
 Checks that need code inside the kernel are done with a temporary snippet:
 
-1. Keep a copy of the file to change.
-2. Put the snippet just above a known line of `efi_main` in `src/main.rs`. Two places serve most needs:
-   - above `// Get the devices ready, then let their signals through.` for code that runs once, with signals still off;
-   - above `if seconds > seconds_shown && seconds <= 3 {` in the main loop for code that runs with signals on. Guard it with `if seconds == 2 { ... }` to run it two seconds in.
+1. Keep a copy of every file to change. Copying the whole `src` folder is simplest.
+2. Put the snippet just above a known line of `src/main.rs`. Three places serve most needs:
+   - above `// Get the devices ready, then let their signals through.` in `efi_main` for code that runs once, with signals still off. `task_add(test_task);` goes here too;
+   - above `if seconds >= 4 && !hint_shown {` in the main loop for code that runs with signals on. Guard it with `if seconds == 2 { ... }` to run it two seconds in;
+   - above `#[unsafe(no_mangle)]` for new functions, such as the work of a test task.
 3. Build, boot, read the output.
-4. Put the copy back, then build again.
+4. Put the copies back, then build again.
 
 A snippet that needs something private in another file can add `pub` there for the test. Put that back too.
+
+A test should be able to fail. For each protection or saved register that a test is meant to check, break that one thing on purpose once and see the test report it. Two lessons from doing that:
+
+- Swapping two registers in the timer's stub is not a good break: every switch swaps them back, and the test passes by luck. Leaving one register unrestored cannot cancel out.
+- Two tasks doing ordinary work with lists did not catch a heap without protection in three seconds; a switch rarely lands inside the heap. Two tasks that do almost nothing but take and return pieces of one size caught it at once.
 
 ## Deliberate bugs
 
@@ -87,7 +93,7 @@ A panic line names the file the panic is in, so the file name changes when code 
 - **Restoring a file by copying a backup** keeps the backup's old timestamp, and `cargo build` then skips the rebuild and the old kernel is booted. Set the file's time to now before building.
 - **`powershell -File script.ps1 -Keys a,b,c`** passes `a,b,c` as one string. Use `powershell -Command "& 'script.ps1' -Keys a,b,c"` to pass a list.
 - **Memory on the host.** The frame pile writes to every free frame at startup, so the host must really provide all of the guest's memory. On a host with about 1 GB free, guests were kept at 512 MB or less.
-- **Timing on a busy host.** The kernel's clock counts timer signals. In a few windowless runs on a loaded host the three timer lines came about 1.5 s apart instead of 1.0 s. The kernel before the memory work and the one after it showed the same 1.0 s when compared side by side afterwards, so it was the host delivering signals late.
+- **Timing in windowless runs.** The kernel's clock counts timer signals. In some windowless runs, lines meant to be 1.0 s apart came 1.56 s apart, and in other runs of the same kernel exactly 1.0 s. The kernel before the memory work and the one after it showed the same 1.0 s when compared side by side, so the kernel is not the cause. The factor matches Windows' default timer step of 15.6 ms: QEMU then delivers at most 64 timer signals a second where the kernel asks for 100. The likely reason is that Windows does not give a hidden program its finer timer. Judge timing by a run with a visible QEMU window, and judge order by tick counts, which do not depend on it.
 - **The linker blocked once.** One build stopped with "An Application Control policy has blocked this file" for `rust-lld`. The same build worked when run again, and nothing was changed in between.
 
 ## What has been verified
@@ -105,9 +111,9 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16. Nothin
 
 **Timer and keyboard**
 
-- The timer lines appeared 1.0 s apart by the wall clock.
+- Three `Timer: N s` lines, which the main loop printed at the time, appeared 1.0 s apart by the wall clock.
 - Keys sent with `sendkey` were echoed (`hello boos`, digits, punctuation, Enter). Shift, the arrows, F1 and Esc printed nothing, as intended.
-- A temporary test filled the nine saved registers with known values, slept through 300 timer signals and found them unchanged. With the stub broken on purpose (two registers not saved), the same test showed the damage.
+- A temporary test filled the nine saved registers with known values, slept through 300 timer signals and found them unchanged. With the stub broken on purpose (two registers not saved), the same test showed the damage. The timer used the nine-register stub then; it has its own now, tested under Tasks below.
 - Mouse movement and clicks between key presses did not silence the keyboard.
 - With no keyboard controller, the kernel boots and the timer runs.
 - A person typed in the QEMU window and saw the letters in the terminal.
@@ -121,6 +127,19 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16. Nothin
 - Heap work without pause for 2.5 s with timer signals arriving (243 of 3994 rounds were interrupted) gave no wrong result. The keyboard echo still worked afterwards.
 - It boots with 64 MB, 128 MB and 512 MB, and with memory placed above 4 GB, where the tables cover 5 GB.
 - A person ran it and saw the three memory lines.
+
+**Tasks**
+
+- Two tasks that never hand the processor over printed their lines in turn, half a second apart, and ended. Keys typed while both were still spinning were echoed at once.
+- Registers: two tasks filled all 15 general registers with their own values and spun through about 300 switches each, next to three other tasks. No register changed. With one register left unrestored on purpose, both tasks reported it.
+- Heap: two tasks taking and returning pieces of one size, about 250,000 rounds each, each stamping and checking its pieces, found no wrong value. With the protection taken out on purpose, each found 42. Two tasks working with lists and formatted text for 3 s also found nothing wrong.
+- Printing: two tasks printed 4328 lines at once and none was torn. With the protection taken out on purpose, 77 were.
+- Stack depth in a debug build: about 2 KB for the demonstration tasks and 4 KB for tasks using lists and formatted text, of 64 KB.
+- Ending: 60 short tasks, started three at a time by another task, all ran and ended. The free-frame count dropped by the three stacks of the first wave and then stayed put, so places and stacks are reused.
+- Starting more tasks than the list holds prints `Kernel panic: src\tasks.rs:<line>: too many tasks`.
+- A divide by zero and an out-of-range index inside a task each print their report.
+- The page-fault and out-of-memory bugs still print their reports. It boots with 64 MB and 512 MB. Twenty boots in a row all reached the prompt.
+- A person ran it with a visible QEMU window and saw the two tasks' lines come in turn. Whether they came at the intended pace was not reported.
 
 **The split into files**
 
@@ -136,4 +155,4 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16. Nothin
 
 ## Oddities seen once
 
-- **One silent boot.** One boot out of roughly a hundred printed "Hello from my kernel!" and then nothing, with QEMU still running. It was the first boot of the build that added the heap, it stopped before any memory code runs, and it did not come back in 56 further boots, 20 of them with the compiler running alongside. Unexplained. If it comes back, `info registers` tells the two candidates apart: a processor asleep in the main loop (`HLT=1`) means the serial port test failed and the kernel is only mute; anything else means it is stuck.
+- **One silent boot.** One boot out of roughly two hundred printed "Hello from my kernel!" and then nothing, with QEMU still running. It was the first boot of the build that added the heap, it stopped before any memory code runs, and it did not come back in 56 further boots, 20 of them with the compiler running alongside. Unexplained. If it comes back, `info registers` tells the two candidates apart: a processor asleep in the main loop (`HLT=1`) means the serial port test failed and the kernel is only mute; anything else means it is stuck.

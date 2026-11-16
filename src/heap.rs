@@ -5,6 +5,7 @@ use core::alloc::{GlobalAlloc, Layout};
 
 use crate::frames::{FRAME_SIZE, frame_take};
 use crate::page_tables::map_page;
+use crate::processor::{signals_back, signals_off};
 
 // The heap hands out memory in pieces of any size, where frames only come in
 // one size. It lives at made-up addresses far above the real memory, starting
@@ -25,8 +26,9 @@ fn heap_piece_size(size: usize, align: usize) -> u64 {
     size.max(align).max(16).next_power_of_two() as u64
 }
 
-// Hands out a piece of memory of at least `size` bytes.
-fn heap_take(size: usize, align: usize) -> *mut u8 {
+// Hands out a piece of memory of at least `size` bytes. Call it, and
+// `heap_give_back`, only with device signals off.
+pub fn heap_take(size: usize, align: usize) -> *mut u8 {
     let piece = heap_piece_size(size, align);
     let pile = piece.trailing_zeros() as usize;
     unsafe {
@@ -54,7 +56,7 @@ fn heap_take(size: usize, align: usize) -> *mut u8 {
 }
 
 // Takes a piece back, to be handed out again later.
-fn heap_give_back(piece: *mut u8, size: usize, align: usize) {
+pub fn heap_give_back(piece: *mut u8, size: usize, align: usize) {
     let pile = heap_piece_size(size, align).trailing_zeros() as usize;
     unsafe {
         *(piece as *mut u64) = HEAP_PILES[pile];
@@ -64,15 +66,22 @@ fn heap_give_back(piece: *mut u8, size: usize, align: usize) {
 
 // Tells Rust's `alloc` library to get its memory from this heap and to return
 // it there. A `Vec` (a list) or a `String` (a text) calls these by itself.
+// Device signals are off meanwhile, so the timer cannot switch to another
+// task while the heap is half-way through a change.
 struct KernelHeap;
 
 unsafe impl GlobalAlloc for KernelHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        heap_take(layout.size(), layout.align())
+        let were_on = signals_off();
+        let piece = heap_take(layout.size(), layout.align());
+        signals_back(were_on);
+        piece
     }
 
     unsafe fn dealloc(&self, piece: *mut u8, layout: Layout) {
+        let were_on = signals_off();
         heap_give_back(piece, layout.size(), layout.align());
+        signals_back(were_on);
     }
 }
 

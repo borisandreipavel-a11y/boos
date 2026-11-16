@@ -9,7 +9,7 @@ use crate::faults::FAULTS;
 use crate::keyboard::on_keyboard;
 use crate::processor::TablePointer;
 use crate::segments::CODE_SEGMENT;
-use crate::timer::on_timer;
+use crate::tasks::timer_entry;
 
 // One line of the interrupt table (IDT): which code to jump to for one event.
 // The address is stored in three pieces.
@@ -108,7 +108,7 @@ pub fn load_interrupt_table() {
     for line in 0..16 {
         set_interrupt_entry(FIRST_DEVICE_ENTRY + line, ignore_signal);
     }
-    set_interrupt_entry(FIRST_DEVICE_ENTRY + TIMER_LINE, device_entry!(on_timer));
+    set_interrupt_entry(FIRST_DEVICE_ENTRY + TIMER_LINE, timer_entry);
     set_interrupt_entry(FIRST_DEVICE_ENTRY + KEYBOARD_LINE, device_entry!(on_keyboard));
 
     let pointer = TablePointer {

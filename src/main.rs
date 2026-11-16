@@ -22,7 +22,9 @@ mod keyboard; // The keyboard: key numbers, the waiting line, letters.
 mod frames; // Free memory, in frames of 4096 bytes.
 mod page_tables; // The kernel's own page tables.
 mod heap; // The heap, and Rust's lists and text on top of it.
+mod tasks; // Several tasks taking turns, switched by the timer.
 
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
@@ -40,7 +42,30 @@ use page_tables::{GIGABYTE, page_tables_setup};
 use processor::stop;
 use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
+use tasks::task_add;
 use timer::{TICKS, TICKS_PER_SECOND, timer_setup};
+
+// Two tasks to show that several can run at once. Neither ever hands the
+// processor over: each just spins until its moment has come. Both still get
+// on, because the timer takes the processor from one and gives it to the next.
+fn task_a() {
+    count_aloud("Task A", TICKS_PER_SECOND / 2);
+}
+
+fn task_b() {
+    count_aloud("Task B", TICKS_PER_SECOND);
+}
+
+// Prints three lines one second apart, the first when `first_tick` ticks have gone by.
+fn count_aloud(name: &str, first_tick: u64) {
+    for step in 0..3 {
+        let moment = first_tick + step * TICKS_PER_SECOND;
+        while TICKS.load(Ordering::Relaxed) < moment {}
+        // The line is put together first and printed in one go, so that
+        // another task's line cannot land in the middle of it.
+        serial_print(&format!("{}: {}\r\n", name, step + 1));
+    }
+}
 
 #[unsafe(no_mangle)]
 extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usize {
@@ -81,25 +106,27 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
     }
 
+    // Two more tasks, next to the one that has run so far. They get their
+    // first turn once the timer's signals come through.
+    task_add(task_a);
+    task_add(task_b);
+
     // Get the devices ready, then let their signals through.
     controller_setup();
     timer_setup();
     keyboard_setup();
     unsafe { asm!("sti") };
 
-    let mut seconds_shown = 0;
+    let mut hint_shown = false;
     loop {
         // Sleep until the next signal from a device.
         unsafe { asm!("hlt") };
 
-        // Show the first three seconds going by, as proof that the timer works.
+        // When the two tasks have had their say, ask for some typing.
         let seconds = TICKS.load(Ordering::Relaxed) / TICKS_PER_SECOND;
-        if seconds > seconds_shown && seconds <= 3 {
-            seconds_shown = seconds;
-            write!(serial, "Timer: {} s\r\n", seconds).ok();
-            if seconds == 3 {
-                write!(serial, "Click the QEMU window and type. The letters appear here:\r\n").ok();
-            }
+        if seconds >= 4 && !hint_shown {
+            hint_shown = true;
+            write!(serial, "Click the QEMU window and type. The letters appear here:\r\n").ok();
         }
 
         // Print the letters of the keys that arrived in the meantime.

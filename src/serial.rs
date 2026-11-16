@@ -3,7 +3,7 @@
 
 use core::fmt::{self, Write};
 
-use crate::processor::{port_read, port_write};
+use crate::processor::{port_read, port_write, signals_back, signals_off};
 
 // The PC's first serial port answers at this port number.
 const COM1: u16 = 0x3F8;
@@ -40,11 +40,15 @@ pub fn serial_print(text: &str) {
     if !unsafe { SERIAL_FOUND } {
         return;
     }
+    // Keep the text in one piece: with device signals off, the timer cannot
+    // switch to another task that prints in the middle of it.
+    let were_on = signals_off();
     for byte in text.bytes() {
         // Wait until the serial port is ready for the next letter.
         while port_read(COM1 + 5) & 0x20 == 0 {}
         port_write(COM1, byte);
     }
+    signals_back(were_on);
 }
 
 // Lets `write!` print text and numbers through the serial port.

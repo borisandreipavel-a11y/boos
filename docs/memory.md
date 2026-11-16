@@ -72,8 +72,15 @@ Known limits:
 
 - `alloc` is the part of Rust's own library with `Vec` (a list) and `String` (a text). It ships with Rust next to `core`; nothing is downloaded and `Cargo.toml` is unchanged.
 - `KernelHeap` with `#[global_allocator]` in `heap.rs` is the thin layer that connects it: `alloc` calls `heap_take` and `heap_give_back` by itself.
-- To drop `alloc` again: remove `extern crate alloc;` and the two `use alloc::...` lines and the heap demonstration in `main.rs`, and the `KernelHeap` block in `heap.rs`. `heap_take` and `heap_give_back` work without it.
+- To drop `alloc` again: remove `extern crate alloc;`, the `use alloc::...` lines, the heap demonstration and the `format!` in the demonstration tasks in `main.rs`, and the `KernelHeap` block in `heap.rs`. `heap_take` and `heap_give_back` work without it; task stacks already come straight from them.
 
-## Not protected against signals
+## Protection against task switches
 
-The frame pile, the page tables and the heap are plain global state. If a signal handler used them while the main code was in the middle of them, they would be corrupted. Today that cannot happen, because handlers never use them. Before tasks can be switched in the middle of a heap call, this needs protection, for example by switching signals off around the memory code.
+The frame pile, the page tables and the heap are plain global state. Several tasks use them, and the timer can switch tasks between any two instructions. A switch in the middle of a change would hand the same piece to two tasks.
+
+- `KernelHeap` switches device signals off around every request and every return, with `signals_off` and `signals_back`. So everything that goes through Rust's lists and text is safe.
+- `heap_take` and `heap_give_back` themselves are not protected. Call them directly only with signals off, as `task_add` does.
+- The frame pile and the page tables are reached only through the heap once startup is over, so the same protection covers them. During startup signals are off anyway.
+- Anything new that uses `frame_take` or `map_page` directly must switch signals off itself.
+
+This was tested by taking the protection out: two tasks taking and returning pieces of the same size then got each other's pieces. See [testing.md](testing.md).
