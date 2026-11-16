@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer, and finds and sets up its network card. It does not send or receive anything over the network yet.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer, and finds and sets up its network card. It can send and receive single packets, and at startup it asks the network one question by hand. It has no network address and no network stack yet.
 
 ## Read in this order
 
@@ -17,7 +17,7 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 3. [interrupts.md](interrupts.md): failures, device signals, the interrupt controller, the timer, the keyboard.
 4. [memory.md](memory.md): the memory map, frames, page tables, the heap.
 5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
-6. [network.md](network.md): the PCI list, the network card, QEMU's built-in network.
+6. [network.md](network.md): the PCI list, the network card, sending and receiving packets, QEMU's built-in network.
 7. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
 8. [open-points.md](open-points.md): known limits and what later work must deal with.
 
@@ -42,7 +42,8 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `heap.rs` | The heap: `heap_take`, `heap_give_back`, and `KernelHeap` for Rust's `alloc` | [memory.md](memory.md) |
 | `tasks.rs` | Tasks: `timer_entry` (the switch), the list of tasks, `next_task`, `task_add` | [tasks.md](tasks.md) |
 | `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_memory_address` | [network.md](network.md) |
-| `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines | [network.md](network.md) |
+| `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
+| `network.rs` | The first words on the network, by hand: `gateway_ask` | [network.md](network.md) |
 
 Which file uses which:
 
@@ -54,7 +55,7 @@ Which file uses which:
 - `interrupts.rs` uses `faults.rs`, `controller.rs`, `tasks.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
 - `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs` and `processor.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
 - `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
-- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`.
+- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`.
 
 Outside `src/`:
 

@@ -24,9 +24,13 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Network
 
-- The network card is found and set up, but nothing is sent or received. Its waiting lines are empty: the card has no memory to put arriving packets into.
+- The kernel can send and receive single packets, and asks one question by hand. It has no network address of its own and no network stack: no connections, no names, no encryption.
+- The gateway question assumes the kernel's network address (`10.0.2.15`) instead of being given one.
+- Waiting for an answer is counted in looks, not in time, because it happens at startup with signals off. Once tasks can wait, it should be timed.
+- There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. At startup that harms nothing, but once a task sends packets it breaks the rule to keep such stretches short: ticks and keys would wait too.
+- Sixteen frames are lent for arriving packets. If more arrive before the kernel looks, the card has nowhere to put them and they are lost.
 - Only virtio cards are recognised, and only through the newer way of working. Real PCs have cards of other makes, each needing its own driver.
-- The card is told not to send signals, and the driver is meant to look by itself. The card's signal line (11 in QEMU) is on the second chip of the interrupt controller; the kernel holds that chip back entirely, and `signal_done` tells only the first chip. Listening to the card by signal needs all three changed.
+- The card is told not to send signals, so nothing announces an arriving packet; code has to keep looking. The card's signal line (11 in QEMU) is on the second chip of the interrupt controller; the kernel holds that chip back entirely, and `signal_done` tells only the first chip. Listening to the card by signal needs all three changed.
 - Device memory is mapped like ordinary memory. Real hardware wants it marked "do not cache".
 - The frame pile hands out single frames. A device that needs several neighbouring frames in one piece cannot be served yet. The network card's newer way of working was chosen partly because it does not need that.
 - The setup runs once. Nothing handles a card that reports a failure later, and nothing sets it up a second time.

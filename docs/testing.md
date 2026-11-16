@@ -58,7 +58,8 @@ Other QEMU options that proved useful:
 | `-m 64M`, `-m 512M` | Other memory sizes (a later `-m` overrides the first) |
 | `-machine pc,max-ram-below-4g=128M` | Puts the rest of the guest's memory above 4 GB, without needing a large guest |
 | `-machine pc,i8042=off` | A machine without a keyboard controller |
-| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header). A file of 24 bytes means no packet passed |
+| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records two: the gateway question and its answer |
+| `-device virtio-net-pci` with no `-netdev` | A card attached to nothing, so nobody can answer |
 | `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
 | `-device e1000,netdev=net0` | A network card of another make |
@@ -172,11 +173,25 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - `info mem` shows the card's three pages of controls reachable at `0xc000000000`, and not the fourth, which the driver does not use. Reading that fourth page prints a page fault report.
 - `map_device_memory` called on a device range below 4 GB changed nothing and broke nothing.
 - The newer-only card, the card in another slot and the card behind a bridge are set up too. A card with the newer way switched off prints "not set up, because it does not offer the newer way of working".
-- With every packet recorded, a whole boot still recorded none.
+- With every packet recorded, a whole boot still recorded none (before the kernel could send).
 - The task lines, the key echo and a page-fault report still work. It boots with 64 MB and 512 MB. Fifteen boots in a row reached the prompt.
 - A person ran `run.bat` and saw the "Network card: ready" line with the card's address.
 - With the driver changed on purpose to need a feature the card lacks, the kernel prints "not set up, because it lacks a feature this driver needs", and `info virtio-status` shows the card not started, with the driver's "failed" mark and not the card's own.
-- Not verified: the older way of working (not written), the other ways the handshake can fail, that the card really sends no signals (no packets flow yet to cause one), and any real hardware.
+- Not verified: the older way of working (not written), the other ways the handshake can fail, and any real hardware.
+
+**Sending and receiving packets, and the gateway question**
+
+- The kernel prints the gateway's hardware address, `52:55:0a:00:02:02`.
+- A recording of a whole boot holds exactly two packets. The first is the kernel's question, byte for byte as built: to everybody, from the card, kind `0806`, "1", the card's address and `10.0.2.15`, asking for `10.0.2.2`. The second is the answer, and the address the kernel prints is the one in it.
+- 600 questions in a row got 600 right answers. That passes the end of a 256-place waiting line twice and reuses each of the 16 lent frames many times. The answer took 32 looks on average and 283 at most.
+- After that, `info virtio-queue-status` shows the card having taken 601 packets from the send line and filled 601 frames of the receive line, with nothing left in use.
+- The card sent no signals: after 601 packets each way, `info irq` lists nothing on line 11 and `info pic` shows nothing waiting on the second chip.
+- With another address given to the card, the question carries that address and the answer still arrives.
+- With the card attached to nothing, the kernel prints "the gateway 10.0.2.2 did not answer" after about a second, and carries on.
+- The newer-only card and the card behind a bridge get the answer too. With no card, or a card that is refused, no gateway line is printed and the boot goes on.
+- The task lines, the key echo and a page-fault report still work. It boots with 64 MB and 512 MB. Fifteen boots in a row each showed the gateway's answer.
+- A person ran `run.bat` and saw the line with the gateway's answer.
+- Not verified: a packet other than the answer arriving first (none ever did, so the passing-over was never exercised), more than 16 packets arriving before the kernel looks, packets longer than the question, more than one packet waiting to be sent, a card that hands back a description the driver did not lend, and any real hardware.
 
 **The split into files**
 

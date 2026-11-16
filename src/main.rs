@@ -25,6 +25,7 @@ mod heap; // The heap, and Rust's lists and text on top of it.
 mod tasks; // Several tasks taking turns, switched by the timer.
 mod pci; // The PCI list of the machine's cards and devices.
 mod network_card; // The network card.
+mod network; // The first words on the network.
 
 use alloc::format;
 use alloc::string::String;
@@ -40,6 +41,7 @@ use firmware::{SystemTable, print, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
+use network::gateway_ask;
 use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::stop;
@@ -47,6 +49,14 @@ use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
 use tasks::task_add;
 use timer::{TICKS, TICKS_PER_SECOND, timer_setup};
+
+// Writes a hardware address the usual way: six pairs of digits with colons.
+fn hardware_address(address: [u8; 6]) -> String {
+    format!(
+        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        address[0], address[1], address[2], address[3], address[4], address[5]
+    )
+}
 
 // Two tasks to show that several can run at once. Neither ever hands the
 // processor over: each just spins until its moment has come. Both still get
@@ -114,11 +124,17 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Network card: found, device {} on bus {} of the PCI list\r\n", card.device, card.bus).ok();
         match network_card_setup(card) {
             Ok(address) => {
-                write!(serial, "Network card: ready, its address is").ok();
-                for (number, byte) in address.iter().enumerate() {
-                    write!(serial, "{}{:02x}", if number == 0 { ' ' } else { ':' }, byte).ok();
+                write!(serial, "Network card: ready, its address is {}\r\n", hardware_address(address)).ok();
+
+                // The kernel's first packet: ask who the gateway is.
+                match gateway_ask(address) {
+                    Some(gateway) => {
+                        write!(serial, "Network: the gateway 10.0.2.2 answered, its address is {}\r\n", hardware_address(gateway)).ok();
+                    }
+                    None => {
+                        write!(serial, "Network: the gateway 10.0.2.2 did not answer\r\n").ok();
+                    }
                 }
-                write!(serial, "\r\n").ok();
             }
             Err(reason) => {
                 write!(serial, "Network card: not set up, because {}\r\n", reason).ok();

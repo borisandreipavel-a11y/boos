@@ -1,5 +1,5 @@
-//! The network card: finding it and setting it up. It does not send or
-//! receive packets yet. Notes: `docs/network.md`.
+//! The network card: finding it, setting it up, and sending and receiving
+//! packets through it. Notes: `docs/network.md`.
 
 use crate::frames::{FRAME_SIZE, frame_take};
 use crate::page_tables::map_device_memory;
@@ -79,6 +79,7 @@ const FEATURE_NEWER_WAY: u32 = 1 << 0; // Upper half: the newer way of working.
 // memory that both sides read and write. Each area gets a frame of its own.
 #[derive(Clone, Copy)]
 struct WaitingLine {
+    number: u16,       // Which line it is: 0 receives, 1 sends.
     size: u16,         // How many packets it can hold.
     descriptions: u64, // Says where each packet's memory is, and how long.
     from_driver: u64,  // The driver lists here what it hands to the card.
@@ -87,6 +88,7 @@ struct WaitingLine {
 }
 
 const NO_LINE: WaitingLine = WaitingLine {
+    number: 0,
     size: 0,
     descriptions: 0,
     from_driver: 0,
@@ -130,6 +132,7 @@ fn waiting_line_setup(number: u16) -> Result<WaitingLine, &'static str> {
     // The card reads and writes the areas by their real addresses. It knows
     // nothing of the kernel's page tables, so these must be frames.
     let line = WaitingLine {
+        number,
         size,
         descriptions: empty_frame(),
         from_driver: empty_frame(),
@@ -247,10 +250,128 @@ fn setup_steps(place: PciPlace) -> Result<[u8; 6], &'static str> {
         return Err("it reported a failure at the end of the setup");
     }
 
+    // Lend the card frames to put arriving packets in, and keep one frame for
+    // packets going out.
+    for number in 0..RECEIVE_FRAMES {
+        let frame = frame_take();
+        unsafe { RECEIVE_FRAME_LIST[number as usize] = frame };
+        describe(receive_line, number, frame, FRAME_SIZE as u32, CARD_MAY_WRITE);
+        hand_to_card(receive_line, number);
+    }
+    unsafe { SEND_FRAME = empty_frame() };
+
     // The card's address is the first six bytes of the facts about itself.
     let mut address = [0u8; 6];
     for (number, byte) in address.iter_mut().enumerate() {
         *byte = device_read_8(card + number as u64);
     }
     Ok(address)
+}
+
+// ---------- Packets ----------
+
+// Every packet handed to the card, and every packet it hands back, starts
+// with 12 bytes of notes meant for the card itself. All zeros means "nothing
+// special", which is all this driver uses.
+const NOTES: usize = 12;
+
+// The longest packet a network carries: 1514 bytes.
+pub const LONGEST_PACKET: usize = 1514;
+
+// How many frames are lent to the card for arriving packets, and where they are.
+const RECEIVE_FRAMES: u16 = 16;
+static mut RECEIVE_FRAME_LIST: [u64; RECEIVE_FRAMES as usize] = [0; RECEIVE_FRAMES as usize];
+
+// The one frame that packets going out are put in.
+static mut SEND_FRAME: u64 = 0;
+
+// How many packets were handed to the card for sending, and how many arrived
+// packets were picked up. The card keeps counters of its own in the waiting
+// lines. All of them are 2 bytes wide and start again at 0 after 65535.
+static mut SENT: u16 = 0;
+static mut PICKED_UP: u16 = 0;
+
+// A mark in a description: the card may write into this memory.
+const CARD_MAY_WRITE: u16 = 2;
+
+// Writes one description of a waiting line: packet memory at `address`,
+// `length` bytes long. A description is 16 bytes: the address (8), the
+// length (4), marks (2), and a link to another description (2, not used).
+fn describe(line: WaitingLine, number: u16, address: u64, length: u32, marks: u16) {
+    let description = line.descriptions + number as u64 * 16;
+    write_address(description, address);
+    device_write_32(description + 8, length);
+    device_write_16(description + 12, marks);
+    device_write_16(description + 14, 0);
+}
+
+// Hands the memory of one description to the card. The "from the driver"
+// area holds marks (2 bytes), the driver's counter (2 bytes), then a list of
+// description numbers. The order matters: first the list entry, then the
+// counter, and only then the knock.
+fn hand_to_card(line: WaitingLine, number: u16) {
+    let counter = device_read_16(line.from_driver + 2);
+    device_write_16(line.from_driver + 4 + (counter % line.size) as u64 * 2, number);
+    device_write_16(line.from_driver + 2, counter.wrapping_add(1));
+    device_write_16(line.knock, line.number);
+}
+
+// Sends one packet, given as it travels on the network, without the card's
+// notes. Says whether the packet was handed to the card.
+pub fn network_card_send(packet: &[u8]) -> bool {
+    let were_on = signals_off();
+    let mut handed_over = false;
+    unsafe {
+        let line = SEND_LINE;
+        if line.size != 0 && packet.len() <= LONGEST_PACKET {
+            // There is one frame for sending, so wait until the card has
+            // taken the packet before this one. Its counter says how many it took.
+            let mut tries = 0;
+            while device_read_16(line.from_card + 2) != SENT && tries < 1_000_000 {
+                tries += 1;
+            }
+            if device_read_16(line.from_card + 2) == SENT {
+                // The card's notes, all zero, and then the packet.
+                core::ptr::write_bytes(SEND_FRAME as *mut u8, 0, NOTES);
+                core::ptr::copy_nonoverlapping(packet.as_ptr(), (SEND_FRAME as *mut u8).add(NOTES), packet.len());
+                describe(line, 0, SEND_FRAME, (NOTES + packet.len()) as u32, 0);
+                hand_to_card(line, 0);
+                SENT = SENT.wrapping_add(1);
+                handed_over = true;
+            }
+        }
+    }
+    signals_back(were_on);
+    handed_over
+}
+
+// Picks up one arrived packet, if there is one. The packet is copied into
+// `into`, without the card's notes, and its length is returned.
+pub fn network_card_receive(into: &mut [u8]) -> Option<usize> {
+    let were_on = signals_off();
+    let mut length = None;
+    unsafe {
+        let line = RECEIVE_LINE;
+        // The "from the card" area holds marks (2 bytes), the card's counter
+        // (2 bytes), then a list of entries of 8 bytes: which description the
+        // card used (4) and how many bytes it wrote there (4).
+        if line.size != 0 && device_read_16(line.from_card + 2) != PICKED_UP {
+            let entry = line.from_card + 4 + (PICKED_UP % line.size) as u64 * 8;
+            let number = device_read_32(entry);
+            let written = device_read_32(entry + 4) as usize;
+            PICKED_UP = PICKED_UP.wrapping_add(1);
+            // Only trust a description that was really lent, and never copy
+            // more than a frame holds or than `into` has room for.
+            if number < RECEIVE_FRAMES as u32 {
+                let frame = RECEIVE_FRAME_LIST[number as usize];
+                let bytes = written.min(FRAME_SIZE as usize).saturating_sub(NOTES).min(into.len());
+                core::ptr::copy_nonoverlapping((frame as *const u8).add(NOTES), into.as_mut_ptr(), bytes);
+                length = Some(bytes);
+                // Lend the frame to the card again.
+                hand_to_card(line, number as u16);
+            }
+        }
+    }
+    signals_back(were_on);
+    length
 }

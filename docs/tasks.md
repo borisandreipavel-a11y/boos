@@ -69,6 +69,8 @@ What is protected today:
 - **The heap.** `KernelHeap` switches signals off around every request and return made by Rust's lists and text. `heap_take` and `heap_give_back` themselves do not, so call them directly only with signals off, as `task_add` does.
 - **Printing.** `serial_print` keeps one text whole. But `write!` sends a line in several pieces, and another task's line can land between them. To print a line from a task, build it first and send it in one go: `serial_print(&format!("... {}\r\n", value))`.
 - **The list of tasks.** `task_add` switches signals off.
+- **The PCI list.** `pci_read` and `pci_write` take two port steps each and switch signals off around them.
+- **The network card.** `network_card_send` and `network_card_receive` switch signals off while they change the waiting lines and the driver's counters. So do the card's setup and `map_device_memory`.
 
 Not protected, and fine as long as it stays that way:
 

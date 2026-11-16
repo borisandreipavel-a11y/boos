@@ -1,8 +1,8 @@
 # The network: the PCI list and the network card
 
-Code: `src/pci.rs`, `src/network_card.rs`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
+Code: `src/pci.rs`, `src/network_card.rs`, `src/network.rs`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
 
-So far the kernel finds the network card and sets it up. It sends and receives nothing yet.
+So far the kernel finds the network card, sets it up, and can send and receive single packets through it. On top of that it asks one question by hand at startup: who is the gateway. It has no network address of its own and no network stack yet.
 
 ## The PCI list
 
@@ -74,7 +74,41 @@ What the driver relies on:
 - The first two bytes of the "from the driver" area are set to 1, which tells the card not to send a signal when it hands something back. The driver will look by itself.
 - To tell the card that a line has news, the driver writes to that line's knocking place: the start of group 2, plus the line's own number from the card times the knock step.
 
-The driver keeps where the groups are (`COMMON`, `KNOCK`, `KNOCK_STEP`, `CARD`) and both lines (`RECEIVE_LINE`, `SEND_LINE`) for the code that will send and receive.
+The driver keeps where the groups are (`COMMON`, `KNOCK`, `KNOCK_STEP`, `CARD`) and both lines (`RECEIVE_LINE`, `SEND_LINE`).
+
+How the three areas are laid out, as the driver uses them:
+
+- A description is 16 bytes: the memory's address (8), its length (4), marks (2) and a link to another description (2, unused). The mark 2 means the card may write into that memory.
+- The "from the driver" area is marks (2 bytes), the driver's counter (2 bytes), then a list of description numbers, 2 bytes each.
+- The "from the card" area is marks (2 bytes), the card's counter (2 bytes), then a list of entries of 8 bytes: which description the card used (4) and how many bytes it wrote there (4).
+- The counters are 2 bytes wide and start again at 0 after 65535. The place in a list is the counter's remainder after dividing by the line's length.
+- Handing something to the card goes in this order: the list entry, then the counter, then the knock (`hand_to_card`). The knock is a 2-byte write of the line's number.
+- All of it is read and written with the volatile device functions, because the card changes this memory too.
+
+## Sending and receiving packets
+
+- Every packet handed to the card, and every packet it hands back, starts with 12 bytes of notes meant for the card itself (`NOTES`). All zeros means "nothing special", and the driver uses nothing else. A recording of the packets confirms the length: the kernel's question arrives on the network starting with its first real byte.
+- **Receiving.** At the end of the setup the driver lends the card 16 frames (`RECEIVE_FRAMES`), each described as writable by the card, and remembers them in `RECEIVE_FRAME_LIST`. The card puts each arriving packet into one of them.
+- `network_card_receive(into)` looks once. If the card's counter is ahead of the driver's (`PICKED_UP`), it copies the packet, without the notes, into `into`, lends the frame to the card again, and returns the packet's length. Otherwise it returns nothing. It does not wait.
+  - It uses the description number the card names, but only if that number is one of the 16 lent frames.
+  - It never copies more than a frame holds or than `into` has room for.
+- **Sending.** There is one frame for packets going out (`SEND_FRAME`). `network_card_send(packet)` waits, up to a million looks, until the card has taken the packet before this one, then writes the notes and the packet into the frame and hands it to the card. It says whether it did. A packet longer than 1514 bytes (`LONGEST_PACKET`) is refused.
+- Both switch device signals off while they work, so tasks can call them.
+- The card sends no signals. Nothing tells the kernel that a packet has arrived; code that wants one has to keep looking.
+
+## The gateway question
+
+`gateway_ask(card_address)` in `network.rs` is the kernel's first packet, put together by hand.
+
+- Every machine on a network has a hardware address (6 bytes, its network card's) and a network address (4 bytes, such as `10.0.2.2`). Packets are delivered by hardware address, so before talking to a machine one asks the whole network "who has this network address?" (the address question, ARP).
+- The gateway is the machine that passes packets on to the outside: `10.0.2.2` on QEMU's built-in network.
+- The question is a packet of 60 bytes, the shortest a network carries: to everybody (`ff:ff:ff:ff:ff:ff`), from the card, kind `0806`, and inside it "1" for question, who asks, and whose address is wanted.
+- The kernel has no network address yet. For this question it assumes `10.0.2.15`, the first address QEMU's network hands out (`ASSUMED_OWN_ADDRESS`).
+- It then looks at arriving packets until one is an answer (kind `0806`, "2" for answer) from `10.0.2.2`, and returns the hardware address in it. Other packets are passed over.
+- It runs at startup with device signals off, so the tick count stands still and cannot time the wait. The wait is bounded by looks instead: 2,000,000 (`LOOKS`), about a second in QEMU. The real answer needed 32 looks on average and 283 at most.
+- `efi_main` prints the gateway's hardware address, `52:55:0a:00:02:02` in QEMU, or that the gateway did not answer.
+
+This by-hand code is a demonstration. A network stack will ask such questions itself.
 
 The monitor shows the card's side of all this: `info virtio` lists the card's path, `info virtio-status <path>` shows the handshake's marks and the features in use, and `info virtio-queue-status <path> <line>` shows a line's length and the addresses of its three areas.
 
@@ -83,9 +117,9 @@ The monitor shows the card's side of all this: `info virtio` lists the card's pa
 `run.bat` attaches the card to QEMU's built-in network (`-netdev user`). QEMU plays a small network of its own and passes traffic on through the host computer:
 
 - the network is `10.0.2.0` and the card's own address is `52:54:00:12:34:56`, as the monitor's `info network` shows;
-- by QEMU's documentation the gateway is at `10.0.2.2` and a name server at `10.0.2.3`. The kernel has not talked to either yet;
+- the gateway is at `10.0.2.2`, with the hardware address `52:55:0a:00:02:02`; it answered the kernel's question. By QEMU's documentation a name server is at `10.0.2.3`; the kernel has not talked to it;
 - nothing outside can reach the kernel; only what the kernel sends out gets answers.
 
 With the card attached, the firmware uses a little more memory during startup, and "Free memory" reads 205 MB instead of 206.
 
-Nothing is sent yet. A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, recorded none, also after the card was set up. The option for that is in [testing.md](testing.md).
+A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records exactly two: the kernel's question and the gateway's answer. The option for that is in [testing.md](testing.md). The recording shows what passes between the card and QEMU's network. The gateway is QEMU itself, which answers the question on its own; the recording cannot show what QEMU passes on to the host's real network.
