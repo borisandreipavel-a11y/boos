@@ -26,6 +26,7 @@ mod tasks; // Several tasks taking turns, switched by the timer.
 mod pci; // The PCI list of the machine's cards and devices.
 mod network_card; // The network card.
 mod network; // The first words on the network.
+mod page; // Fetching one page from the web.
 
 use alloc::format;
 use alloc::string::String;

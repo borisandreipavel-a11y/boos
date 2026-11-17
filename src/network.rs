@@ -10,9 +10,10 @@ use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::dhcpv4;
 use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetAddress, IpCidr};
+use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
+use crate::page::page_fetch;
 use crate::processor::time_stamp;
 use crate::serial::serial_print;
 use crate::tasks::{task_add, task_wait};
@@ -88,16 +89,18 @@ pub fn gateway_ask(card_address: [u8; 6]) -> Option<[u8; 6]> {
 
 // The way to send and receive packets: an adapter over the network card's
 // driver. smoltcp describes what it needs as a "trait", a list of functions
-// that a type has to offer, and `impl Device for Card` offers them.
-struct Card;
+// that a type has to offer, and `impl Device for Card` offers them. It is
+// `pub` because `page.rs` uses it. The two token types below are `pub` only
+// because Rust wants every type that a public type shows to be public too.
+pub struct Card;
 
 // smoltcp hands packets over as "tokens": a token for an arrived packet holds
 // that packet, and a token for sending is the permission to send one.
-struct ArrivedPacket {
+pub struct ArrivedPacket {
     bytes: Vec<u8>,
 }
 
-struct PacketToSend;
+pub struct PacketToSend;
 
 impl Device for Card {
     // The `'a` is a lifetime: a label for how long a borrowed thing stays
@@ -164,7 +167,7 @@ impl TxToken for PacketToSend {
 
 // The time as smoltcp wants it: milliseconds since the kernel started. It
 // comes from the tick count, so it moves in steps of 10.
-fn now() -> Instant {
+pub fn now() -> Instant {
     Instant::from_millis((TICKS.load(Ordering::Relaxed) * 1000 / TICKS_PER_SECOND) as i64)
 }
 
@@ -192,6 +195,10 @@ fn network_task() {
     // when the address is about to run out; this only has to listen for news.
     let address_request = sockets.add(dhcpv4::Socket::new());
     let mut has_address = false;
+    // With the address the network also names a name server (see `page.rs`).
+    let mut name_server: Option<Ipv4Address> = None;
+    // The page is fetched once, the first time there is an address.
+    let mut page_fetched = false;
 
     loop {
         interface.poll(now(), &mut card, &mut sockets);
@@ -214,6 +221,7 @@ fn network_task() {
                     }
                 }
                 has_address = true;
+                name_server = given.dns_servers.first().copied();
                 serial_print(&format!(
                     "Network: this machine was given the address {} by {}\r\n",
                     given.address.address(),
@@ -230,6 +238,12 @@ fn network_task() {
                 }
             }
             None => {}
+        }
+
+        // The first use of the address: fetch one page from the web.
+        if has_address && !page_fetched {
+            page_fetched = true;
+            page_fetch(&mut interface, &mut card, &mut sockets, name_server);
         }
 
         // The card sends no signals, so the only way to notice a packet is to

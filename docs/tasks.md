@@ -99,7 +99,7 @@ What is protected today:
 - **The list of tasks.** `task_add`, `task_wait` and `task_rest` switch signals off.
 - **The PCI list.** `pci_read` and `pci_write` take two port steps each and switch signals off around them.
 - **The network card.** `network_card_send` and `network_card_receive` switch signals off while they change the waiting lines and the driver's counters. So do the card's setup and `map_device_memory`.
-- **The network stack** needs no protection of its own so far: only its own task, `network_task`, touches it. Anything another task wants from the network will have to go through that task or be protected.
+- **The network stack** needs no protection of its own so far: only its own task, `network_task`, touches it. The page fetch runs inside that task for this reason. Anything another task wants from the network will have to go through that task or be protected.
 
 Not protected, and fine as long as it stays that way:
 

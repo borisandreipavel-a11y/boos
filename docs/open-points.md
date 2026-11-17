@@ -11,7 +11,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Nothing notices a stack that overflows.** A task that uses more than its 64 KB writes into whatever lies below it on the heap. An unmapped page below each stack would turn that into a page fault.
 - **A finished task's stack is given back only when its place is reused.**
 - **A failure in one task stops everything.** Tasks are not isolated from each other.
-- **Printing holds signals off for a whole text.** On a real serial port a long line takes several milliseconds, which could delay a tick.
+- **Printing holds signals off for a whole text.** On a real serial port a long line takes several milliseconds, which could delay a tick. The longest text is the report about a fetched page, about 700 bytes: roughly 60 ms on a real port at the speed set, which is six ticks.
 - **The first task has no stack of its own.** Task 0 still runs on the firmware's stack. There is also no spare stack for failures, so a failure inside the failure report, or running out of stack, resets the machine without a message.
 
 ## Memory
@@ -25,9 +25,15 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Network
 
-- The kernel has a network stack and is given an address, but nothing uses them yet: no connections, no name lookups, no encryption. The stack's features for those are switched off in `Cargo.toml`.
+- The page fetch is a demonstration: one fixed site, once per start, inside the stack's own task. There is no encryption, so nothing secret may be sent this way, and what arrives may have been read or changed on the way.
+- Every start of the kernel reaches the internet: one name question and one request to the site. A machine with no way out prints a "no page fetched" line instead.
+- While a page is fetched, the stack's task does nothing else. News about the address waits until the fetch is over, which is about 21 seconds at worst.
+- Only the first address of a name is tried: smoltcp is set to keep one. Only the 4-byte sort of address is asked for.
+- The site's answer is taken as it comes. A redirect is not followed. The length the site states is not compared with what arrived, so "the whole page" only means that the site ended the connection properly. A site that keeps the connection open is cut off after 10 seconds, and so is a page too big to arrive in that time.
+- A page arrives at about 70 KB a second. The card's adapter tells smoltcp "one packet at a time", so the other side sends one packet and waits, and the stack is looked at once per tick. The card could take 16 packets between two looks; saying so, and more room for arrived bytes, would speed this up.
+- After asking for one machine's hardware address, smoltcp asks for no other for a second. At each start that delays the page by a second, because the name server's address is asked for just before the gateway's. The by-hand gateway answer is not handed to the stack.
 - The by-hand gateway question is still asked at startup, with an assumed address (`10.0.2.15`) and gateway (`10.0.2.2`). The stack does not need it. It could go.
-- The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption.
+- The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch.
 - The stack's clock is the tick count, in steps of 10 ms, and runs slow when timer signals come late.
 - The stack is looked at once per tick whether or not anything happened, because the card sends no signals. smoltcp can say how long it may be left alone (`poll_delay`); that is not used.
 - Only the stack's own task may touch it. There is no way yet for another task to ask it for something.

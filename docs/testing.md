@@ -11,6 +11,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 - `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
 - The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
+- A normal boot reaches the internet: the kernel looks up one name and fetches one page. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
 
 ## Booting without a window
 
@@ -59,8 +60,9 @@ Other QEMU options that proved useful:
 | `-m 64M`, `-m 512M` | Other memory sizes (a later `-m` overrides the first) |
 | `-machine pc,max-ram-below-4g=128M` | Puts the rest of the guest's memory above 4 GB, without needing a large guest |
 | `-machine pc,i8042=off` | A machine without a keyboard controller |
-| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records six: the by-hand gateway question and its answer, then the four packets of the address request |
+| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records 21; [network.md](network.md) lists them |
 | `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` | QEMU's built-in network with other addresses, to show that the kernel's address is given and not assumed |
+| `-netdev user,id=net0,restrict=on` | QEMU's built-in network with no way out. The kernel still gets its address, but no name server is named, so it prints `Network: no page fetched, because the network named no name server` and sends nothing more. Use it for boots that should not touch the internet |
 | `-device virtio-net-pci` with no `-netdev` | A card attached to nothing, so nobody can answer |
 | `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
@@ -89,6 +91,15 @@ A test should be able to fail. For each protection or saved register that a test
 - Swapping two registers in the timer's stub is not a good break: every switch swaps them back, and the test passes by luck. Leaving one register unrestored cannot cancel out.
 - A register test must compare after every single switch, not once at the end. With one register left unrestored, a test that set the registers once, gave up its turn many times and compared at the end reported nothing: the task that finished first put the right value back as its function ended, and the other task then found it. Comparing all 15 registers after every turn reported 99,995 changes in 100,000 turns.
 - Two tasks doing ordinary work with lists did not catch a heap without protection in three seconds; a switch rarely lands inside the heap. Two tasks that do almost nothing but take and return pieces of one size caught it at once.
+
+## A server on the test computer
+
+The page fetch is tested against a server on the test computer, not against the real site.
+
+- QEMU's built-in network shows the host computer to the kernel as `10.0.2.2`. A program that listens on the host's own address `127.0.0.1` is reached there, and nothing of that leaves the computer.
+- The server was a short script that listens on one port of `127.0.0.1`, writes down what the kernel sends, and behaves well or badly on purpose: a small page, a big one, silence, garbage, a connection dropped half-way. Anything that can listen for connections will do.
+- Two temporary edits in `page.rs` point the kernel at it: `WEB_PORT` becomes the server's port, and the call of `name_lookup` is replaced by the fixed address `10.0.2.2`. No name question is sent then.
+- The real site is for seeing, a few times, that the real thing works. Do not use it for rows of test boots: its own page asks not to be relied on for testing.
 
 ## Deliberate bugs
 
@@ -221,7 +232,7 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 **The network stack and the address it is given**
 
 - The kernel prints the address it was given, `10.0.2.15`, and who gave it, `10.0.2.2`.
-- A recording of a whole boot holds six packets: the by-hand question and answer, then the kernel asking everybody for an address, the server's offer of `10.0.2.15`, the kernel's request, and the server's confirmation of `10.0.2.15`. The printed address is the confirmed one.
+- A recording of a whole boot held six packets at the time: the by-hand question and answer, then the kernel asking everybody for an address, the server's offer of `10.0.2.15`, the kernel's request, and the server's confirmation of `10.0.2.15`. The printed address is the confirmed one.
 - On another network (`192.168.76.0`, handing out from `.9`) the kernel prints `192.168.76.9`, given by `192.168.76.2`. So the address is given, not assumed. The by-hand gateway question, which does assume, prints "did not answer" there.
 - With the card attached to nothing, no address line is printed, nothing floods the output, and the boot goes on.
 - Renewal: with the address made to run out after 10 seconds, the stack renewed it every 5 seconds, eight times in 40 seconds. The address line was printed once, the free-frame count did not move, and the processor rested through 3,996 of 3,999 ticks.
@@ -230,8 +241,28 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - QEMU used 0.23 s of processor time while the tasks were at work and 0.02 s in five idle seconds, so looking at the stack once per tick costs next to nothing.
 - The build: no program compiled along the way is run, Windows recorded no block, and `Cargo.lock` names eight crates besides the kernel, two of them the copies.
 - Each file of the two copies was compared with the crate as downloaded: 131 of 135 are identical, three were edited, and one was added. `vendor/README.md` lists the edits.
+- The change that added the copies was also exported clean from git (`git archive`) into a temporary folder. It built there on its own, with no program run along the way, and the kernel built from it booted to the address line. Git holds every file under `vendor/` byte for byte as on disk.
 - A person ran `run.bat`, which built the kernel with the copies, and saw the line with the given address.
-- Not verified: an address being lost, more than one address source, a network that answers slowly or wrongly, anything that uses the address (connections, names), and any real hardware.
+- Not verified: an address being lost, more than one address source, a network that answers slowly or wrongly, and any real hardware.
+
+**Fetching a page**
+
+- From the real site: the kernel printed the name's address, the site's first line `HTTP/1.1 200 OK`, the first rows of the page and `the whole page is 577 bytes long`. A recording of that boot holds 21 packets, and the request in it is exactly `GET / HTTP/1.0`, `Host: example.com` and the empty line, 37 bytes. The real site was fetched three times in all and its name looked up four times.
+- Everything below ran against a server on the test computer (see "A server on the test computer"), with no traffic to the internet.
+- A small page: the server received the same 37 bytes, the kernel printed the page's six rows and its length of 109 bytes, and the server saw the connection closed properly.
+- A page of 300,000 bytes arrived whole. A digest worked out over every byte, in order, was the same on both sides. It took 4.3 seconds, about 70 KB a second.
+- Text meant to do harm: a first line of 5,000 signs with terminal commands in it, a line of notes 100,000 signs long, and a page with terminal commands, zero bytes, bytes above 126 and a line of 10,000 signs. The kernel's output held no byte that is not plain text and no line longer than 122 signs. With the cleaning taken out on purpose, 20 such bytes got through. With the cutting into rows taken out on purpose, a line of 10,004 signs did.
+- Line ends without byte 13, a page without a line end at its end, an answer with no page (a redirect, 0 bytes) and an answer that is not the web's language at all each gave a sensible report.
+- A server that says nothing: `the site sent nothing` after 10 seconds. One that closes at once: the same line, at once. One that stops half-way: `the page is not whole`, with the 100 bytes that came. One that drops the connection half-way: the same. One that never stops sending: cut off after 10 seconds with 719,580 bytes counted, and the server saw the connection dropped.
+- No server on the port: `the site did not agree to a connection in time`, after 5 seconds. A recording shows three requests to connect and no answer to any.
+- A name that cannot exist (`name.invalid`; that question did go to the host's name lookup): `the name server does not know the name`. A name server address where nobody lives: `the name server did not answer in time`, after 5 seconds. A network with no way out (`restrict=on`): `the network named no name server`, and the recording holds only the six packets of the gateway question and the address request.
+- Twenty fetches in a row: the count of free frames after the first fetch was still the same after the twentieth, and the server saw twenty proper closes. With the connection never taken off the stack's list, on purpose, the count fell by two or three frames per fetch. With the goodbye taken out on purpose, the server waited in vain for the close.
+- The network task used 11,432 bytes of its 64 KB stack with the real site, name lookup included, and up to 11,656 against the test server.
+- The address was still renewed after a fetch: with the address made to run out after 10 seconds, the stack went on renewing it every 5 seconds by the kernel's clock (the first two came about 7.8 seconds apart by the recording's clock, in a run whose ticks came late), the free-frame count did not move, and the processor rested through 3,991 of 3,999 ticks.
+- While a page was being fetched, two tasks printing 10,066 lines tore none, and the page report came in one piece in the middle of them. Two tasks hammering the heap, about 580,000 rounds each, found no wrong value while the 300,000-byte page arrived whole with the right digest.
+- A page-fault report still prints after a fetch. Keys are echoed. It boots and fetches with 64 MB and 512 MB and with the newer-only card. Without a card the boot is as before. Fifteen boots in a row each fetched the page from the test server. The rest count stays at 397 to 399 of 400; one run with every packet being recorded read 394.
+- Not verified: the line `the site refused the connection` (QEMU's network passes no refusal on, so it was never seen), packets lost or arriving out of order, a site that redirects or keeps the connection open, a site with several addresses of which the first does not work, a page too big for the 10 seconds (above roughly 700 KB), a host computer that is offline, and any real hardware.
+- A person ran `run.bat` and saw the name line and the page report.
 
 **The split into files**
 

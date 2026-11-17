@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. Nothing uses that address yet.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. With it the kernel fetches one web page at startup, without encryption, and prints how the page begins.
 
 ## Read in this order
 
@@ -17,7 +17,7 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 3. [interrupts.md](interrupts.md): failures, device signals, the interrupt controller, the timer, the keyboard.
 4. [memory.md](memory.md): the memory map, frames, page tables, the heap.
 5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
-6. [network.md](network.md): the PCI list, the network card, sending and receiving packets, QEMU's built-in network.
+6. [network.md](network.md): the PCI list, the network card, sending and receiving packets, the network stack, fetching a page, QEMU's built-in network.
 7. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
 8. [open-points.md](open-points.md): known limits and what later work must deal with.
 
@@ -43,7 +43,8 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `tasks.rs` | Tasks: `switch_entry!` (the switch, for the timer and for a task stepping aside), the list of tasks, `task_add`, `task_wait`, `task_rest` | [tasks.md](tasks.md) |
 | `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_memory_address` | [network.md](network.md) |
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
-| `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, `network_task` | [network.md](network.md) |
+| `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, and `network_task`, which also starts the page fetch | [network.md](network.md) |
+| `page.rs` | Fetching one page from the web: `page_fetch`, the name lookup, the connection, and `Answer`, which reads what the site sends | [network.md](network.md) |
 
 Which file uses which:
 
@@ -55,7 +56,7 @@ Which file uses which:
 - `interrupts.rs` uses `faults.rs`, `controller.rs`, `tasks.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
 - `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs` and `processor.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
 - `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
-- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp.
+- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `page.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp. `page.rs` uses `network.rs` (for `Card` and `now`), `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and smoltcp.
 
 Outside `src/`:
 
@@ -101,4 +102,5 @@ The code is written to be readable without a background in kernels: plain words,
 **Output**
 
 - Everything the kernel says goes through the serial port: `serial_print("...")` or `write!(serial, "...")` with `let mut serial = Serial;`. Lines end in `\r\n`.
-- From a task, build the line first and send it in one go, `serial_print(&format!(...))`, so another task's line cannot land in the middle of it.
+- From a task, build the line first and send it in one go, `serial_print(&format!(...))`, so another task's line cannot land in the middle of it. Lines that must stay together, such as the report about a fetched page, are built as one text and sent in one go too.
+- Text that comes from outside the kernel, such as a web page, is never printed as it arrived. Only plain letters, digits and signs pass; see `plain_sign` in `page.rs`.

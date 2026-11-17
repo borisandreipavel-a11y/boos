@@ -69,16 +69,22 @@ Network card: found, device 3 on bus 0 of the PCI list
 Network card: ready, its address is 52:54:00:12:34:56
 Network: the gateway 10.0.2.2 answered, its address is 52:55:0a:00:02:02
 Network: this machine was given the address 10.0.2.15 by 10.0.2.2
+Network: the name example.com belongs to the address <the site's address>
 Task A: 1
 Task B: 1
+Network: example.com answered "HTTP/1.1 200 OK". Its page begins:
+    <up to 8 rows of the page>
+Network: the whole page is 577 bytes long.
 Task A: 2
 Task B: 2
 Task A: 3
 Task B: 3
-The processor rested through 399 of the first 400 ticks.
+The processor rested through 398 of the first 400 ticks.
 Click the QEMU window and type. The letters appear here:
 ```
 
-That is with QEMU's 256 MB and the network card `run.bat` attaches. The address line comes from the network stack's task, within about a tenth of a second of the tasks starting, well before the first task line. Without a card, "Free memory" reads 206 MB and the four network lines become one, "Network card: none found". A card that cannot be set up gives "Network card: not set up, because ..." with the reason, and no gateway line. If nobody answers the question, the gateway line reads "Network: the gateway 10.0.2.2 did not answer", after a wait of about a second. If nobody hands out an address, no address line is printed. The task lines arrive half a second apart, taking turns. The rest count and the prompt follow a second after the last one; the count may be a few ticks lower, since the network stack's task now runs briefly on every tick. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
+That is with QEMU's 256 MB and the network card `run.bat` attaches. The address line comes from the network stack's task, within about a tenth of a second of the tasks starting, well before the first task line. Without a card, "Free memory" reads 206 MB and all the network lines become one, "Network card: none found". A card that cannot be set up gives "Network card: not set up, because ..." with the reason, and no gateway line. If nobody answers the question, the gateway line reads "Network: the gateway 10.0.2.2 did not answer", after a wait of about a second. If nobody hands out an address, no address line is printed and no page is fetched. The task lines arrive half a second apart, taking turns. The rest count and the prompt follow a second after the last one; the count reads 397 to 399, since the network stack's task runs briefly on every tick. One run with QEMU recording every packet read 394.
 
-The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks. The rest count shows that a waiting task uses no processor time.
+The three kinds of page lines come from the network stack's task as well. The name line follows the address line within about a tenth of a second. The report (the answer line, the page's rows and the length line) comes about a second later, in one piece, among the task lines: after the second of them in the runs so far. The address in the name line and the page itself belong to the site and can change; the listing shows what came on 2026-11-17, with the page's rows left out. If the page cannot be fetched, one line says why instead, `Network: no page fetched, because ...`, and it can come as late as after the prompt. [network.md](network.md) lists the reasons. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
+
+The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks. The rest count shows that a waiting task uses no processor time. Fetching the page at every start is a demonstration too.
