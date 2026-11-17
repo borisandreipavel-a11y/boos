@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for one thing so far, to print a text.
 
 ## Read in this order
 
@@ -54,7 +54,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `encryption_values.rs` | The values that check is made against | [encryption.md](encryption.md) |
 | `provider.rs` | The adapter between the TLS library and the crates that do the arithmetic: `provider` | [encryption.md](encryption.md) |
 | `tls.rs` | The encrypted link: `Wire`, `secure_ready`, `secure_exchange` | [encryption.md](encryption.md) |
-| `app_box.rs` | The locked box that apps run in: `box_run`, `box_check`, the limits, and `ADDING_APP`, a whole app of 41 bytes written by hand | [box.md](box.md) |
+| `app_box.rs` | The locked box that apps run in, and what an app may ask the kernel for: `box_run`, `box_check`, `kernel_print`, the limits, and two whole apps written by hand, `ADDING_APP` and `GREETING_APP` | [box.md](box.md) |
 
 Which file uses which:
 
@@ -69,7 +69,7 @@ Which file uses which:
 - `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `page.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp. `page.rs` uses `network.rs` (for `Card` and `now`), `tls.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and smoltcp.
 - `random.rs` and `clock.rs` use `processor.rs`.
 - `encryption.rs` uses `encryption_values.rs` and the crates for encryption. `provider.rs` uses `random.rs` and those crates. `tls.rs` uses `provider.rs`, `encryption.rs`, `clock.rs`, `random.rs`, `serial.rs`, `page.rs` (for `plain_text`) and rustls.
-- `app_box.rs` uses `page.rs` (for `plain_text`) and the crate wasmi.
+- `app_box.rs` uses `page.rs` (for `plain_text`), `serial.rs` and the crate wasmi.
 
 Outside `src/`:
 

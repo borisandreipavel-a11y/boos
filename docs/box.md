@@ -1,8 +1,8 @@
 # The box: running an app locked in
 
-Code: `src/app_box.rs`, the check in `efi_main`, and two copies in `vendor/` (`wasmparser`, `libm`).
+Code: `src/app_box.rs`, the two runs in `efi_main`, and two copies in `vendor/` (`wasmparser`, `libm`).
 
-An app is a program that is not part of the kernel. It runs inside a box: it gets one block of memory of its own and can touch nothing else. The box is kept by an outside library, wasmi, which carries the app out one small step at a time. Today the kernel can run one function of an app and get a number back. An app cannot ask the kernel for anything yet.
+An app is a program that is not part of the kernel. It runs inside a box: it gets one block of memory of its own and can touch nothing else. The box is kept by an outside library, wasmi, which carries the app out one small step at a time. What an app may ask the kernel to do is a short list, the system API. Today that list has one entry: print a text.
 
 ## The words
 
@@ -13,6 +13,7 @@ An app is a program that is not part of the kernel. It runs inside a box: it get
 - An app's **memory** is one block of bytes, counted in **pages** of 64 KB. Every read and write of the app is checked against the block's size.
 - A **table** is a list of functions an app can keep, to call one by its place in the list.
 - **Fuel** is a budget of steps. wasmi takes about one unit per step, and stops the app when the budget is used up.
+- The **system API** is the list of things an app may ask the kernel to do. A program names each thing it wants in its own bytes, as a pair of names such as `kernel` and `print`.
 
 ## The outside code
 
@@ -37,16 +38,40 @@ Security advisories, looked up on 2026-11-17: wasmi has two in its history. By t
 
 ## A run in the box
 
-`box_run(program, function, first, second)` runs one function of a program, hands it two whole numbers and gives back the whole number it answers with. Whatever goes wrong comes back as a reason in words, never as a kernel panic. The steps:
+`box_run(program)` runs an app: it gets the app ready and calls the app's function `start`, which takes nothing and gives back nothing. Whatever goes wrong comes back as a reason in words, never as a kernel panic.
 
-1. **A new engine**, set to count fuel. Each run has an engine of its own, dropped at the end. An engine keeps every program it has translated for as long as it lives: with one engine for 1,620 programs the heap grew by 7 MB, with an engine for each it did not grow at all.
+Getting an app ready is `box_start(program)`. Its steps:
+
+1. **A new engine**, set to count fuel. Each run has an engine of its own, which goes away with the store at the end. An engine keeps every program it has translated for as long as it lives: with one engine for 1,620 programs the heap grew by 7 MB, with an engine for each it did not grow at all.
 2. **`Module::new`** checks the program and translates it into wasmi's own steps. A program that breaks a rule is refused here, before any of it has run. wasmi also has `Module::new_unchecked`, which skips the check; it must never be used.
 3. **A store with limits** (see below) and with `APP_FUEL` units of fuel.
-4. **A linker with nothing in it.** The linker is where the kernel puts what an app may ask it for. Nothing is offered yet, so a program that asks for anything is not started.
+4. **A linker holding the system API.** The linker is where the kernel puts what an app may ask it for. A program that asks for anything that is not there, or for something in another shape than the kernel offers it in, is not started.
 5. **Starting the app**, which gives it its memory and table within the limits.
-6. **Finding the function** by name, seeing that it takes two whole numbers and gives one back, and calling it.
 
-`reason()` turns wasmi's error into text. That text can hold names taken from the program, so it is cleaned with `plain_text` and cut at 120 signs before it is shown.
+`box_run` then finds `start` by name, sees that it takes and gives nothing, and calls it. `box_check` uses `box_start` too, and calls a function `add` instead.
+
+That `start` is a function the app shows to the outside under this name. It is not WebAssembly's "start section", a different thing with a similar name: a program may name one function there that runs by itself during step 5. Such a function runs under the same limits and fuel, which are set before that step, but no program with one has been tried.
+
+`reason()` turns an error into text. wasmi's errors can hold names taken from the program, so the text is cleaned with `plain_text` and cut at 120 signs before it is shown.
+
+## The system API
+
+One call so far. An app reaches it as `print` of `kernel`.
+
+**`kernel.print(start, length)`** prints a text that lies in the app's own memory. `start` is the address where the text begins there, `length` how many bytes long it is; both are whole numbers of 32 bits. Nothing comes back. The kernel prints the text as one line with `App: ` in front.
+
+The text comes from outside the kernel, so `kernel_print` takes nothing about it on trust:
+
+- **The app must show its memory under the name `memory`.** That is how the kernel finds it. An app that prints without doing so is stopped.
+- **The whole text must lie inside the app's memory.** The reading is done by wasmi's `read`, which refuses if any part lies outside. A `start` below zero becomes a very large address, which is outside too. The app is stopped.
+- **A text is at most 200 bytes long** (`APP_TEXT_LIMIT`). A longer one, or a length below zero, stops the app. Without this check a length of 201 stopped the kernel itself, with a panic about the 200 bytes of room the text is copied into.
+- **An app may print 100 texts in one run** (`APP_PRINT_LIMIT`). The next one stops it. Fuel does not bound printing well: with this limit taken out on purpose, an app in a loop printed 400,000 lines in 40 seconds and was not done.
+- **Only plain letters, digits and signs are printed.** Every other byte becomes a dot, the bytes for a line end among them. So one call makes exactly one line, and an app cannot send commands to the terminal.
+- **`App: ` stands in front of every line.** An app can write "Kernel panic" in its text, but never at the start of a line. With the cleaning taken out on purpose, a test app's text did put a made-up `Kernel panic:` line on the screen, convincingly enough to fool the test script.
+
+"Stopped" means that `start` ends there and `box_run` gives back the reason, such as `it asked to print a text that lies outside its memory`. What the app printed before stays printed.
+
+To add a call: write a function like `kernel_print`, and name it in `box_start` with `linker.func_wrap("kernel", "its name", the_function)`. Treat everything the app hands over as untrusted: check numbers before using them as sizes, and read the app's memory only through `read`.
 
 ## The limits
 
@@ -59,6 +84,8 @@ An app is held to these. They are constants in `app_box.rs`.
 | Table (`APP_TABLE_LIMIT`) | 4096 places | Not started |
 | Tables | 1 | Not started |
 | Fuel (`APP_FUEL`) | 10,000,000 units per run | The app is stopped with "all fuel consumed" |
+| Length of a printed text (`APP_TEXT_LIMIT`) | 200 bytes | The app is stopped |
+| Texts printed (`APP_PRINT_LIMIT`) | 100 per run | The app is stopped |
 
 Two more come from wasmi and are left as it sets them: at most 1000 calls nested inside each other ("call stack exhausted" past that), and at most 1 MB for wasmi's own stack of an app's values.
 
@@ -69,21 +96,31 @@ Why they are needed:
 
 What the limits do not cover: wasmi's own bookkeeping for an app lives on the kernel's heap and is not counted in the app's memory. A translated program takes room in proportion to its size.
 
-## The smallest app
+## The two apps in the kernel
 
-`ADDING_APP` in `app_box.rs` is a whole WebAssembly program of 41 bytes with one function, `add`, that gives back the sum of two numbers. No compiler made it. The bytes are written out by hand with a comment on each group: a heading of 8 bytes, then four numbered sections (the kinds of function, the functions, what the app shows to the outside, the code), each with its length in front. The code itself is 7 bytes: no variables, take the first value, take the second, add, end.
+Both are whole WebAssembly programs written out by hand in `app_box.rs`, with a comment on each group of bytes. No compiler made them. Each has a heading of 8 bytes and then numbered sections, each with its length in front.
 
-## The check at startup
+- **`ADDING_APP`, 41 bytes.** One function, `add`, that gives back the sum of two numbers. Four sections: the kinds of function, the functions, what the app shows to the outside, the code. The code is 7 bytes: no variables, take the first value, take the second, add, end.
+- **`GREETING_APP`, 111 bytes.** It keeps the text "Hello from inside the box" in its memory and asks the kernel to print it. Three sections more: what it asks of the kernel (`kernel`, `print`), its memory (one page), and what the memory holds at the start (the 25 bytes of the text, at address 0). It shows two things to the outside, `memory` and `start`. The code of `start` is 8 bytes: no variables, the number 0, the number 25, call `print`, end.
 
-`box_check()` runs `ADDING_APP` once and asks it for 2 + 3. `efi_main` prints the result after the encryption line:
+## The two runs at startup
+
+`efi_main` runs both apps after the encryption line.
+
+`box_check()` runs `ADDING_APP` and asks it for 2 + 3:
 
 - `Box: a program of 41 bytes ran inside it and answered 2 + 3 = 5`
 - with a wrong answer: `Box: not working, the program inside it answered 2 + 3 = N`
 - when the run fails: `Box: not working, because ...` with wasmi's reason.
 
-The kernel carries on after any of the three. Nothing depends on the result yet.
+`box_run(&GREETING_APP)` follows. The line it brings is the app's own, printed by `kernel_print`:
 
-The check runs with device signals off, on the firmware's stack, like the encryption check before it. It goes 43 KB deep, of the 124 KB free there. How long it takes was not measured; it does not visibly slow the start.
+- `App: Hello from inside the box`
+- when the run fails: `Box: the app was stopped, because ...` with the reason.
+
+The kernel carries on whatever the outcome. Nothing depends on these runs yet.
+
+Both run with device signals off, on the firmware's stack, like the encryption check before them. The deeper one, the greeting app, goes 45 KB deep, of the 124 KB free there. How long they take was not measured; they do not visibly slow the start.
 
 ## Numbers with a point
 
@@ -93,21 +130,23 @@ WebAssembly has numbers with a point, so wasmi carries code for them. The build 
 
 In QEMU, in the plain debug build:
 
-- **Stack:** 43,112 bytes for the check at startup; 43,784 bytes for a run in a task, of the task's 256 KB. A trial with a program of 540 bytes went 44,376 deep. Larger programs will go deeper; nothing bigger has been run.
-- **Size:** the kernel's file grew from 2.9 MB to 6.1 MB.
-- **Speed:** checking and translating a program of 540 bytes took about 5 thousandths of a second. A small counting loop ran about 0.7 million rounds a second, at about 4 units of fuel a round. Ten million units of fuel lasted 2.15 seconds.
-- **Memory:** three rounds of 42 runs took 303 frames in the first round and none after. Two passes over 621 changed programs, eight runs each, took 160 frames in the first and none in the second. So nothing is lost from run to run; the heap only never hands frames back (see [memory.md](memory.md)).
+- **Stack:** 45,408 bytes for the greeting app, at startup and in a task alike, of the 124 KB free on the firmware's stack and of a task's 256 KB. The adding app went 43,112 deep when it was measured, before the print call existed. Larger programs will go deeper; nothing bigger than 540 bytes has been run.
+- **Size:** the kernel's file grew from 2.9 MB to 6.2 MB.
+- **Speed:** checking and translating a program of 540 bytes took about 5 thousandths of a second. A small counting loop ran about 0.7 million rounds a second, at about 4 units of fuel a round. Ten million units of fuel lasted about 2 seconds.
+- **Memory:** three rounds of 42 runs took 274 frames in the first round and none after. Two passes over 333 changed programs took none. So nothing is lost from run to run; the heap only never hands frames back (see [memory.md](memory.md)).
 - With the outside crates built optimized, in a trial: the file is about half the size, the stack a third as deep, and the steps about 25 times as fast. That setting is not in use; it would change how every outside crate is built.
 
 ## How to test it
 
-The programs for tests are made by hand, byte by byte, with a short script outside the repository; no compiler for WebAssembly is installed. Two habits that proved their worth:
+The programs for tests are made by hand, byte by byte, with a short script outside the repository; no compiler for WebAssembly is installed. Habits that proved their worth:
 
-- **Run every test program in another engine first** and take the expected values from there. Node has one built in: `WebAssembly.validate(bytes)` says whether a program follows the rules, and `new WebAssembly.Instance(new WebAssembly.Module(bytes), {})` runs it. A hand-made program with a mistake in it is otherwise indistinguishable from a runtime that is wrong.
-- **Change every byte of a good program, one at a time**, and run each changed copy. Most are refused by the check; the rest run and either answer or are stopped. None may bring the kernel down.
+- **Run every test program in another engine first** and take the expected outcome from there. Node has one built in: `WebAssembly.validate(bytes)` says whether a program follows the rules, and `new WebAssembly.Instance(new WebAssembly.Module(bytes), imports)` runs it, with `imports` holding a `print` that does what the kernel's is meant to do. A hand-made program with a mistake in it is otherwise indistinguishable from a runtime that is wrong.
+- **Change every byte of a good program, one at a time**, and run each changed copy. Most are refused by the check; the rest run and either end or are stopped. None may bring the kernel down.
+- **Look at every byte the kernel printed**, not only at the lines. Text meant to do harm shows as bytes that are not plain text, or as a line end that is not the two bytes 13 and 10.
+- **A script that waits for `Kernel panic` must look for it at the start of a line.** An app can print those words behind `App: `.
 
 [testing.md](testing.md) lists what was verified.
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: an app cannot ask the kernel for anything, only one function shape can be called, nothing is kept between two runs, every run translates the program again, and the version of wasmi cannot simply be raised.
+See [open-points.md](open-points.md). In short: an app can ask the kernel for one thing only, it runs once from `start` to the end and nothing of it is kept, every run translates the program again, and the version of wasmi cannot simply be raised.

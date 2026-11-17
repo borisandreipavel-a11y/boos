@@ -44,7 +44,7 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
-use app_box::{ADDING_APP, box_check};
+use app_box::{ADDING_APP, GREETING_APP, box_check, box_run};
 use clock::clock_read;
 use controller::controller_setup;
 use encryption::{encryption_check, trusted_roots};
@@ -182,6 +182,12 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         Err(reason) => {
             write!(serial, "Box: not working, because {}\r\n", reason).ok();
         }
+    }
+
+    // Now an app that asks the kernel for something: it hands over a text
+    // and the kernel prints it, with "App: " in front.
+    if let Err(reason) = box_run(&GREETING_APP) {
+        write!(serial, "Box: the app was stopped, because {}\r\n", reason).ok();
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.
