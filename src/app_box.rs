@@ -7,10 +7,12 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec;
 
 use wasmi::{Caller, Config, Engine, Error, Extern, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 
 use crate::page::plain_text;
+use crate::screen::screen_panel;
 use crate::serial::serial_print;
 
 // The most memory one app may have, in bytes. An app's memory comes in pieces
@@ -35,6 +37,13 @@ const APP_FUEL: u64 = 10_000_000;
 // app that printed without end would bury everything else on the screen.
 const APP_TEXT_LIMIT: usize = 200;
 const APP_PRINT_LIMIT: usize = 100;
+
+// The longest text an app may ask to have shown on the screen, in bytes, and
+// how often it may ask in one run. The text has to fit on one line of the
+// box it is shown in. Every showing paints that whole box again, which costs
+// the kernel time, so an app that showed without end has to be stopped too.
+const APP_SHOWN_TEXT_LIMIT: usize = 40;
+const APP_SHOW_LIMIT: usize = 20;
 
 // The smallest app there is: one function, `add`, which takes two whole
 // numbers and gives back their sum. No compiler made these bytes; they are
@@ -126,56 +135,135 @@ pub const GREETING_APP: [u8; 111] = [
     0x62, 0x6f, 0x78, // "box"
 ];
 
+// The same app again, with two things changed: it asks the kernel for `show`
+// instead of `print`, and its text is another one. The kernel shows the text
+// on the screen, in a box.
+pub const SHOWING_APP: [u8; 113] = [
+    // The heading: "\0asm", version 1.
+    0x00, 0x61, 0x73, 0x6d,
+    0x01, 0x00, 0x00, 0x00,
+    // Section 1, the kinds of function. 9 bytes follow.
+    0x01, 0x09,
+    0x02, // Two kinds.
+    0x60, 0x02, 0x7f, 0x7f, 0x00, // Kind 0: takes two whole numbers, gives back nothing.
+    0x60, 0x00, 0x00, // Kind 1: takes nothing, gives back nothing.
+    // Section 2, what the app asks of the kernel. 15 bytes follow.
+    0x02, 0x0f,
+    0x01, // One thing:
+    0x06, 0x6b, 0x65, 0x72, 0x6e, 0x65, 0x6c, // from the one called "kernel" (6 letters),
+    0x04, 0x73, 0x68, 0x6f, 0x77, // the thing called "show" (4 letters),
+    0x00, 0x00, // which is a function of kind 0. It becomes function 0.
+    // Section 3, the app's own functions. 2 bytes follow.
+    0x03, 0x02,
+    0x01, // One function,
+    0x01, // of kind 1. It becomes function 1.
+    // Section 5, the memory. 3 bytes follow.
+    0x05, 0x03,
+    0x01, // One memory.
+    0x00, 0x01, // "No upper limit named", and it starts with 1 page (64 KB).
+    // Section 7, what the app shows to the outside. 18 bytes follow.
+    0x07, 0x12,
+    0x02, // Two things.
+    0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, // "memory" (6 letters):
+    0x02, 0x00, // it is a memory, memory 0. The kernel reads the text from it.
+    0x05, 0x73, 0x74, 0x61, 0x72, 0x74, // "start" (5 letters):
+    0x00, 0x01, // it is a function, function 1. The kernel calls it to run the app.
+    // Section 10, the code. 10 bytes follow.
+    0x0a, 0x0a,
+    0x01, // The code of one function,
+    0x08, // 8 bytes long.
+    0x00, // It has no variables of its own.
+    0x41, 0x00, // The number 0: where the text begins in the app's memory.
+    0x41, 0x1c, // The number 28: how many bytes long the text is.
+    0x10, 0x00, // Call function 0 with those two: the kernel's show.
+    0x0b, // The end.
+    // Section 11, what the memory holds at the start. 34 bytes follow.
+    0x0b, 0x22,
+    0x01, // One piece:
+    0x00, // it goes into memory 0,
+    0x41, 0x00, 0x0b, // at the address 0,
+    0x1c, // and is 28 bytes long: "Hello from an app in the box".
+    0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, // "Hello "
+    0x66, 0x72, 0x6f, 0x6d, 0x20, // "from "
+    0x61, 0x6e, 0x20, // "an "
+    0x61, 0x70, 0x70, 0x20, // "app "
+    0x69, 0x6e, 0x20, // "in "
+    0x74, 0x68, 0x65, 0x20, // "the "
+    0x62, 0x6f, 0x78, // "box"
+];
+
 // What the kernel keeps for an app while it runs: the limits it holds the app
-// to, and how many texts the app has printed so far.
+// to, and how many texts the app has printed and shown so far.
 struct AppState {
     limits: StoreLimits,
     texts_printed: usize,
+    texts_shown: usize,
 }
 
-// The system API's first call. An app reaches it as `print` of `kernel`, and
-// hands over two whole numbers: where a text begins in its own memory, and
-// how many bytes long the text is. The kernel prints that text as one line
-// with "App: " in front.
+// Fetches a text that an app handed over, for the two calls below. The app
+// says where the text begins in its own memory and how many bytes long it
+// is; `limit` is the longest it may be, and `doing` is the word for what the
+// app asked for, "print" or "show", used in the reasons.
 //
 // The text comes from outside the kernel, so nothing about it is taken on
 // trust. A text that is too long, or that does not lie wholly inside the
-// app's memory, is not printed, and the app is stopped with the reason.
-// Only plain letters, digits and signs are printed; everything else becomes
-// a dot, so an app cannot send commands to the terminal or begin a line of
-// its own that looks like the kernel's.
-fn kernel_print(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Result<(), Error> {
-    if caller.data().texts_printed >= APP_PRINT_LIMIT {
-        return Err(Error::new("it printed too many texts"));
-    }
-    if length < 0 || length as usize > APP_TEXT_LIMIT {
-        return Err(Error::new("it asked to print a text that is too long"));
+// app's memory, is not handed on, and the app is stopped with the reason.
+// Only plain letters, digits and signs are kept; every other byte becomes a
+// dot, so an app cannot send commands to the terminal or begin a line of its
+// own that looks like the kernel's.
+fn app_text(caller: &Caller<'_, AppState>, start: i32, length: i32, limit: usize, doing: &str) -> Result<String, Error> {
+    if length < 0 || length as usize > limit {
+        return Err(Error::new(format!("it asked to {} a text that is too long", doing)));
     }
 
     // The app's memory, found under the name the app shows it by.
     let memory = caller
         .get_export("memory")
         .and_then(Extern::into_memory)
-        .ok_or_else(|| Error::new("it asked to print, but shows no memory called `memory`"))?;
+        .ok_or_else(|| Error::new(format!("it asked to {}, but shows no memory called `memory`", doing)))?;
 
     // Copy the text out of the app's memory. `read` refuses if any part of
     // it lies outside. A start below zero becomes a very large address here,
     // which is outside too.
-    let mut room = [0u8; APP_TEXT_LIMIT];
-    let text = &mut room[..length as usize];
+    let mut bytes = vec![0u8; length as usize];
     memory
-        .read(&caller, start as u32 as usize, text)
-        .map_err(|_| Error::new("it asked to print a text that lies outside its memory"))?;
+        .read(caller, start as u32 as usize, &mut bytes)
+        .map_err(|_| Error::new(format!("it asked to {} a text that lies outside its memory", doing)))?;
 
-    // Clean the text and print it as one line, in one go.
-    let mut line = String::from("App: ");
-    for &byte in text.iter() {
-        line.push(if (b' '..=b'~').contains(&byte) { byte as char } else { '.' });
+    // Clean the text.
+    let mut text = String::new();
+    for &byte in bytes.iter() {
+        text.push(if (b' '..=b'~').contains(&byte) { byte as char } else { '.' });
     }
-    line.push_str("\r\n");
-    serial_print(&line);
+    Ok(text)
+}
 
+// The system API's first call. An app reaches it as `print` of `kernel`, and
+// hands over two whole numbers: where a text begins in its own memory, and
+// how many bytes long the text is. The kernel prints that text as one line
+// with "App: " in front, in one go.
+fn kernel_print(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Result<(), Error> {
+    if caller.data().texts_printed >= APP_PRINT_LIMIT {
+        return Err(Error::new("it printed too many texts"));
+    }
+    let text = app_text(&caller, start, length, APP_TEXT_LIMIT, "print")?;
+    serial_print(&format!("App: {}\r\n", text));
     caller.data_mut().texts_printed += 1;
+    Ok(())
+}
+
+// The second call. An app reaches it as `show` of `kernel` and hands over a
+// text in the same way. The kernel shows the text on the screen, in a box.
+// The app says only what it wants shown. How the box looks and where it sits
+// is the kernel's business: see `screen_panel`. On a machine without a
+// usable screen nothing is shown, and the app carries on all the same.
+fn kernel_show(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Result<(), Error> {
+    if caller.data().texts_shown >= APP_SHOW_LIMIT {
+        return Err(Error::new("it showed too many texts"));
+    }
+    let text = app_text(&caller, start, length, APP_SHOWN_TEXT_LIMIT, "show")?;
+    screen_panel(&text);
+    caller.data_mut().texts_shown += 1;
     Ok(())
 }
 
@@ -206,15 +294,16 @@ fn box_start(program: &[u8]) -> Result<(Store<AppState>, Instance), String> {
         .tables(1)
         .instances(1)
         .build();
-    let mut store = Store::new(&engine, AppState { limits, texts_printed: 0 });
+    let mut store = Store::new(&engine, AppState { limits, texts_printed: 0, texts_shown: 0 });
     store.limiter(|state| &mut state.limits);
     store.set_fuel(APP_FUEL).map_err(reason)?;
 
     // The linker holds the system API: what an app may ask the kernel for.
-    // That is one thing so far. An app that asks for anything else, or for
-    // `print` in another shape, is not started.
+    // That is two things so far. An app that asks for anything else, or for
+    // one of the two in another shape, is not started.
     let mut linker = <Linker<AppState>>::new(&engine);
     linker.func_wrap("kernel", "print", kernel_print).map_err(|problem| reason(Error::from(problem)))?;
+    linker.func_wrap("kernel", "show", kernel_show).map_err(|problem| reason(Error::from(problem)))?;
 
     let app = linker.instantiate_and_start(&mut store, &module).map_err(reason)?;
     Ok((store, app))

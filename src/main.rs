@@ -46,7 +46,7 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
-use app_box::{ADDING_APP, GREETING_APP, box_check, box_run};
+use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
 use clock::clock_read;
 use controller::controller_setup;
 use encryption::{encryption_check, trusted_roots};
@@ -59,7 +59,7 @@ use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
-use screen::{Colour, screen_fill, screen_rectangle, screen_setup, screen_text};
+use screen::{Colour, screen_fill, screen_setup, screen_text};
 use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
 use tasks::{RESTED_TICKS, task_add, task_rest, task_wait};
@@ -142,18 +142,13 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     }
 
     // What the firmware said about the screen. If there is one, try it:
-    // paint all of it dark blue, an orange rectangle in the middle, and a
-    // sentence in white near the top left corner.
+    // paint all of it dark blue, and write a sentence in white near the top
+    // left corner.
     match screen {
         Ok(screen) => {
             write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
             screen_setup(screen);
             screen_fill(Colour { red: 0, green: 40, blue: 90 });
-            // The rectangle is 300 dots across and 200 down. Half the
-            // screen's width less half its own puts it in the middle.
-            let left = (screen.width / 2).saturating_sub(150);
-            let top = (screen.height / 2).saturating_sub(100);
-            screen_rectangle(left, top, 300, 200, Colour { red: 255, green: 150, blue: 0 });
             // The 2 makes every dot of a letter a block of 2 by 2 dots.
             screen_text(40, 40, "Hello from my kernel! I draw my own letters now.", 2, Colour { red: 255, green: 255, blue: 255 });
         }
@@ -215,6 +210,13 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     // and the kernel prints it, with "App: " in front.
     if let Err(reason) = box_run(&GREETING_APP) {
         write!(serial, "Box: the app was stopped, because {}\r\n", reason).ok();
+    }
+
+    // And an app that asks for its text to be shown on the screen. The
+    // kernel paints a box in the middle of the screen and writes the app's
+    // text in it. Nothing is printed for it unless the app is stopped.
+    if let Err(reason) = box_run(&SHOWING_APP) {
+        write!(serial, "Box: the app that shows a text was stopped, because {}\r\n", reason).ok();
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.

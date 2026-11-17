@@ -68,9 +68,12 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The box
 
-- **An app can ask the kernel for one thing only: to print a text.** A program that wants to read a key, know the time or draw is not started.
+- **An app can ask the kernel for two things only: to print a text, and to show a text on the screen.** A program that wants to read a key, know the time or paint is not started.
 - **What an app prints goes to the serial port,** as plain signs: no letters beyond the English ones, at most 200 bytes a text and 100 texts a run. Each line is sent with device signals off, like all printing (see "Tasks").
-- **Every app may print.** There is no saying yet which app may use which call.
+- **What an app shows is one line of at most 40 plain signs, in one box.** There is one box for every app, of a fixed size, in the middle of the screen, and the app that shows last wins. An app can show 20 texts a run, cannot show several things at once, cannot take its text off again, and cannot tell whether there is a screen at all.
+- **An app has no say in how its text looks, and neither has the person at the machine.** The look of the box is a set of values in `screen.rs`, fixed when the kernel is built. Changing the look while the kernel runs, or letting an app add wishes to it, needs new work; so does arranging several things in a box.
+- **Showing holds everything else up.** Each showing paints the box with device signals off when it happens at startup, about a hundredth of a second each time.
+- **Every app may print and show.** There is no saying yet which app may use which call.
 - **An app runs once, from the beginning of its `start` to the end.** It cannot wait for something, be called again later, or be handed anything by the kernel.
 - **Nothing is kept between two runs.** Each run checks and translates the program again and starts the app from nothing. A translated program cannot be kept for later, because it lives in an engine and each run drops its engine.
 - **A run holds its caller until it ends.** The check at startup runs with device signals off on the firmware's stack. A run in a task is switched away by the timer like any other work, but the task that called it waits for the answer, up to the whole of the fuel: about two seconds in this build.
@@ -103,19 +106,19 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The screen
 
-- **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures, and no app can draw. See [screen.md](screen.md).
+- **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures. An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).
 - **Text is one line of plain English signs.** Nothing wraps round at the right edge, a line break is not understood, and every sign outside the 95 plain ones, a letter with an accent among them, shows as an empty box. The letters have one shape and one thickness; larger text is the same shapes with bigger dots.
 - **The kernel's own lines do not appear on the screen.** They go to the serial port only, so a machine without one shows the picture and says nothing.
 - **Nothing remembers what is written where.** Text cannot be taken off again except by painting over it, and there is no place on the screen that scrolls.
 - **Painting is slow.** Filling the screen takes roughly 0.16 s in this kind of build, possibly up to half as much again, at startup with device signals off. Dots are written one at a time, each through a function call; writing a row in one go was measured at twenty times the speed and not kept, for the sake of plain code.
 - **There is one picture and no copy of it.** What is painted shows at once, half-finished drawing included, and nothing remembers what was under a rectangle.
-- **Nothing decides who may draw.** Any code can paint anywhere, and two tasks drawing at once give a mixed picture. Today only startup draws.
+- **Nothing decides who may draw.** Any code in the kernel can paint anywhere, and two tasks drawing at once give a mixed picture. Today all drawing happens at startup.
 - **The screen's memory may lie in ordinary memory.** With QEMU's `ramfb` display it does, in a stretch the firmware's memory map calls kind 0, "set aside". The frame pile takes only kind 7, and the plan to hand out the firmware's startup memory (kinds 3 and 4, see "Memory") would not touch kind 0 either. This rests on the firmware's map: a firmware that listed the screen's memory as one of those kinds would have it handed out.
 - The screen's memory is device memory and is mapped like ordinary memory; see "Network" for the "do not cache" mark. For a screen, real hardware has a mark of its own that makes many small writes fast, which the kernel does not set either.
 - **Two ways of writing a colour are known:** red, green, blue and blue, green, red, at four bytes a dot. A screen that describes its colours with masks is refused, although it could be used. Only the second order was ever seen.
 - **The screen is taken as the firmware left it.** The kernel does not choose a size, and looks at the first graphics service only, so a machine with two screens shows one.
 - **A screen that can only be drawn on through the firmware's functions is refused.** Those functions are gone after the takeover.
-- The picture at startup, a blue screen with an orange rectangle and one sentence, is a demonstration.
+- The sentence written at startup is a demonstration, and so is the app that shows a text.
 
 ## Real hardware
 

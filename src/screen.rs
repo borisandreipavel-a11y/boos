@@ -1,8 +1,8 @@
-//! Drawing on the screen: filling it, filled rectangles, and text.
-//! Notes: `docs/screen.md`.
+//! Drawing on the screen: filling it, filled rectangles, text, and the box
+//! in which an app's text is shown. Notes: `docs/screen.md`.
 
 use crate::firmware::{ColourOrder, Screen};
-use crate::letters::{LETTER_WIDTH, letter_shape};
+use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH, letter_shape};
 use crate::page_tables::map_device_memory;
 use crate::processor::device_write_32;
 
@@ -96,6 +96,84 @@ pub fn screen_text(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
         // empty column so that the signs do not touch.
         sign_left = sign_left.saturating_add(size.saturating_mul(LETTER_WIDTH + 1));
     }
+}
+
+// How the box looks in which an app's text is shown. The code calls that box
+// a "panel", because "box" already means the locked box that apps run in.
+// An app only says which text it wants shown. Everything about the look is
+// decided here, in this one place, so that changing the look of every app
+// means changing these values and nothing else.
+struct PanelStyle {
+    // How many dots the panel is across and down.
+    width: u32,
+    height: u32,
+    // How many dots thick the frame round it is, and the frame's colour.
+    frame: u32,
+    frame_colour: Colour,
+    // The colour inside the frame, and the colour of the letters.
+    inside_colour: Colour,
+    text_colour: Colour,
+    // How large a dot of a letter is painted (see `screen_text`).
+    text_size: u32,
+    // How far the text begins from the panel's left and top edges.
+    text_left: u32,
+    text_top: u32,
+}
+
+// A light panel with an orange frame and black letters. At this width and
+// letter size it holds one line of 40 signs.
+const PANEL_STYLE: PanelStyle = PanelStyle {
+    width: 520,
+    height: 60,
+    frame: 3,
+    frame_colour: Colour { red: 255, green: 150, blue: 0 },
+    inside_colour: Colour { red: 240, green: 240, blue: 240 },
+    text_colour: Colour { red: 0, green: 0, blue: 0 },
+    text_size: 2,
+    text_left: 20,
+    text_top: 21,
+};
+
+// Shows a text in the panel: paints the panel and writes the text in it, on
+// one line. Painting the whole panel each time wipes out what it showed
+// before. Where the panel sits is part of the look as well: in the middle of
+// the screen.
+pub fn screen_panel(text: &str) {
+    let Some(screen) = (unsafe { SCREEN }) else {
+        return;
+    };
+    let style = PANEL_STYLE;
+
+    // Half the screen's width less half the panel's puts it in the middle.
+    let left = (screen.width / 2).saturating_sub(style.width / 2);
+    let top = (screen.height / 2).saturating_sub(style.height / 2);
+
+    // The frame: the whole panel in the frame's colour first, then the
+    // inside painted over it, smaller by the frame's thickness on each side.
+    screen_rectangle(left, top, style.width, style.height, style.frame_colour);
+    screen_rectangle(
+        left.saturating_add(style.frame),
+        top.saturating_add(style.frame),
+        style.width.saturating_sub(style.frame.saturating_mul(2)),
+        style.height.saturating_sub(style.frame.saturating_mul(2)),
+        style.inside_colour,
+    );
+
+    // Nothing an app shows may land outside the panel. `screen_text` stops
+    // only at the screen's edges, so the text is held to the panel here: it
+    // is written only if a line of letters fits between top and bottom, and
+    // only as many signs of it as fit whole between left and right.
+    let sign_width = style.text_size.saturating_mul(LETTER_WIDTH + 1);
+    let line_height = style.text_size.saturating_mul(LETTER_HEIGHT);
+    if sign_width == 0 || style.text_top.saturating_add(line_height) > style.height {
+        return;
+    }
+    let room = style.width.saturating_sub(style.text_left.saturating_mul(2)) / sign_width;
+    let shown = match text.char_indices().nth(room as usize) {
+        Some((cut, _)) => &text[..cut],
+        None => text,
+    };
+    screen_text(left.saturating_add(style.text_left), top.saturating_add(style.text_top), shown, style.text_size, style.text_colour);
 }
 
 // Paints the whole screen in one colour.

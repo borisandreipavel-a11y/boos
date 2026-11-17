@@ -7,7 +7,7 @@
 // sign. The last two are for the tails of letters such as g, p and y, which
 // hang below the line of writing.
 pub const LETTER_WIDTH: u32 = 5;
-const LETTER_HEIGHT: u32 = 9;
+pub const LETTER_HEIGHT: u32 = 9;
 pub type Shape = [[u8; LETTER_WIDTH as usize]; LETTER_HEIGHT as usize];
 
 // To change the look of a sign, change its picture below. Every row must
