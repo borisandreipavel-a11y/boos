@@ -79,21 +79,69 @@ pub fn next_key() -> Option<u8> {
 // typed sign away. It is the number computers have long used for it.
 pub const BACKSPACE: u8 = 8;
 
+// The key numbers of the two Shift keys: the number each sends when it is
+// pressed, and the number it sends when it is let go, which is 128 more.
+const LEFT_SHIFT: u8 = 42;
+const RIGHT_SHIFT: u8 = 54;
+const LEFT_SHIFT_LET_GO: u8 = LEFT_SHIFT + 128;
+const RIGHT_SHIFT_LET_GO: u8 = RIGHT_SHIFT + 128;
+
+// Some keys, such as the arrows and Print Screen, send this number first and
+// their own number after it. It marks the number that follows as belonging
+// to such a key.
+const MARK: u8 = 224;
+
+// Whether each Shift key is held down right now, and whether the number
+// taken last was the mark. Only `key_letter` reads and changes these, and
+// only the main loop calls it.
+static mut LEFT_SHIFT_HELD: bool = false;
+static mut RIGHT_SHIFT_HELD: bool = false;
+static mut AFTER_MARK: bool = false;
+
 // Turns a key number into its letter on a US keyboard. A key number says where
 // the key sits, not what is printed on it: the keys are numbered row by row.
 // Letting a key go sends its number plus 128, which has no letter here.
 // Enter and Backspace have no letter either; they come back as the numbers
 // that stand for them, `b'\n'` and `BACKSPACE`.
+//
+// While a Shift key is held down, a key gives its second sign: a capital
+// letter, or the sign printed above a digit. The Shift keys give no letter
+// themselves; this function remembers whether they are down. So it must be
+// handed every key number, in the order the numbers arrived.
 pub fn key_letter(key: u8) -> Option<u8> {
-    let (first_key, row): (u8, &[u8]) = match key {
-        2..=13 => (2, b"1234567890-="),
+    // The mark gives nothing. Remember it for the number that comes next.
+    if key == MARK {
+        unsafe { AFTER_MARK = true };
+        return None;
+    }
+    let after_mark = unsafe { AFTER_MARK };
+    unsafe { AFTER_MARK = false };
+
+    // A Shift key going down or coming up. Some keyboards send a Shift
+    // number behind the mark, around keys such as Print Screen, although
+    // nobody touched Shift. Those are not the Shift keys and are passed over.
+    if !after_mark {
+        match key {
+            LEFT_SHIFT => unsafe { LEFT_SHIFT_HELD = true },
+            RIGHT_SHIFT => unsafe { RIGHT_SHIFT_HELD = true },
+            LEFT_SHIFT_LET_GO => unsafe { LEFT_SHIFT_HELD = false },
+            RIGHT_SHIFT_LET_GO => unsafe { RIGHT_SHIFT_HELD = false },
+            _ => {}
+        }
+    }
+    let shift = unsafe { LEFT_SHIFT_HELD || RIGHT_SHIFT_HELD };
+
+    // Each row of keys, as it is without Shift and as it is with Shift.
+    let (first_key, plain, shifted): (u8, &[u8], &[u8]) = match key {
+        2..=13 => (2, b"1234567890-=", b"!@#$%^&*()_+"),
         14 => return Some(BACKSPACE),
-        16..=27 => (16, b"qwertyuiop[]"),
+        16..=27 => (16, b"qwertyuiop[]", b"QWERTYUIOP{}"),
         28 => return Some(b'\n'), // Enter.
-        30..=41 => (30, b"asdfghjkl;'`"),
-        43..=53 => (43, b"\\zxcvbnm,./"),
+        30..=41 => (30, b"asdfghjkl;'`", b"ASDFGHJKL:\"~"),
+        43..=53 => (43, b"\\zxcvbnm,./", b"|ZXCVBNM<>?"),
         57 => return Some(b' '), // The space bar.
         _ => return None,
     };
+    let row = if shift { shifted } else { plain };
     Some(row[(key - first_key) as usize])
 }

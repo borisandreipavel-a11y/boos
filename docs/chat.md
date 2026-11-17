@@ -15,7 +15,7 @@ The chat box is the place on the screen where the person at the machine types. I
 - **What is said is repeated in the terminal,** as whole lines: the person's line and the answer, sent in one go when Enter is pressed. Single keys are not echoed there any more, so the terminal never gets a byte that is not plain text.
 - **On a machine without a usable screen** nothing is shown and no rows are kept, but typing works: the line is collected, held to 50 signs, and repeated with its answer in the terminal on Enter.
 
-Only the keys `key_letter` knows can be typed: the small letters, the digits, the signs on their keys without Shift, the space bar, Enter and Backspace. Shift is not understood, so Shift with `a` types `a`. The arrow keys, Esc, Tab, Delete and the F keys give nothing.
+Only the keys `key_letter` knows can be typed: the letters, small and with Shift capital, the digits, the signs of a US keyboard with and without Shift, the space bar, Enter and Backspace. That is every one of the 95 signs the screen has a picture for. Caps Lock does nothing. The arrow keys, Esc, Tab, Delete and the F keys give nothing. See [interrupts.md](interrupts.md) for how Shift is followed.
 
 ## The look
 
@@ -73,4 +73,4 @@ Everything in the chat box today comes from the keyboard or from the kernel's ow
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, one task may use the chat box, six rows are shown and nothing older is kept, there are no capital letters, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, one task may use the chat box, six rows are shown and nothing older is kept, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

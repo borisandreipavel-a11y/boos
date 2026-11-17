@@ -80,10 +80,14 @@ Limits:
 - The mouse is switched off in the settings byte on purpose. The mouse shares the keyboard's waiting byte, and nothing listens on its line, so a mouse byte would block the keyboard.
 - The main loop takes keys out with `next_key`, turns them into letters with `key_letter`, and hands each letter to the chat box (`chat_key`, see [chat.md](chat.md)).
 - A key number says where the key sits, not what is printed on it. Letting a key go sends the same number plus 128.
-- `key_letter` knows the US layout in lower case, the space bar, Enter and Backspace. Enter and Backspace have no letter; they come back as the numbers that stand for them, `b'\n'` and `BACKSPACE` (8). Backspace is key number 14. Everything else gives nothing.
-- Shift is not understood: with Shift held down, a key gives the same small letter as without.
+- `key_letter` knows the US layout, the space bar, Enter and Backspace. Enter and Backspace have no letter; they come back as the numbers that stand for them, `b'\n'` and `BACKSPACE` (8). Backspace is key number 14. Everything else gives nothing.
+- **Shift.** While a Shift key is held down, a key gives its second sign: a capital letter, or the sign printed above a digit or beside another sign (`!` for `1`, `?` for `/`, `_` for `-`, and so on for all 47 keys with a sign). The space bar, Enter and Backspace are the same with Shift as without.
+  - The left Shift key is number 42 and the right one 54. Like every key, each sends its number when pressed and its number plus 128 when let go. `key_letter` remembers for each of the two whether it is down (`LEFT_SHIFT_HELD`, `RIGHT_SHIFT_HELD`), and Shift counts as held while either is. So `key_letter` is no longer a plain look-up: it must be handed every key number, in the order the numbers arrived, and only one task may call it. The main loop does.
+  - The two rows of signs for each row of keys stand side by side in `key_letter`, the plain one and the one with Shift.
+  - **The mark.** Some keys, the arrows and Print Screen among them, send the number 224 first and their own number after it. Print Screen sends, behind the mark, the number of the left Shift key, although nobody touched Shift: in QEMU pressing it gives 224, 42, 224, 55, and letting it go 224, 183, 224, 170. `key_letter` remembers that the last number was the mark (`AFTER_MARK`) and passes over a Shift number that follows one. Without that rule a letter typed while Print Screen is held came out as a capital. Every other number behind the mark is looked up like a number without one. So Enter and `/` on the number pad work as Enter and `/`, and the up arrow and Delete give nothing, because their numbers (72 and 83) belong to no row of signs. A key that sent the mark and then a number from a row of signs would type that sign; none was looked for.
+  - If the waiting line is full when a Shift key is let go, that number is dropped and Shift stays held in `key_letter`'s books. Pressing and letting go the same Shift key again puts it right.
 
-Left out on purpose, as possible additions: Shift and capitals, any layout other than US.
+Left out on purpose, as possible additions: Caps Lock, any layout other than US.
 
 ## Rules for handlers
 

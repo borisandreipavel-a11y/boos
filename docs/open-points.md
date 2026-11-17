@@ -102,7 +102,10 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Keyboard
 
-- Shift and capitals, and layouts other than US, are left out. With Shift held down a key gives its small letter.
+- Caps Lock and layouts other than US are left out. Ctrl is not understood either: a key gives its usual sign while it is held. Alt was not tried.
+- **Shift can stick.** Whether a Shift key is down is worked out from the key numbers as the main loop takes them. If the waiting line is full when Shift is let go, that number is dropped, and every key gives its second sign until the same Shift key is pressed and let go again.
+- **Shift numbers behind the mark are passed over,** which is right for Print Screen as QEMU plays it. What real keyboards send around the arrow keys and the number pad was not looked at.
+- **Any other number behind the mark is looked up like an ordinary key's.** A key that sends the mark and then a number from a row of signs would type that sign. The up arrow, Delete and Print Screen do not; no other such key was looked for.
 - The waiting line holds 16 key numbers, two for each key pressed and let go. Keys that arrive faster than the main loop takes them out are dropped, and the main loop paints after every key, about 8 thousandths of a second each time. Keys 10 thousandths of a second apart all arrived; keys 5 apart did not.
 
 ## The chat box
@@ -111,7 +114,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Only the main loop may use the chat box.** Its lists are not protected, and there is no way yet for another task to hand it a text. A task that gets an answer from somewhere, such as the network task, cannot show it there.
 - **Six rows of what was said are shown, and nothing older is kept.** There is no scrolling back.
 - **A long text is cut into rows where the row ends,** in the middle of a word if need be.
-- **A line is at most 50 signs,** small letters, digits and a few signs. There are no capital letters and no way to move inside the line; only its last sign can be taken away.
+- **A line is at most 50 signs,** and there is no way to move inside it; only its last sign can be taken away.
 - **The mark for the next sign does not blink.** A key held down repeats as fast as the keyboard sends it; the kernel sets no pace of its own.
 - **Sending a line paints the rows again from nothing,** about a twentieth of a second in this kind of build. For that moment the rows are blank. In a QEMU window that showed no flicker; on a slower machine or with more rows it might. Painting a row in one go (see "The screen") would shorten it.
 - **The look is fixed when the kernel is built,** as a set of values in `chat.rs`. Neither the person at the machine nor anything else can change it while the kernel runs. The box that shows an app's text has its own set in `screen.rs`; the two are not one.

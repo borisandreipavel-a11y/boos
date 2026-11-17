@@ -38,7 +38,7 @@ Monitor commands that proved useful:
 
 | Command | What it gives |
 | --- | --- |
-| `sendkey a`, `sendkey ret`, `sendkey spc`, `sendkey backspace`, `sendkey shift-a` | A key press, as if typed in the window. The signs have names: `minus`, `equal`, `bracket_left`, `bracket_right`, `semicolon`, `apostrophe`, `grave_accent`, `backslash`, `comma`, `dot`, `slash`. A number behind the key says how many thousandths of a second it is held down (`sendkey a 20`); without one it is 100 |
+| `sendkey a`, `sendkey ret`, `sendkey spc`, `sendkey backspace`, `sendkey shift-a` | A key press, as if typed in the window. The signs have names: `minus`, `equal`, `bracket_left`, `bracket_right`, `semicolon`, `apostrophe`, `grave_accent`, `backslash`, `comma`, `dot`, `slash`. A number behind the key says how many thousandths of a second it is held down (`sendkey a 20`); without one it is 100. Keys joined with `-` are pressed in that order and held together: `shift-a` is a capital A, `shift_r-a` the same with the right Shift key, `shift-c-d` two capitals, `print-a` a letter while Print Screen is held |
 | `mouse_move 20 20`, `mouse_button 1`, `mouse_button 0` | Mouse movement and clicks |
 | `info registers` | Where the processor is (`RIP`), whether it sleeps (`HLT=1`), `CR3` |
 | `info mem` | What the current page tables cover |
@@ -438,7 +438,7 @@ The entries above that say "keys are echoed" are from before the chat box: the t
 
 - Every check below compared a picture saved with `screendump` dot by dot with the picture that is meant, and the end of the terminal's output word for word with the lines that are meant. The checking script builds its picture from the style's numbers typed into it and the grids in `letters.rs`, and keeps its own account of what the chat box should hold after each key. Nothing in it comes from what the kernel prints or paints.
 - The plain case, on the machine `run.bat` starts, a picture after each step, every dot right each time: the empty chat box with the kernel's first row; ten signs typed and not sent, which shows that letters appear while they are typed; four of them taken away with Backspace; six more and Enter, after which the line and the answer stand in the rows above and the row for typing is empty; Enter, Backspace and Enter on an empty line, which change nothing; and eight keys of which only two have a letter.
-- Keys without a letter: the up and left arrows, F1, Esc, Tab and Delete gave nothing. Shift with `a` typed `a`, and Ctrl with `c` typed `c`.
+- Keys without a letter: the up and left arrows, F1, Esc, Tab and Delete gave nothing. Ctrl with `c` typed `c`. Shift with `a` typed `a` at that time; Shift came later, see "Shift" below.
 - Limits and long rows: 55 keys typed and 50 signs taken; that line sent; four more lines sent, so that the six rows are full and the oldest go, with a short row landing where a long one stood; twelve signs typed and fourteen Backspaces; and every sign the keyboard knows, typed and sent. Eight pictures, every dot right, and the terminal's lines as meant.
 - The same on other machines, every dot right: `-vga cirrus` and `ramfb` (800 by 600, where a row holds 57 signs and the answer to the longest line takes two rows), a screen of 1024 by 768, `-machine q35`, `-cpu max`, and 96 MB. On all of them the chat box, the app's box and the sentence do not touch.
 - Without a display card (`-vga none`): nothing is painted, and the terminal's lines are the same as with a screen, the limit of 50 signs included.
@@ -453,6 +453,19 @@ The entries above that say "keys are echoed" are from before the chat box: the t
 - How the chat box looks was judged by eye in three of the saved pictures: one on the usual screen, one on a screen of 800 by 600 with full rows and an answer that takes two, and one with every sign.
 - A person ran `run.bat`, typed in the chat box in the QEMU window, and saw the letters and the kernel's answer there. Sending a line showed no flicker, and a key held down typed more of its letter.
 - Not verified: a screen smaller than 800 by 600; style values that make the chat box larger than the screen or leave no room for a sign; a second task using the chat box; the page being fetched while keys are typed (the test boots stayed off the internet); the failure reports and the 15-boots check of earlier work were not repeated.
+
+- Checked after the change that brought the chat box in: a clean export of it differed from the working files in line ends only; it built on its own in 19 seconds with no warning and no program run along the way; its kernel booted to the prompt, and with keys typed the eight pictures of the chat box were right in every dot and the terminal's 38 lines as meant.
+
+**Shift**
+
+- What QEMU sends was looked at first, by a temporary snippet that printed every key number: the left Shift key 42 and 170, the right one 54 and 182, a letter with Shift held in between; Print Screen 224, 42, 224, 55 and, when let go, 224, 183, 224, 170; the up arrow, Delete and the number pad's Enter and `/` each behind a 224; Caps Lock 58 and 186.
+- Typed through QEMU, with a picture compared dot by dot and the terminal's lines word for word after each step: `Hello, World!?`, typed and not yet sent, then sent; all 47 second signs in one line; all 47 first signs in the next, so Shift does not stay on.
+- Special cases, in one line that came out as meant: the right Shift key; both Shift keys at once; Shift held over two letters; a letter after Shift was let go; a letter typed while Print Screen was held, which stays small; Caps Lock, which does nothing; and Shift with the space bar, with Backspace and with Enter, which work as without.
+- Key numbers handed straight to `key_letter` by a temporary snippet at startup, and compared with tables typed into the checking script: all 256 numbers without Shift, with the left Shift held and with the right one, every answer as meant. Eleven rows of numbers that cannot be typed through QEMU, all as meant: both Shift keys down and one let go (still capitals), both let go (small again), a Shift number or its let-go number behind the mark (passed over), Shift repeating while held, two marks in a row, a mark before an ordinary key and Shift after it, Enter behind the mark, and keys being let go.
+- Four breaks made on purpose were each caught, by wrong dots and wrong lines: one sign wrong in a row with Shift; the left Shift key's let-go number not seen, after which everything came out in capitals; the rule about the mark taken out, after which the letter typed with Print Screen held was a capital; and the right Shift key not seen.
+- With Shift in: the earlier chat box test still passes, every dot and every line; the kernel's lines up to the prompt are unchanged; no byte in the terminal is anything but plain text. The build: no warning, no program compiled along the way is run.
+- A person ran `run.bat` and typed `Hello, World!?` in the chat box in the QEMU window, capitals and signs included.
+- Not verified: a keyboard that is not passed on by QEMU; what a real keyboard sends around the arrow keys and the number pad; a Shift let-go number lost to a full waiting line (the rule for it is only reasoned).
 
 **The split into files**
 
