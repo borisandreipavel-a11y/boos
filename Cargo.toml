@@ -28,7 +28,13 @@ rsa = { version = "0.10.0", default-features = false, features = ["pkcs1v15"] }
 # The crates above use it already.
 der = { version = "0.8.3", default-features = false }
 
-# Five crates are not fetched from the internet. Cargo is told to use the
+# The locked box: the library that runs an app's WebAssembly, one small step
+# at a time. Not written for this kernel either. Default features are off
+# because they need an operating system underneath. The version is fixed:
+# the line after it needs a helper program at build time. See docs/box.md.
+wasmi = { version = "=1.1.0", default-features = false }
+
+# Seven crates are not fetched from the internet. Cargo is told to use the
 # copies kept in vendor/ instead, which need no helper program at build time.
 # See vendor/README.md.
 [patch.crates-io]
@@ -37,3 +43,5 @@ heapless = { path = "vendor/heapless" }
 rustls = { path = "vendor/rustls" }
 rustls-webpki = { path = "vendor/rustls-webpki" }
 num-traits = { path = "vendor/num-traits" }
+wasmparser = { path = "vendor/wasmparser" }
+libm = { path = "vendor/libm" }

@@ -33,6 +33,7 @@ mod encryption; // Encryption: a check that the outside code for it works here.
 mod encryption_values; // The values that check is made against.
 mod provider; // The adapter between the TLS library and the arithmetic.
 mod tls; // The encrypted link.
+mod app_box; // The locked box that apps run in.
 
 use alloc::format;
 use alloc::string::String;
@@ -43,6 +44,7 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
+use app_box::{ADDING_APP, box_check};
 use clock::clock_read;
 use controller::controller_setup;
 use encryption::{encryption_check, trusted_roots};
@@ -139,27 +141,23 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     match random_number() {
         // The number shown is only a sample. It is used for nothing else.
         Some(number) => {
-            write!(serial, "Random numbers: made by the processor, for example {:016x}
-", number).ok();
+            write!(serial, "Random numbers: made by the processor, for example {:016x}\r\n", number).ok();
         }
         None => {
-            write!(serial, "Random numbers: none, because this processor has no sound source for them
-").ok();
+            write!(serial, "Random numbers: none, because this processor has no sound source for them\r\n").ok();
         }
     }
     match clock_read() {
         Some(date) => {
             write!(
                 serial,
-                "Date and time: {:04}-{:02}-{:02} {:02}:{:02}:{:02}, by this machine's clock
-",
+                "Date and time: {:04}-{:02}-{:02} {:02}:{:02}:{:02}, by this machine's clock\r\n",
                 date.year, date.month, date.day, date.hour, date.minute, date.second
             )
             .ok();
         }
         None => {
-            write!(serial, "Date and time: unknown, because the clock chip gave no usable answer
-").ok();
+            write!(serial, "Date and time: unknown, because the clock chip gave no usable answer\r\n").ok();
         }
     }
 
@@ -170,6 +168,20 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Encryption: {} of {} checks of the arithmetic are right, and {} trusted roots are on board\r\n", right, all, trusted_roots()).ok();
     } else {
         write!(serial, "Encryption: not to be trusted here, only {} of {} checks of the arithmetic are right\r\n", right, all).ok();
+    }
+
+    // Apps will run in a locked box, kept by code that was not written for
+    // this kernel either. See that it works here: run the smallest app.
+    match box_check() {
+        Ok(5) => {
+            write!(serial, "Box: a program of {} bytes ran inside it and answered 2 + 3 = 5\r\n", ADDING_APP.len()).ok();
+        }
+        Ok(answer) => {
+            write!(serial, "Box: not working, the program inside it answered 2 + 3 = {}\r\n", answer).ok();
+        }
+        Err(reason) => {
+            write!(serial, "Box: not working, because {}\r\n", reason).ok();
+        }
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.

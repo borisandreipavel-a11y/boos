@@ -19,7 +19,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - Reclaim the firmware's startup memory (kinds 3 and 4, about 42 MB of QEMU's 256 MB when it was measured, before the network card and the present processor option) once task 0 has a stack of its own.
 - Leave the lowest page unmapped, so that a broken pointer near zero gives a page fault instead of quietly reading memory.
 - Return heap memory to the frame pile.
-- Make a request that cannot be met fail, instead of stopping the kernel.
+- Make a request that cannot be met fail, instead of stopping the kernel. This matters more since apps run in the kernel: an app is held to limits so that it cannot cause such a request (see [box.md](box.md)), and the limits are the only thing in the way.
 - Mark code pages read-only and data pages non-executable. Today every page is writable and nothing is protected.
 - `map_page` cannot be used inside the range covered by 2 MB pages. Mapping something small there would need the 2 MB page split up first.
 
@@ -65,6 +65,23 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The five compiler settings have to be kept in step with the crates: a new or renewed crate may need another one.
 - With SSE instructions refused, nothing may use those registers, the firmware's code included. No firmware code is called after the takeover today.
 - The provider's adapters were written for this kernel and have been checked only by its own tests. Nobody else has looked at them.
+
+## The box
+
+- **An app cannot ask the kernel for anything.** Nothing is offered to it, so a program that wants to print, read a key or know the time is not started.
+- **Only one shape of function can be called:** two whole numbers in, one whole number out.
+- **Nothing is kept between two runs.** Each run checks and translates the program again and starts the app from nothing. A translated program cannot be kept for later, because it lives in an engine and each run drops its engine.
+- **A run holds its caller until it ends.** The check at startup runs with device signals off on the firmware's stack. A run in a task is switched away by the timer like any other work, but the task that called it waits for the answer, up to the whole of the fuel: about two seconds in this build.
+- **Fuel is a count of steps, not time.** How long ten million units last depends on the build and the machine.
+- **The limits are the same for every app,** fixed as constants.
+- **wasmi's own memory for an app is not counted in the app's limit.** It is taken from the kernel's heap: the translated program, and a stack of values of up to 1 MB. Many apps at once, or one very large program, could still ask the heap for more than the machine has, and that stops the kernel (see "Memory").
+- **The stack depth is known only for small programs:** 44 KB for programs of up to 540 bytes. Nothing notices a stack that overflows (see "Tasks").
+- **The kernel no longer starts with 64 MB.** Its file is 6 MB in this kind of build, and QEMU's firmware refuses to load it on so small a machine. 96 MB works.
+- **Running an app is slow in this kind of build.** The outside crates are built unoptimized; built optimized they were about 25 times faster in a trial, and the kernel's file about half the size. That setting would change how smoltcp and the crates for encryption are built as well.
+- **The version of wasmi is fixed at 1.1.0.** The line after it cannot be built here (see [box.md](box.md)). If the 1.x line stops getting fixes, there is no way forward yet.
+- **wasmi contains `unsafe` code,** and a mistake there could let an app out of its memory. Both of its past security advisories are, by their titles, mistakes with memory. Nothing in the kernel or its build watches for new ones, and the copies in `vendor/` do not renew themselves.
+- **Only programs made by hand were run:** 41 to 540 bytes, with whole numbers of 32 bits, numbers with a point, one memory, loops and calls. No program made by a compiler has run. Tables in use, values shared across functions, and whole numbers of 64 bits were not tried.
+- Two versions of the helper crate `bitflags` are built, an older one for smoltcp and a newer one for the program checker.
 
 ## Random numbers and the date
 

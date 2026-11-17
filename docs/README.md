@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else.
 
 ## Read in this order
 
@@ -20,8 +20,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 6. [network.md](network.md): the PCI list, the network card, sending and receiving packets, the network stack, fetching a page, QEMU's built-in network.
 7. [random-and-date.md](random-and-date.md): random numbers from the processor, the date from the clock chip.
 8. [encryption.md](encryption.md): the outside code for encryption, the settings it needs, the check at startup, the provider and the encrypted link.
-9. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-10. [open-points.md](open-points.md): known limits and what later work must deal with.
+9. [box.md](box.md): running an app locked in a box, the outside code for it, and the limits an app is held to.
+10. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+11. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -53,6 +54,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `encryption_values.rs` | The values that check is made against | [encryption.md](encryption.md) |
 | `provider.rs` | The adapter between the TLS library and the crates that do the arithmetic: `provider` | [encryption.md](encryption.md) |
 | `tls.rs` | The encrypted link: `Wire`, `secure_ready`, `secure_exchange` | [encryption.md](encryption.md) |
+| `app_box.rs` | The locked box that apps run in: `box_run`, `box_check`, the limits, and `ADDING_APP`, a whole app of 41 bytes written by hand | [box.md](box.md) |
 
 Which file uses which:
 
@@ -67,11 +69,12 @@ Which file uses which:
 - `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `page.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp. `page.rs` uses `network.rs` (for `Card` and `now`), `tls.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and smoltcp.
 - `random.rs` and `clock.rs` use `processor.rs`.
 - `encryption.rs` uses `encryption_values.rs` and the crates for encryption. `provider.rs` uses `random.rs` and those crates. `tls.rs` uses `provider.rs`, `encryption.rs`, `clock.rs`, `random.rs`, `serial.rs`, `page.rs` (for `plain_text`) and rustls.
+- `app_box.rs` uses `page.rs` (for `plain_text`) and the crate wasmi.
 
 Outside `src/`:
 
-- `vendor/` holds copies of five crates that were not written for this kernel: smoltcp, the network stack, and heapless, which it needs; rustls, which speaks TLS, rustls-webpki, which checks certificates, and num-traits, which the arithmetic of encryption needs. `vendor/README.md` says where they came from and what was changed. Their text is other people's and does not follow the conventions below.
-- `Cargo.toml` names eleven dependencies, smoltcp and ten crates for encryption, and points cargo at the copies. `Cargo.lock` lists 70 crates besides the kernel; 60 of them are compiled.
+- `vendor/` holds copies of seven crates that were not written for this kernel: smoltcp, the network stack, and heapless, which it needs; rustls, which speaks TLS, rustls-webpki, which checks certificates, and num-traits, which the arithmetic of encryption needs; wasmparser, which reads and checks an app's program, and libm, arithmetic for numbers with a point, both needed by wasmi, which runs apps. `vendor/README.md` says where they came from and what was changed. Their text is other people's and does not follow the conventions below.
+- `Cargo.toml` names twelve dependencies, smoltcp, ten crates for encryption and wasmi, and points cargo at the copies. `Cargo.lock` lists 78 crates besides the kernel; 68 of them are compiled.
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`, and tells the crates for encryption to use their plain code; see [encryption.md](encryption.md).
 - `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers and a virtio network card on QEMU's built-in network.
@@ -84,7 +87,7 @@ The code is written to be readable without a background in kernels: plain words,
 **Rust and dependencies**
 
 - Stable Rust, edition 2024 (hence `#[unsafe(no_mangle)]` and `#[unsafe(naked)]`), `#![no_std]`, `#![no_main]`.
-- Two pieces of outside code: smoltcp, the network stack, with the seven crates it needs, and rustls, the TLS library, with the crates that do the arithmetic of encryption (52 compiled crates). Five crates are kept as copies in `vendor/`; the others are fetched from crates.io the first time the kernel is built. Everything else is written for this kernel. `core` and `alloc` ship with Rust. Ask the owner before adding any dependency or tool.
+- Three pieces of outside code: smoltcp, the network stack, with the seven crates it needs; rustls, the TLS library, with the crates that do the arithmetic of encryption (52 compiled crates); and wasmi, which runs apps, with the seven crates it needs. Seven crates are kept as copies in `vendor/`; the others are fetched from crates.io the first time the kernel is built. Everything else is written for this kernel. `core` and `alloc` ship with Rust. Ask the owner before adding any dependency or tool.
 - No crate may run a build script. The building computer refuses to run programs that were compiled a moment ago (see `vendor/README.md`), so a crate that has one can only come in as a copy with the script taken out. A macro crate, which the compiler loads as a piece of program during the build, has never been tried on such a computer: none is in use, and before taking one in, stop and ask.
 - The `x86_64-unknown-uefi` target has no SSE (it uses soft-float), so code never touches the SSE registers. Several pieces rely on that; see [interrupts.md](interrupts.md). The kernel also tells the processor to refuse SSE instructions, so outside code that tried to use them stops with a report; see [encryption.md](encryption.md).
 
