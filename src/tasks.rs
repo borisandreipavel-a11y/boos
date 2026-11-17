@@ -132,8 +132,10 @@ static mut TASKS: [Task; MAX_TASKS] = [Task {
 // registers lie.
 static mut CURRENT_TASK: usize = 0;
 
-// Each task's stack is 64 KB.
-const TASK_STACK_SIZE: usize = 64 * 1024;
+// Each task's stack is 256 KB. The arithmetic of encryption decides that
+// size: making an encrypted link took up to 100 KB of the network task's
+// stack, and nothing notices a stack that overflows.
+const TASK_STACK_SIZE: usize = 256 * 1024;
 
 // Sets the running task aside and picks the next one: each ready task in
 // turn, passing over those that are still waiting. It is given the place

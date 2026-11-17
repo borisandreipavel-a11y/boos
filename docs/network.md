@@ -2,7 +2,7 @@
 
 Code: `src/pci.rs`, `src/network_card.rs`, `src/network.rs`, `src/page.rs`, and the network stack in `vendor/`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
 
-So far the kernel finds the network card, sets it up, and sends and receives packets through it. At startup it asks one question by hand: who is the gateway. After that a network stack, smoltcp, takes over in a task of its own and gets the kernel a network address. With that address the kernel fetches one web page, without encryption: it looks up the site's name, connects, asks for the page and prints how it begins.
+So far the kernel finds the network card, sets it up, and sends and receives packets through it. At startup it asks one question by hand: who is the gateway. After that a network stack, smoltcp, takes over in a task of its own and gets the kernel a network address. With that address the kernel fetches one web page over an encrypted link: it looks up the site's name, connects, lets the site prove who it is, asks for the page and prints how it begins.
 
 ## The PCI list
 
@@ -130,7 +130,7 @@ Also:
 
 - **The start number.** smoltcp wants a number that differs at every start of the kernel, for picking port numbers and the like. `time_stamp()` in `processor.rs` gives the processor's count of its own steps, which did differ between boots. smoltcp's documentation says the number need not be secret. It is not, and it would not do for encryption.
 - **`network_start(card_address)`** is called from `efi_main` once the card is set up. It keeps the card's address and adds the task. With no card, or a card that could not be set up, the stack is not started.
-- The task uses about 11.5 KB of its 64 KB stack, a page fetch included; it was 8.7 KB before there was one. smoltcp's own objects are small: the interface measured 392 bytes when only the address request was switched on.
+- The task uses up to 100 KB of its 256 KB stack. Nearly all of that is the arithmetic of an encrypted link; without one it was 11.5 KB with a page fetch and 8.7 KB before there was one. smoltcp's own objects are small: the interface measured 392 bytes when only the address request was switched on.
 
 ## Getting an address
 
@@ -145,27 +145,29 @@ The monitor shows the card's side of all this: `info virtio` lists the card's pa
 
 ## Fetching a page
 
-`page.rs` fetches one page from the web and prints how it begins. The site is `example.com` (`SITE`), which its owners keep for examples. `network_task` calls `page_fetch` once, the first time the kernel has an address.
+`page.rs` fetches one page from the web over an encrypted link and prints how it begins. The site is `example.com` (`SITE`), which its owners keep for examples. `network_task` calls `page_fetch` once, the first time the kernel has an address.
 
 The fetch runs inside the network's own task, because only that task may touch the stack. It is written as one run from top to bottom. Wherever it has to wait for the network it calls `stack_turn`: one `Interface::poll`, then a wait of one tick. So the stack keeps working during a fetch and the address is still renewed, but news about the address is read only when the fetch is over.
 
 The steps:
 
-1. **The name.** Machines are reached by network address, but sites are known by name. A name server is a machine that knows which address belongs to which name (the name system, DNS). Together with the address, the network names a name server, and the task keeps the first one named. `name_lookup` adds a `dns::Socket` for that server, asks for the name's address (`start_query`, kind `A`: an address of the 4-byte sort) and waits for the answer. smoltcp is set to keep one address per answer (`DNS_MAX_RESULT_COUNT` in the copy's `config.rs`), so a site with several addresses is tried at one only. The kernel prints `Network: the name example.com belongs to the address ...`.
-2. **The connection.** A connection (TCP) is an agreement between two machines to pass bytes back and forth so that none is lost and all arrive in order. smoltcp does that work. `page_ask` adds a `tcp::Socket` with room for 4096 arrived bytes and 512 bytes to send. A port is the number that says which conversation on a machine a packet belongs to. Sites wait for page requests on port 80 (`WEB_PORT`). This side takes a number between 49152 and 65535, picked by `time_stamp()` so that it differs between boots.
-3. **The request.** Once the site has agreed to the connection, the kernel sends three lines in the web's language (HTTP): `GET / HTTP/1.0`, then `Host: example.com`, then an empty line that ends the request. Nothing else is sent: no line names the kernel or the machine. With `HTTP/1.0` the site closes the connection when the page is sent, and that is how the kernel knows the page is over.
-4. **The answer.** It arrives as one run of bytes in three parts: a first line saying how it went (`200 OK` means "here is the page"), lines of notes about the page, an empty line, then the page. `Answer::take` is given every byte as it arrives. It keeps the first line, counts its way through the notes without keeping them, and keeps the first rows of the page. The rest of the page is only counted.
-5. **Goodbye.** If the site finished properly, the kernel closes its side properly too (`close`). Otherwise it drops the connection (`abort`), which tells the site so. It gives the stack up to a second to pass that on and then takes the connection off the stack's list.
+1. **Can this machine encrypt?** `secure_ready()` is asked first. The page is fetched over an encrypted link or not at all: if the answer is no, nothing is sent, not even the site's name. See [encryption.md](encryption.md).
+2. **The name.** Machines are reached by network address, but sites are known by name. A name server is a machine that knows which address belongs to which name (the name system, DNS). Together with the address, the network names a name server, and the task keeps the first one named. `name_lookup` adds a `dns::Socket` for that server, asks for the name's address (`start_query`, kind `A`: an address of the 4-byte sort) and waits for the answer. smoltcp is set to keep one address per answer (`DNS_MAX_RESULT_COUNT` in the copy's `config.rs`), so a site with several addresses is tried at one only. The kernel prints `Network: the name example.com belongs to the address ...`.
+3. **The connection.** A connection (TCP) is an agreement between two machines to pass bytes back and forth so that none is lost and all arrive in order. smoltcp does that work. `page_ask` adds a `tcp::Socket` with room for 4096 arrived bytes and 512 bytes to send. A port is the number that says which conversation on a machine a packet belongs to. Sites wait for requests over an encrypted link on port 443 (`WEB_PORT`), and for requests in the open on port 80. This side takes a number between 49152 and 65535, picked by `time_stamp()` so that it differs between boots.
+4. **The encrypted link.** `secure_exchange` in `tls.rs` greets the site over the connection, checks its certificate and agrees on keys; [encryption.md](encryption.md) describes it. `ConnectionWire` in `page.rs` is the connection in the form `tls.rs` wants: it sends bytes, waiting for room where the connection has none, and receives bytes, waiting for some to arrive. The kernel prints `Network: example.com proved who it is: ...`.
+5. **The request.** Three lines in the web's language (HTTP): `GET / HTTP/1.0`, then `Host: example.com`, then an empty line that ends the request. Nothing else is sent: no line names the kernel or the machine. The request travels through the link, scrambled. With `HTTP/1.0` the site ends the exchange when the page is sent.
+6. **The answer.** It arrives through the link, unscrambled piece by piece, as one run of bytes in three parts: a first line saying how it went (`200 OK` means "here is the page"), lines of notes about the page, an empty line, then the page. `Answer::take` is given every byte as it arrives. It keeps the first line, counts its way through the notes without keeping them, and keeps the first rows of the page. The rest of the page is only counted.
+7. **Goodbye.** The site says through the link that it has sent everything, and the kernel answers the same way. Then the kernel closes the connection underneath properly (`close`). If anything went wrong it drops the connection instead (`abort`), which tells the site so. It gives the stack up to a second to pass that on and then takes the connection off the stack's list.
 
-What is printed, as one text so that other tasks' lines cannot land inside it:
+What is printed about the page, as one text so that other tasks' lines cannot land inside it:
 
 - `Network: example.com answered "HTTP/1.1 200 OK". Its page begins:`
 - up to 8 rows of the page (`ROWS_SHOWN`), each up to 72 signs (`ROW_LENGTH`) and set in by four spaces. A longer line goes on in the next row. Empty rows are left out;
-- `Network: the whole page is 577 bytes long.` "Whole" means that the site ended the connection in the regular way. The length that the site states in its notes is not read, so the two are not compared. Otherwise the last line reads `Network: the page is not whole: the connection broke or took too long. N bytes of it came.`
+- `Network: the whole page is 577 bytes long.` "Whole" means that the site said, through the encrypted link itself, that it had sent everything. Nobody on the way can fake that or cut the page short unnoticed. If the connection simply ends, the last line reads `Network: the page is not whole: the connection broke or took too long. N bytes of it came.`
 
-**The page is text from outside.** Somebody else wrote it, and a terminal obeys certain bytes as commands. `plain_sign` therefore lets only plain letters, digits and signs through (bytes 32 to 126). Byte 13, which comes before each line end, is dropped, and every other byte becomes a dot. The first line gets the same treatment and is cut at 72 signs. However long a line of notes is, only its length is counted.
+**The page is text from outside.** Somebody else wrote it, and a terminal obeys certain bytes as commands. `plain_sign` therefore lets only plain letters, digits and signs through (bytes 32 to 126). Byte 13, which comes before each line end, is dropped, and every other byte becomes a dot. The first line gets the same treatment and is cut at 72 signs. However long a line of notes is, only its length is counted. `plain_text` cleans a whole text the same way; the reasons printed for a failed link pass through it.
 
-**No wait is endless.** The name lookup may take 5 seconds, agreeing on the connection 5, the answer 10 and the goodbye 1 (`LOOKUP_WAIT` and the three constants below it, counted in ticks). When something fails, one line says so and the kernel carries on: `Network: no page fetched, because ...`
+**No wait is endless.** The name lookup may take 5 seconds, agreeing on the connection 5, the greeting and the answer together 15, and the goodbye 1 (`LOOKUP_WAIT` and the three constants below it, counted in ticks). When something fails, one line says so and the kernel carries on: `Network: no page fetched, because ...`
 
 | The reason printed | When |
 | --- | --- |
@@ -177,17 +179,20 @@ What is printed, as one text so that other tasks' lines cannot land inside it:
 | the connection could not be started | smoltcp refused to start it |
 | the site refused the connection | the site answered "no" |
 | the site did not agree to a connection in time | 5 seconds without an answer |
-| the request could not be sent | the connection would not take the request |
-| the site sent nothing | the connection ended, or 10 seconds passed, without a byte |
+| the connection broke | it ended while bytes were still to be sent |
+| the site took too long | 15 seconds passed and no part of the answer had come. If part of it had, that part is shown as a page that is not whole |
+| the site sent nothing | the link came about, but no byte of an answer |
+
+The reasons that have to do with encryption and certificates are listed in [encryption.md](encryption.md).
 
 How it goes in QEMU:
 
-- From the name question to the end takes about 1.1 seconds, and one whole second of that is a pause inside smoltcp. After asking for one machine's hardware address it asks for no other for a second (`SILENT_TIME` in the copy's `iface/neighbor.rs`), and a connection that lacks such an address waits just as long before it tries again (`DISCOVERY_SILENT_TIME` in `iface/socket_meta.rs`). The name server's hardware address is asked for first, so the gateway's has to wait. The by-hand gateway answer from startup is not handed to the stack.
-- The page report therefore lands among the demonstration tasks' lines; after the second of them in the runs so far.
-- A big page arrives at about 70 KB a second: one packet every two ticks. The card's adapter says "one packet at a time", so the site sends one packet and waits for the kernel to confirm it, and the kernel looks once per tick.
-- Twenty fetches in a row left the count of free frames where it was after the first.
+- From the name question to the end takes about 1.8 seconds with the real site. One whole second of that is a pause inside smoltcp: after asking for one machine's hardware address it asks for no other for a second (`SILENT_TIME` in the copy's `iface/neighbor.rs`), and a connection that lacks such an address waits just as long before it tries again (`DISCOVERY_SILENT_TIME` in `iface/socket_meta.rs`). The name server's hardware address is asked for first, so the gateway's has to wait. The by-hand gateway answer from startup is not handed to the stack. Most of the rest is the arithmetic of the greeting.
+- The lines about the link and the page therefore land among the demonstration tasks' lines; after the third of them in both runs against the real site.
+- A page of 300,000 bytes took about 6 seconds through the link, some 50 KB a second: one packet every two ticks, as without encryption. The card's adapter says "one packet at a time", so the site sends one packet and waits for the kernel to confirm it, and the kernel looks once per tick.
+- Three fetches in a row left the count of free frames where it was after the first.
 
-Every start of the kernel fetches the page, so every start sends one name question and one request out to the internet. The page is not encrypted: anybody on the way can read it and change it. For test boots that should stay off the internet, see [testing.md](testing.md).
+Every start of the kernel fetches the page, so every start sends one name question and makes one encrypted exchange with the site. The site's name can be read on the way; the request and the page cannot. For test boots that should stay off the internet, see [testing.md](testing.md).
 
 ## QEMU's built-in network
 
@@ -201,14 +206,15 @@ Every start of the kernel fetches the page, so every start sends one name questi
 - the network can be changed for a test: `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` made the kernel print `192.168.76.9`, given by `192.168.76.2`;
 - nothing outside can reach the kernel; only what the kernel sends out gets answers.
 
-With the card attached, the firmware uses more memory during startup: "Free memory" reads 201 MB with the card and 203 without, on the machine that `run.bat` starts. [memory.md](memory.md) has the figures for other processors.
+With the card attached, the firmware uses more memory during startup: "Free memory" reads 200 MB with the card and 202 without, on the machine that `run.bat` starts. [memory.md](memory.md) has the figures for other processors.
 
-A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records 21:
+A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records 37:
 
+- two that the firmware itself sends before the kernel starts. They are of the newer internet protocol (IPv6), and they appear only with the processor that `run.bat` asks for;
 - two for the by-hand question and its answer;
 - four for the address request;
 - two for the stack asking for the name server's hardware address, and two for the name question and its answer;
 - two for the stack asking for the gateway's hardware address, which it has to find out for itself;
-- nine for the connection: three to open it, the request, the site's confirmation, the answer (891 bytes in one packet when it was recorded), the site's goodbye, the kernel's confirmation and goodbye in one, and the site's last confirmation.
+- 23 for the connection: three to open it, then the greeting, the request, the answer and both goodbyes, with their confirmations. The kernel sent 390 bytes in them and the site about 5,700.
 
-The request packet carries exactly the three lines listed under "Fetching a page", 37 bytes. The option for recording is in [testing.md](testing.md). The recording shows what passes between the card and QEMU's network. The gateway is QEMU itself, which answers the hardware-address questions on its own; the recording cannot show what QEMU passes on to the host's real network.
+In the kernel's bytes on the connection the site's name can be read once, in the greeting. The request cannot be read anywhere. The option for recording is in [testing.md](testing.md). The recording shows what passes between the card and QEMU's network. The gateway is QEMU itself, which answers the hardware-address questions on its own; the recording cannot show what QEMU passes on to the host's real network.

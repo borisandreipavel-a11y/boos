@@ -11,7 +11,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 - `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
 - The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
-- A normal boot reaches the internet: the kernel looks up one name and fetches one page. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
+- A normal boot reaches the internet: the kernel looks up one name and fetches one page over an encrypted link. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
 
 ## Booting without a window
 
@@ -64,7 +64,7 @@ Other QEMU options that proved useful:
 | `-cpu max` | Every processor feature QEMU can play |
 | `-rtc base=localtime` | The clock chip set to the host's local time instead of world time |
 | `-rtc base=2000-02-29T23:59:58` | The clock chip started at a chosen date and time |
-| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records 21; [network.md](network.md) lists them |
+| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records 37; [network.md](network.md) lists them |
 | `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` | QEMU's built-in network with other addresses, to show that the kernel's address is given and not assumed |
 | `-netdev user,id=net0,restrict=on` | QEMU's built-in network with no way out. The kernel still gets its address, but no name server is named, so it prints `Network: no page fetched, because the network named no name server` and sends nothing more. Use it for boots that should not touch the internet |
 | `-device virtio-net-pci` with no `-netdev` | A card attached to nothing, so nobody can answer |
@@ -104,8 +104,10 @@ A test should be able to fail. For each protection or saved register that a test
 The page fetch is tested against a server on the test computer, not against the real site.
 
 - QEMU's built-in network shows the host computer to the kernel as `10.0.2.2`. A program that listens on the host's own address `127.0.0.1` is reached there, and nothing of that leaves the computer.
-- The server was a short script that listens on one port of `127.0.0.1`, writes down what the kernel sends, and behaves well or badly on purpose: a small page, a big one, silence, garbage, a connection dropped half-way. Anything that can listen for connections will do.
-- Two temporary edits in `page.rs` point the kernel at it: `WEB_PORT` becomes the server's port, and the call of `name_lookup` is replaced by the fixed address `10.0.2.2`. No name question is sent then.
+- The server was a short script that listens on one port of `127.0.0.1`, speaks TLS 1.3, writes down what the kernel sends, and behaves well or badly on purpose: a small page, a big one, a page cut off without the goodbye. Anything that can do that will do.
+- **Test certificates.** A real site's certificate cannot be had for a test server, so the tests use chains of their own: a test root, an intermediate and a leaf made out to the site's name, in files in a temporary folder. They were made with OpenSSL, which ships with Git. Nothing was put into the operating system's certificate store, and no test key is in the repository.
+- Three temporary edits point the kernel at the server: `WEB_PORT` becomes the server's port, the call of `name_lookup` is replaced by the fixed address `10.0.2.2` (no name question is sent then), and `root_list` in `encryption.rs` adds the test root to the list. Without the third edit the kernel must refuse the server, which is a test too.
+- The chains used: keys on the curves P-256 and P-384 with both fingerprints, RSA keys of 2048, 3072 and 4096 bits, a leaf made out to another name, a leaf that ran out in 2020, a leaf with an RSA key of 1024 bits, and a chain signed by a made-up authority that copies the name of a real root byte for byte.
 - The real site is for seeing, a few times, that the real thing works. Do not use it for rows of test boots: its own page asks not to be relied on for testing.
 
 ## Deliberate bugs
@@ -253,7 +255,7 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - A person ran `run.bat`, which built the kernel with the copies, and saw the line with the given address.
 - Not verified: an address being lost, more than one address source, a network that answers slowly or wrongly, and any real hardware.
 
-**Fetching a page**
+**Fetching a page** (from before the fetch went over an encrypted link; the server then was one that answered in the open, and the cases about a silent, stalling or endless server were repeated through the link later, see "The encrypted fetch")
 
 - From the real site: the kernel printed the name's address, the site's first line `HTTP/1.1 200 OK`, the first rows of the page and `the whole page is 577 bytes long`. A recording of that boot holds 21 packets, and the request in it is exactly `GET / HTTP/1.0`, `Host: example.com` and the empty line, 37 bytes. The real site was fetched three times in all and its name looked up four times.
 - Everything below ran against a server on the test computer (see "A server on the test computer"), with no traffic to the internet.
@@ -308,6 +310,30 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - "Free memory" reads 201 MB: 203 without a card, 9 with 64 MB, 457 with 512 MB.
 - Not verified: any connection, since none is made yet; rustls's and the certificate checker's own code, of which only the counting of the roots runs; the arithmetic on a real processor; and whether a macro crate could be built on a computer that refuses unknown programs (none is needed, so none was tried).
 - A person ran `run.bat`, which built the kernel with the new crates, and saw the encryption line.
+
+**The encrypted fetch**
+
+- From the real site: the kernel printed that the site proved who it is, with its certificate leading back to one of the kernel's own 112 roots, then the site's first line, the first rows of the page and `the whole page is 577 bytes long`. A recording of that boot holds 37 packets. In the 390 bytes the kernel sent on the connection the site's name can be read once and the request nowhere. The real site was fetched this way twice, the second time with the final code; the page lines came after the third task line both times.
+- Everything below ran against a TLS test server on the test computer, with test certificates (see "A server on the test computer") and no traffic to the internet.
+- Four chains were accepted with the test root added to the list: curves with each pair of curve and fingerprint, and RSA keys of 2048 to 4096 bits signed with three fingerprints. Both ways of scrambling were used, the second by offering only that one. The server's own log named the same version and way of scrambling as the kernel, received the request, and saw the kernel answer its goodbye.
+- A page of 300,000 bytes arrived whole through the link, with the same digest on both sides, in about 6 seconds.
+- A page cut off without the goodbye is reported as not whole, with the 50 bytes that came. A server that stops half-way: not whole, with the 100 bytes that came, after 15 seconds. A server that never stops sending: cut off after 15 seconds, not whole, with 1,032,240 bytes counted. A server that makes the greeting and then says nothing: `the site took too long`.
+- Text meant to do harm, through the link: a first line with terminal commands in it, a line of notes 100,000 signs long, and a page with terminal commands, zero bytes and a line of 10,000 signs. The kernel's output held no byte that is not plain text.
+- A server that answers in the open on the port where the kernel expects the encrypted greeting: `the encrypted greeting failed`, with rustls's word for it in brackets, and no byte in the output that is not plain text.
+- Refused, each with its own line: the test server with the kernel's own list of roots (no trusted root); a leaf made out to another name; a leaf that ran out in 2020; any chain with the clock set to 2045 (run out) or to 2005 (not valid yet); a leaf with an RSA key of 1024 bits.
+- A chain signed by a made-up authority that carries a real root's name, byte for byte, is refused: `a signature in the site's certificates is not true`. With the kernel's RSA check made to say yes always, on purpose, the same chain gets through. So the check is what stops it.
+- The provider's ten signature pieces were also called directly, the way the certificate checker calls them, with keys and signatures made by OpenSSL: 68 checks, none wrong. Each true signature is accepted; a changed message, a changed bit, a byte behind the signature, an empty signature, an empty key, the wrong fingerprint, the wrong sort of key, the other RSA form, a true signature by a 1024-bit key, a key with a byte behind it and a number too long for its curve are refused. Five breaks made on purpose were each caught, with 1 to 26 checks wrong.
+- The date as seconds since 1970: 20 dates against another program's values, among them leap days, year ends, the years 2000 and 2100, and two dates before 1970 that must give nothing. All right. Two breaks made on purpose were each caught.
+- A machine that cannot encrypt sends nothing beyond the gateway question and the address request: with no random numbers, with the clock chip made to give no date, and with the startup check made to fail, a recording holds only those packets and the firmware's own two.
+- The network task's stack went 100,152 bytes deep at most, with the RSA chain, of its 256 KB. Three fetches in a row went no deeper and took no more frames. With 64 MB the fetch works and 7 MB stay free.
+- All eight places for tasks in use, each with its 256 KB stack: 24 short tasks ran in waves of three next to the network task and the two demonstration tasks, and the count of free frames did not move after the first wave, with 256 MB and with 64 MB.
+- A fetch from the test server took 1.3 to 1.5 seconds. The rest count reads 336 to 365 of 400 with a fetch, and 399 without a network card.
+- While a page was fetched over the link: two tasks printing 12,185 lines tore none, and the page report came in one piece; two tasks hammering the heap found no wrong value while the 300,000-byte page arrived with the right digest.
+- A page-fault report still prints after a fetch. Keys are echoed. It boots and fetches with 64 MB (8 MB free at startup) and 512 MB (456), with the newer-only card and on `-cpu max`. Without a card the boot is as before. Fifteen boots in a row each fetched the page, and the server saw sixteen greetings and sixteen answered goodbyes.
+- The build: `Cargo.lock` gained no crate; one line names `der` as something the kernel itself uses. No warning, and no program compiled along the way is run.
+- Checked after the change that brought the crates in: a clean export of it held the eleven data files of the rustls-webpki copy with the same bytes as the downloaded crate, built on its own with no program run along the way, and its kernel booted to "8 of 8".
+- Not verified: a site that speaks only TLS 1.2 or wants another curve (the refusal was not provoked); a certificate that was withdrawn; any real site other than the one; a link broken by somebody in the middle after the greeting; lost or reordered packets under the link; the arithmetic on a real processor; and whether the provider's adapters hold against an attacker, beyond the cases above.
+- A person ran `run.bat` and saw the line saying that the site proved who it is, and the page after it.
 
 **The split into files**
 

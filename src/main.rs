@@ -31,6 +31,8 @@ mod random; // Random numbers, made by the processor.
 mod clock; // The clock chip: the date and the time.
 mod encryption; // Encryption: a check that the outside code for it works here.
 mod encryption_values; // The values that check is made against.
+mod provider; // The adapter between the TLS library and the arithmetic.
+mod tls; // The encrypted link.
 
 use alloc::format;
 use alloc::string::String;

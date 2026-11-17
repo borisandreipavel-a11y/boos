@@ -54,6 +54,19 @@ pub fn random_setup() {
     unsafe { RANDOM_FOUND = !all_same };
 }
 
+// Fills a piece of memory with random bytes and says whether it could. On
+// "no", what stands in that memory must not be used.
+pub fn random_fill(bytes: &mut [u8]) -> bool {
+    // Each random number gives 8 bytes. The last piece may be shorter.
+    for piece in bytes.chunks_mut(8) {
+        let Some(number) = random_number() else {
+            return false;
+        };
+        piece.copy_from_slice(&number.to_le_bytes()[..piece.len()]);
+    }
+    true
+}
+
 // One random number. Answers with nothing if this machine cannot make them,
 // and never with a number that only looks random.
 pub fn random_number() -> Option<u64> {

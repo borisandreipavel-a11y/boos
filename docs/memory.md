@@ -36,7 +36,7 @@ The firmware's map lists stretches of memory, each with a kind:
 - `frame_take` panics with "the machine is out of memory" when the pile is empty.
 - A frame's contents are whatever was there before. Zero it if that matters, as `empty_table` does.
 - Building the pile writes to every free frame once at startup. On a virtual machine that makes the host really provide all of the guest's memory.
-- "Free memory" at boot reads 201 MB on QEMU's 256 MB machine as `run.bat` starts it. What is missing from 256 is what the firmware used during startup and the kernel's own file, which is 1.6 MB since the crates for encryption came in. The firmware's share depends on what the machine has. Without the network card the line reads 203 MB. With QEMU's usual processor, in place of the one `run.bat` asks for so that the kernel has random numbers, it reads 204 MB. With `-cpu max` it reads 205. With 64 MB it reads 9 MB, and with 512 MB 457. Why the firmware's share changes with the processor was not looked into. Before frames existed it read 207, because the first megabyte was still counted.
+- "Free memory" at boot reads 200 MB on QEMU's 256 MB machine as `run.bat` starts it. What is missing from 256 is what the firmware used during startup and the kernel's own file, which has grown to about 3 MB with the code for encryption. The firmware's share depends on what the machine has. Without the network card the line reads 202 MB. With `-cpu max` it reads 204. With 64 MB it reads 8 MB, and with 512 MB 456. Why the firmware's share changes with the processor was not looked into. Before frames existed it read 207, because the first megabyte was still counted.
 
 ## Page tables
 

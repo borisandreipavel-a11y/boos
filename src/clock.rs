@@ -56,6 +56,30 @@ pub fn clock_read() -> Option<Date> {
     date_from(chip_read()?)
 }
 
+// The same moment as a single number: the seconds that have gone by since the
+// start of the year 1970. Certificates are dated this way. Answers with
+// nothing for a date before 1970.
+pub fn seconds_since_1970(date: &Date) -> Option<u64> {
+    if date.year < 1970 {
+        return None;
+    }
+    // How many days of an ordinary year lie before each month.
+    const DAYS_BEFORE_MONTH: [u64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+
+    // A year has a leap day if it divides by 4, except that the hundreds have
+    // none, except that every fourth hundred has one after all.
+    let year = date.year as u64;
+    let leap_days_up_to = |year: u64| year / 4 - year / 100 + year / 400;
+    let this_is_a_leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+
+    let mut days = (year - 1970) * 365 + leap_days_up_to(year - 1) - leap_days_up_to(1969);
+    days += DAYS_BEFORE_MONTH[date.month as usize - 1] + date.day as u64 - 1;
+    if this_is_a_leap_year && date.month > 2 {
+        days += 1;
+    }
+    Some(days * 86400 + date.hour as u64 * 3600 + date.minute as u64 * 60 + date.second as u64)
+}
+
 // Reads one of the chip's values.
 fn chip_value(number: u8) -> u8 {
     // The two steps belong together: no other task may ask in between.

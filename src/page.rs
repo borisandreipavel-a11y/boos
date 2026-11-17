@@ -1,6 +1,6 @@
-//! Fetching one page from the web, without encryption: look up the site's
-//! name, connect, ask for the page, show how it begins. Notes:
-//! `docs/network.md`.
+//! Fetching one page from the web over an encrypted link: look up the site's
+//! name, connect, let the site prove who it is, ask for the page, show how it
+//! begins. Notes: `docs/network.md`.
 
 use alloc::format;
 use alloc::string::String;
@@ -18,14 +18,15 @@ use crate::processor::time_stamp;
 use crate::serial::serial_print;
 use crate::tasks::task_wait;
 use crate::timer::{TICKS, TICKS_PER_SECOND};
+use crate::tls::{Wire, secure_exchange, secure_ready};
 
 // The site whose page is fetched. Its owners keep it for examples like this.
 const SITE: &str = "example.com";
 
 // A machine can hold many conversations at once. A port is the number that
-// says which conversation a packet belongs to. Sites wait for page requests
-// on port 80.
-const WEB_PORT: u16 = 80;
+// says which conversation a packet belongs to. Sites wait for requests over
+// an encrypted link on port 443, and for requests in the open on port 80.
+const WEB_PORT: u16 = 443;
 
 // How much of the page is shown: so many rows of so many characters.
 const ROWS_SHOWN: usize = 8;
@@ -34,7 +35,7 @@ const ROW_LENGTH: usize = 72;
 // How long each wait may last, in seconds, before the fetch gives up.
 const LOOKUP_WAIT: u64 = 5;
 const CONNECT_WAIT: u64 = 5;
-const ANSWER_WAIT: u64 = 10;
+const ANSWER_WAIT: u64 = 15; // The greeting and the answer together.
 const GOODBYE_WAIT: u64 = 1;
 
 // Room for the connection's bytes: those that have arrived and are not read
@@ -51,6 +52,13 @@ pub fn page_fetch(interface: &mut Interface, card: &mut Card, sockets: &mut Sock
         serial_print("Network: no page fetched, because the network named no name server\r\n");
         return;
     };
+
+    // The page is fetched over an encrypted link or not at all. If this
+    // machine cannot encrypt, nothing is sent, not even the site's name.
+    if let Err(reason) = secure_ready() {
+        serial_print(&format!("Network: no page fetched, because {}\r\n", reason));
+        return;
+    }
 
     let address = match name_lookup(interface, card, sockets, name_server) {
         Ok(address) => address,
@@ -155,7 +163,7 @@ fn name_lookup(
 // bytes, the other side confirms what has arrived, and what is not confirmed
 // is sent again. The network stack does all of that. This opens a connection
 // to the site, has the conversation, and ends the connection again.
-fn page_ask(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, address: IpAddress) -> Result<Answer, &'static str> {
+fn page_ask(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, address: IpAddress) -> Result<Answer, String> {
     let connection = sockets.add(tcp::Socket::new(
         tcp::SocketBuffer::new(vec![0; ARRIVAL_ROOM]),
         tcp::SocketBuffer::new(vec![0; SENDING_ROOM]),
@@ -180,21 +188,22 @@ fn page_ask(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet,
     result
 }
 
-// The conversation itself: connect, send the request, take in the answer.
+// The conversation itself: connect, then greet the site, send the request and
+// take in the answer over an encrypted link.
 fn conversation(
     interface: &mut Interface,
     card: &mut Card,
     sockets: &mut SocketSet,
     connection: SocketHandle,
     address: IpAddress,
-) -> Result<Answer, &'static str> {
+) -> Result<Answer, String> {
     // This side needs a port number too. Any number from the range kept for
     // this use will do. The processor's count of its own steps picks one, so
     // that it differs from one start of the kernel to the next.
     let own_port = 49152 + (time_stamp() % 16384) as u16;
     let socket = sockets.get_mut::<tcp::Socket>(connection);
     if socket.connect(interface.context(), (address, WEB_PORT), own_port).is_err() {
-        return Err("the connection could not be started");
+        return Err("the connection could not be started".into());
     }
 
     // Wait until the site has agreed to the connection.
@@ -206,10 +215,10 @@ fn conversation(
             break;
         }
         if !socket.is_active() {
-            return Err("the site refused the connection");
+            return Err("the site refused the connection".into());
         }
         if wait_is_over(end) {
-            return Err("the site did not agree to a connection in time");
+            return Err("the site did not agree to a connection in time".into());
         }
     }
 
@@ -218,46 +227,74 @@ fn conversation(
     // many, and the empty line says that the request ends here. With
     // "HTTP/1.0" the site closes the connection once the page is sent.
     let request = format!("GET / HTTP/1.0\r\nHost: {}\r\n\r\n", SITE);
-    let socket = sockets.get_mut::<tcp::Socket>(connection);
-    match socket.send_slice(request.as_bytes()) {
-        Ok(taken) if taken == request.len() => {}
-        _ => return Err("the request could not be sent"),
-    }
 
-    // Take in the answer as it arrives, until the site has finished.
+    // From here on nothing travels in the open. The encrypted link greets the
+    // site, checks its certificate, sends the request scrambled, and hands
+    // over the answer unscrambled, piece by piece. The piece of code between
+    // the bars (a closure) is what takes each piece of the answer.
     let mut answer = Answer::new();
-    let end = wait_end(ANSWER_WAIT);
-    loop {
-        stack_turn(interface, card, sockets);
-        let socket = sockets.get_mut::<tcp::Socket>(connection);
-        while socket.can_recv() {
-            // `recv` lends out the bytes that have arrived to a piece of code
-            // (a closure), which says how many of them it has taken.
-            let taken = socket.recv(|bytes| {
-                for byte in bytes.iter() {
-                    answer.take(*byte);
-                }
-                (bytes.len(), ())
-            });
-            if taken.is_err() {
-                break;
-            }
+    let mut wire = ConnectionWire { interface, card, sockets, connection, end: wait_end(ANSWER_WAIT) };
+    let site_finished = secure_exchange(SITE, request.as_bytes(), &mut wire, &mut |bytes| {
+        for byte in bytes {
+            answer.take(*byte);
         }
-        if !socket.may_recv() {
-            // Nothing more will come. Either the site has said that it is
-            // done, and the connection is still there, or the connection broke.
-            answer.complete = socket.is_active();
-            break;
-        }
-        if wait_is_over(end) {
-            break;
-        }
-    }
+    })?;
+    // The page counts as whole only if the site said, through the encrypted
+    // link itself, that it had sent everything.
+    answer.complete = site_finished;
     answer.finish();
     if answer.length == 0 {
-        return Err("the site sent nothing");
+        return Err("the site sent nothing".into());
     }
     Ok(answer)
+}
+
+// The connection, in the form the encrypted link wants it: something that
+// sends bytes and receives bytes, waiting where it has to. The `'a` and `'b`
+// are lifetimes: labels for how long the borrowed things stay valid.
+struct ConnectionWire<'a, 'b> {
+    interface: &'a mut Interface,
+    card: &'a mut Card,
+    sockets: &'a mut SocketSet<'b>,
+    connection: SocketHandle,
+    end: u64, // The tick at which the whole exchange gives up.
+}
+
+impl Wire for ConnectionWire<'_, '_> {
+    fn send(&mut self, mut bytes: &[u8]) -> Result<(), &'static str> {
+        // The connection takes as many bytes as it has room for. The rest
+        // waits for the next turn.
+        while !bytes.is_empty() {
+            let socket = self.sockets.get_mut::<tcp::Socket>(self.connection);
+            if !socket.may_send() {
+                return Err("the connection broke");
+            }
+            let taken = socket.send_slice(bytes).map_err(|_| "the connection broke")?;
+            bytes = &bytes[taken..];
+            stack_turn(self.interface, self.card, self.sockets);
+            if wait_is_over(self.end) {
+                return Err("the site took too long");
+            }
+        }
+        Ok(())
+    }
+
+    fn receive(&mut self, room: &mut [u8]) -> Result<usize, &'static str> {
+        loop {
+            let socket = self.sockets.get_mut::<tcp::Socket>(self.connection);
+            if socket.can_recv() {
+                return socket.recv_slice(room).map_err(|_| "the connection broke");
+            }
+            if !socket.may_recv() {
+                // Nothing more will come.
+                return Ok(0);
+            }
+            if wait_is_over(self.end) {
+                return Err("the site took too long");
+            }
+            stack_turn(self.interface, self.card, self.sockets);
+        }
+    }
 }
 
 // ---------- Reading the answer ----------
@@ -359,6 +396,12 @@ impl Answer {
             self.row_end();
         }
     }
+}
+
+// Cleans a whole text from outside in the same way as the function below
+// cleans one byte, and cuts it at `longest` signs.
+pub fn plain_text(text: &str, longest: usize) -> String {
+    text.bytes().filter_map(plain_sign).take(longest).collect()
 }
 
 // The answer is text from outside, written by somebody else. Only plain

@@ -2,7 +2,7 @@
 
 Code: `src/random.rs`, `src/clock.rs`, and `processor_ask` in `src/processor.rs`.
 
-Encryption needs two things from the machine: numbers that nobody can guess, and today's date. The kernel can get both and prints them at startup. Nothing uses them yet.
+Encryption needs two things from the machine: numbers that nobody can guess, and today's date. The kernel can get both and prints them at startup. The encrypted link uses both; see [encryption.md](encryption.md).
 
 ## Random numbers
 
@@ -15,7 +15,8 @@ Encryption needs two things from the machine: numbers that nobody can guess, and
   - The processor says through its carry flag, one of its yes-or-no marks, whether it had a number ready. If not, the kernel asks again, up to ten times (`TRIES`), which is what the processors' makers advise.
   - **It never falls back on something weaker.** Without a source there is no number. `time_stamp()` differs from boot to boot, but it can be guessed and must not stand in.
 - `efi_main` prints `Random numbers: made by the processor, for example 6f3630af83499c29`. The number is written with 16 signs, the digits and the letters a to f (base 16, where each sign stands for four bits). It is a sample and is used for nothing else. Without a sound source the line is `Random numbers: none, because this processor has no sound source for them`, and the kernel carries on.
-- Whatever needs random numbers for encryption must refuse to work when `random_number()` gives nothing.
+- `random_fill(bytes)` fills a piece of memory with random bytes, eight per number, and says whether it could. The TLS library gets its random bytes this way.
+- Whatever needs random numbers for encryption must refuse to work when there are none. The encrypted link does: it asks first, and makes no link without them.
 
 In QEMU:
 
@@ -40,6 +41,7 @@ In QEMU:
   - A month outside 1 to 12, a day outside 1 to 31, an hour above 23, a minute or second above 59, or a half byte that is no digit gives no date at all.
 - `clock_read()` gives a `Date` (year, month, day, hour, minute, second) or nothing. `efi_main` prints `Date and time: 2026-11-17 05:37:53, by this machine's clock`, or `Date and time: unknown, because the clock chip gave no usable answer`.
 - **Which time it is.** The chip does not say whether it holds local time or world time (UTC), and the kernel cannot tell. QEMU sets its chip to world time, so the printed time differs from the clock on the wall by the time zone. PCs that run Windows usually keep local time in the chip. Certificates are dated in world time.
+- `seconds_since_1970(date)` gives the same moment as one number, the seconds since the start of 1970, which is how certificates are dated. It counts the leap days by the rule of the calendar: every fourth year, but not the hundreds, but again every fourth hundred. A date before 1970 gives nothing.
 - The chip is read each time the date is asked for. The kernel keeps no date of its own.
 
 In QEMU:

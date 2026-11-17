@@ -8,7 +8,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Waits are counted in ticks.** The shortest real wait is one tick, 10 ms, and the clock behind it only counts timer signals.
 - **Task 0 cannot wait.** It is the task that rests the processor, so its own work has to fit into its main loop.
 - **There are 8 places and no priorities.** Every ready task gets the same turn of one tick.
-- **Nothing notices a stack that overflows.** A task that uses more than its 64 KB writes into whatever lies below it on the heap. An unmapped page below each stack would turn that into a page fault.
+- **Nothing notices a stack that overflows.** A task that uses more than its 256 KB writes into whatever lies below it on the heap. An unmapped page below each stack would turn that into a page fault.
 - **A finished task's stack is given back only when its place is reused.**
 - **A failure in one task stops everything.** Tasks are not isolated from each other.
 - **Printing holds signals off for a whole text.** On a real serial port a long line takes several milliseconds, which could delay a tick. The longest text is the report about a fetched page, about 700 bytes: roughly 60 ms on a real port at the speed set, which is six ticks.
@@ -25,12 +25,12 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Network
 
-- The page fetch is a demonstration: one fixed site, once per start, inside the stack's own task. There is no encryption, so nothing secret may be sent this way, and what arrives may have been read or changed on the way.
-- Every start of the kernel reaches the internet: one name question and one request to the site. A machine with no way out prints a "no page fetched" line instead.
-- While a page is fetched, the stack's task does nothing else. News about the address waits until the fetch is over, which is about 21 seconds at worst.
+- The page fetch is a demonstration: one fixed site, once per start, inside the stack's own task. It goes over an encrypted link; the limits of that link are under "Encryption" below.
+- Every start of the kernel reaches the internet: one name question and one encrypted exchange with the site. A machine with no way out prints a "no page fetched" line instead.
+- While a page is fetched, the stack's task does nothing else. News about the address waits until the fetch is over, which is about 26 seconds at worst.
 - Only the first address of a name is tried: smoltcp is set to keep one. Only the 4-byte sort of address is asked for.
-- The site's answer is taken as it comes. A redirect is not followed. The length the site states is not compared with what arrived, so "the whole page" only means that the site ended the connection properly. A site that keeps the connection open is cut off after 10 seconds, and so is a page too big to arrive in that time.
-- A page arrives at about 70 KB a second. The card's adapter tells smoltcp "one packet at a time", so the other side sends one packet and waits, and the stack is looked at once per tick. The card could take 16 packets between two looks; saying so, and more room for arrived bytes, would speed this up.
+- The site's answer is taken as it comes. A redirect is not followed. The length the site states is not compared with what arrived; "the whole page" means that the site said through the encrypted link that it had sent everything. The greeting and the answer together get 15 seconds. A site that is still sending then is cut off, and what came is shown as not whole; so is a page too big to arrive in that time.
+- A page arrives at about 50 KB a second through the encrypted link. The card's adapter tells smoltcp "one packet at a time", so the other side sends one packet and waits, and the stack is looked at once per tick. The card could take 16 packets between two looks; saying so, and more room for arrived bytes, would speed this up.
 - After asking for one machine's hardware address, smoltcp asks for no other for a second. At each start that delays the page by a second, because the name server's address is asked for just before the gateway's. The by-hand gateway answer is not handed to the stack.
 - The by-hand gateway question is still asked at startup, with an assumed address (`10.0.2.15`) and gateway (`10.0.2.2`). The stack does not need it. It could go.
 - The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch. The kernel has random numbers now, and neither place uses them yet.
@@ -51,24 +51,28 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Encryption
 
-- No connection is encrypted yet. The outside code is built in and checked; the provider that ties it together is not written.
-- **Stack.** A task has 64 KB of stack, and one constant sets that size for every task. The arithmetic alone went 63 KB deep in a trial, with larger keys and messages than the startup check uses, and a real connection will go deeper. The task that makes connections needs more: a size of its own, or a larger size for all. Building the outside crates optimized brought the trial down to 47 KB and made it two to nine times faster; that would change how smoltcp is built as well. Not decided.
+- **TLS 1.3 only, and one curve for agreeing on a key.** A site that speaks only the older TLS 1.2, or insists on another curve, is refused. The arithmetic for more is in the crates; the provider does not offer it.
+- **No look at whether a certificate was withdrawn.** A certificate that its issuer has called back before its last day is still believed.
+- **Only the page fetch can use the encrypted link**, one fixed site, inside the network stack's own task. Nothing can be sent but that one request.
+- **Every task has a 256 KB stack because one task needs it.** The network task goes 100 KB deep when it makes an encrypted link; the others use a few KB. One constant sets the size for all, so each task costs 256 KB of memory. A size per task would save that. Building the outside crates optimized would make the link need less stack and less time, but would change how smoltcp is built as well.
+- **A link is slow to make in this kind of build:** about half a second of arithmetic, during which the network task does nothing else.
 - The startup check runs on the firmware's stack and uses 46 of the 124 KB free there. That room is what QEMU's firmware leaves; another firmware may leave less. Nothing notices if that stack overflows.
-- The check delays startup by about half a second, and nothing reads its result yet. Code that encrypts must refuse to work when the check failed.
+- The check delays startup by about half a second.
 - The versions of the crates for encryption are months old, and some are days old. Security advisories appear for them, and nothing in the kernel or its build watches for those.
 - The list of roots is fixed when the kernel is built. A root that loses its standing later stays trusted until the crate is renewed.
+- The site's name travels readable twice at every start: in the name question, and in the greeting of the link.
 - Ten crates are listed by cargo and never compiled, and three of them are downloaded on a first build.
 - The five compiler settings have to be kept in step with the crates: a new or renewed crate may need another one.
 - With SSE instructions refused, nothing may use those registers, the firmware's code included. No firmware code is called after the takeover today.
+- The provider's adapters were written for this kernel and have been checked only by its own tests. Nobody else has looked at them.
 
 ## Random numbers and the date
 
 - Random numbers have one source, the processor's own instruction. A processor without it gives none, and the kernel has no second source: not the firmware's, not a virtual machine's device, not noise it gathers itself.
 - The numbers are used as the processor hands them out. The kernel does not mix them with anything or run a generator of its own on top, so it trusts the processor's maker entirely, and in QEMU it trusts QEMU.
 - The source is tried once, at startup. If it breaks later, that shows only when a draw gives nothing.
-- Nothing uses the random numbers or the date yet.
+- The network stack's start number and the page fetch's own port number still come from `time_stamp()`, not from the random numbers.
 - The kernel does not know whether the clock chip holds local time or world time. Checking a certificate wants world time.
-- The date comes as year, month, day, hour, minute and second. Code that checks certificates will probably want a count of seconds since 1970, which is not written.
 - The century is looked for in one place of the chip (`0x32`). Real PCs name the place in a table of the firmware (ACPI), which the kernel does not read. Where the value is no century, the year is taken to be in the 2000s.
 - Nothing notices a clock that is plainly wrong, such as one whose battery is empty.
 - Waiting for a busy chip is counted in looks, not in time.

@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. With it the kernel fetches one web page at startup, without encryption, and prints how the page begins. It can also get random numbers from the processor and read the date from the clock chip, which encryption will need. The outside code for encryption is built in and checked at startup, but no encrypted connection is made yet.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins.
 
 ## Read in this order
 
@@ -19,7 +19,7 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
 6. [network.md](network.md): the PCI list, the network card, sending and receiving packets, the network stack, fetching a page, QEMU's built-in network.
 7. [random-and-date.md](random-and-date.md): random numbers from the processor, the date from the clock chip.
-8. [encryption.md](encryption.md): the outside code for encryption, the settings it needs, and the check at startup.
+8. [encryption.md](encryption.md): the outside code for encryption, the settings it needs, the check at startup, the provider and the encrypted link.
 9. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
 10. [open-points.md](open-points.md): known limits and what later work must deal with.
 
@@ -46,11 +46,13 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_memory_address` | [network.md](network.md) |
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
 | `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, and `network_task`, which also starts the page fetch | [network.md](network.md) |
-| `page.rs` | Fetching one page from the web: `page_fetch`, the name lookup, the connection, and `Answer`, which reads what the site sends | [network.md](network.md) |
-| `random.rs` | Random numbers from the processor: `random_setup`, `random_number` | [random-and-date.md](random-and-date.md) |
-| `clock.rs` | The clock chip: `clock_read`, which gives a `Date` | [random-and-date.md](random-and-date.md) |
-| `encryption.rs` | The startup check of the outside encryption code: `encryption_check`, `trusted_roots` | [encryption.md](encryption.md) |
+| `page.rs` | Fetching one page from the web over an encrypted link: `page_fetch`, the name lookup, the connection, `ConnectionWire`, and `Answer`, which reads what the site sends | [network.md](network.md) |
+| `random.rs` | Random numbers from the processor: `random_setup`, `random_number`, `random_fill` | [random-and-date.md](random-and-date.md) |
+| `clock.rs` | The clock chip: `clock_read`, which gives a `Date`, and `seconds_since_1970` | [random-and-date.md](random-and-date.md) |
+| `encryption.rs` | The startup check of the outside encryption code and the list of roots: `encryption_check`, `encryption_sound`, `root_list` | [encryption.md](encryption.md) |
 | `encryption_values.rs` | The values that check is made against | [encryption.md](encryption.md) |
+| `provider.rs` | The adapter between the TLS library and the crates that do the arithmetic: `provider` | [encryption.md](encryption.md) |
+| `tls.rs` | The encrypted link: `Wire`, `secure_ready`, `secure_exchange` | [encryption.md](encryption.md) |
 
 Which file uses which:
 
@@ -62,14 +64,14 @@ Which file uses which:
 - `interrupts.rs` uses `faults.rs`, `controller.rs`, `tasks.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
 - `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs` and `processor.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
 - `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
-- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `page.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp. `page.rs` uses `network.rs` (for `Card` and `now`), `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and smoltcp.
+- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `page.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp. `page.rs` uses `network.rs` (for `Card` and `now`), `tls.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and smoltcp.
 - `random.rs` and `clock.rs` use `processor.rs`.
-- `encryption.rs` uses `encryption_values.rs` and the crates for encryption.
+- `encryption.rs` uses `encryption_values.rs` and the crates for encryption. `provider.rs` uses `random.rs` and those crates. `tls.rs` uses `provider.rs`, `encryption.rs`, `clock.rs`, `random.rs`, `serial.rs`, `page.rs` (for `plain_text`) and rustls.
 
 Outside `src/`:
 
 - `vendor/` holds copies of five crates that were not written for this kernel: smoltcp, the network stack, and heapless, which it needs; rustls, which speaks TLS, rustls-webpki, which checks certificates, and num-traits, which the arithmetic of encryption needs. `vendor/README.md` says where they came from and what was changed. Their text is other people's and does not follow the conventions below.
-- `Cargo.toml` names ten dependencies, smoltcp and nine crates for encryption, and points cargo at the copies. `Cargo.lock` lists 70 crates besides the kernel; 60 of them are compiled.
+- `Cargo.toml` names eleven dependencies, smoltcp and ten crates for encryption, and points cargo at the copies. `Cargo.lock` lists 70 crates besides the kernel; 60 of them are compiled.
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`, and tells the crates for encryption to use their plain code; see [encryption.md](encryption.md).
 - `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers and a virtio network card on QEMU's built-in network.

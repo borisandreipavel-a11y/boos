@@ -44,7 +44,7 @@ Rules that keep this working:
 
 - It switches device signals off while it works, so the timer cannot read the list half-changed.
 - It takes the first place that is not `READY`. If all are, it panics with "too many tasks".
-- It takes a 64 KB stack from the heap (`TASK_STACK_SIZE`).
+- It takes a 256 KB stack from the heap (`TASK_STACK_SIZE`). One size serves every task, and the network task sets it: making an encrypted link takes up to 100 KB there; see [encryption.md](encryption.md).
 - It then makes the new stack look as if the task had been set aside just as it was about to start `task_run`: a `SavedRegisters` at the top, with all registers zero and
   - the code address of `task_run`,
   - code segment 8 and stack segment 16,
@@ -120,4 +120,4 @@ The demonstration no longer shows that the timer can take the processor from a t
 
 See [open-points.md](open-points.md). In short: a task can wait for a time but not for an event, there are 8 places and no priorities, and nothing notices a stack that overflows.
 
-Measured in a debug build: the demonstration tasks used about 2 KB of their 64 KB stacks, and tasks working with lists and formatted text about 4 KB.
+Measured in a debug build: the demonstration tasks used about 2 KB of their stacks, tasks working with lists and formatted text about 4 KB, and the network task up to 100 KB of its 256 KB.

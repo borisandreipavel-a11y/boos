@@ -1,5 +1,6 @@
-//! Encryption. So far only a check, made at startup, that the outside code
-//! for it computes correctly on this machine. Notes: `docs/encryption.md`.
+//! Encryption: the check, made at startup, that the outside code for it
+//! computes correctly on this machine, and the list of trusted roots. The
+//! encrypted link itself is in `tls.rs`. Notes: `docs/encryption.md`.
 
 use alloc::vec::Vec;
 
@@ -9,6 +10,14 @@ use p256::ecdsa::signature::Verifier;
 use sha2::Digest;
 
 use crate::encryption_values::*;
+
+// Whether every check below came out right at startup.
+static mut ENCRYPTION_SOUND: bool = false;
+
+// Code that encrypts asks this first, and does not work if the answer is no.
+pub fn encryption_sound() -> bool {
+    unsafe { ENCRYPTION_SOUND }
+}
 
 // Encryption is arithmetic, and none of that arithmetic was written for this
 // kernel. Before the kernel relies on it, each kind of operation is tried
@@ -32,15 +41,20 @@ pub fn encryption_check() -> (usize, usize) {
             right += 1;
         }
     }
+    unsafe { ENCRYPTION_SOUND = right == checks.len() };
     (right, checks.len())
 }
 
 // The roots: the organisations whose signatures count. A site's certificate
-// is believed if a chain of signatures leads back to one of them. This puts
-// the list into the form the TLS library wants and says how many it holds.
+// is believed if a chain of signatures leads back to one of them. This is
+// the list, in the form the TLS library wants.
+pub fn root_list() -> rustls::RootCertStore {
+    rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned())
+}
+
+// How many roots the list holds.
 pub fn trusted_roots() -> usize {
-    let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    roots.len()
+    root_list().len()
 }
 
 // A fingerprint (hash) is a short number worked out from any amount of data.
