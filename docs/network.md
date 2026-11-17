@@ -201,7 +201,7 @@ Every start of the kernel fetches the page, so every start sends one name questi
 - the network can be changed for a test: `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` made the kernel print `192.168.76.9`, given by `192.168.76.2`;
 - nothing outside can reach the kernel; only what the kernel sends out gets answers.
 
-With the card attached, the firmware uses more memory during startup: "Free memory" reads 202 MB with the card and 205 without, on the machine that `run.bat` starts. [memory.md](memory.md) has the figures for other processors.
+With the card attached, the firmware uses more memory during startup: "Free memory" reads 201 MB with the card and 203 without, on the machine that `run.bat` starts. [memory.md](memory.md) has the figures for other processors.
 
 A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records 21:
 

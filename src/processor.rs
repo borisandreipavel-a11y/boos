@@ -83,6 +83,17 @@ pub fn processor_ask(question: u32) -> [u32; 4] {
     [first, second, third, fourth]
 }
 
+// Processors have a second set of registers, made for arithmetic on many
+// numbers at once (SSE). This kernel never uses them and does not save them
+// when it switches tasks, so code that did use them would quietly spoil
+// another task's numbers. This tells the processor to refuse every
+// instruction that touches them: such an instruction then stops the kernel
+// with a report ("device not available") instead. Bit 3 of the control
+// register cr0 is the switch.
+pub fn sse_refuse() {
+    unsafe { asm!("mov rax, cr0", "or rax, 8", "mov cr0, rax", out("rax") _) };
+}
+
 // Switches device signals off and says whether they were on. While they are
 // off nothing can interrupt the running code, so no other task gets a turn.
 pub fn signals_off() -> bool {

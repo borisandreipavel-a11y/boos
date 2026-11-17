@@ -11,9 +11,26 @@ edition = "2024"
 # for an address, look up names, and hold connections. See docs/network.md.
 smoltcp = { version = "0.14.0", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-dhcpv4", "socket-dns", "socket-tcp"] }
 
-# Two crates are not fetched from the internet. Cargo is told to use the copies
-# kept in vendor/ instead, which need no helper program at build time. See
-# vendor/README.md.
+# Encryption: the library that speaks TLS, the list of trusted roots, and the
+# crates that do the arithmetic. None of this code was written for this
+# kernel either. Default features are off because they need an operating
+# system underneath. See docs/encryption.md.
+rustls = { version = "0.23.46", default-features = false }
+webpki-roots = "1.0.12"
+sha2 = { version = "0.11.1", default-features = false }
+hmac = { version = "0.13.0", default-features = false }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "ecdh"] }
+p384 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+rsa = { version = "0.10.0", default-features = false, features = ["pkcs1v15"] }
+
+# Five crates are not fetched from the internet. Cargo is told to use the
+# copies kept in vendor/ instead, which need no helper program at build time.
+# See vendor/README.md.
 [patch.crates-io]
 smoltcp = { path = "vendor/smoltcp" }
 heapless = { path = "vendor/heapless" }
+rustls = { path = "vendor/rustls" }
+rustls-webpki = { path = "vendor/rustls-webpki" }
+num-traits = { path = "vendor/num-traits" }

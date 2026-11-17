@@ -1,2 +1,16 @@
 [build]
 target = "x86_64-unknown-uefi"
+
+# The crates that do the arithmetic of encryption each hold two versions of
+# their code: a fast one for processors with special instructions, and a plain
+# one that runs on any processor. This kernel must use the plain one. The fast
+# code works with processor registers that the kernel does not save when it
+# switches tasks, and the compiler cannot build it for this target at all.
+# Each line tells one crate to use its plain code. See docs/encryption.md.
+rustflags = [
+    "--cfg", 'sha2_backend="soft"',
+    "--cfg", 'chacha20_backend="soft"',
+    "--cfg", 'aes_backend="soft"',
+    "--cfg", 'poly1305_backend="soft"',
+    "--cfg", 'polyval_backend="soft"',
+]

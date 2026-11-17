@@ -27,7 +27,7 @@ Rules that keep this working:
 - `on_timer` must call `signal_done` on every tick, whichever task it switches to. Until the interrupt controller hears it, it holds back all further ticks, and with them every further switch.
 - Fifteen pushes leave the stack aligned to 16 bytes at the `call`. An even number would not.
 - The keyboard keeps the smaller stub, `device_entry!` in `interrupts.rs`, which saves nine registers and cannot switch tasks. See [interrupts.md](interrupts.md).
-- The build target has no SSE, so there are no other registers. If SSE is ever switched on, its registers must be saved per task too.
+- The build target has no SSE, so there are no other registers. If SSE is ever switched on, its registers must be saved per task too. Until then the processor refuses SSE instructions in every task; see [encryption.md](encryption.md).
 
 ## The list of tasks
 

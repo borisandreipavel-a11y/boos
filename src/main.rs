@@ -29,6 +29,8 @@ mod network; // The first words on the network.
 mod page; // Fetching one page from the web.
 mod random; // Random numbers, made by the processor.
 mod clock; // The clock chip: the date and the time.
+mod encryption; // Encryption: a check that the outside code for it works here.
+mod encryption_values; // The values that check is made against.
 
 use alloc::format;
 use alloc::string::String;
@@ -41,6 +43,7 @@ use core::sync::atomic::Ordering;
 
 use clock::clock_read;
 use controller::controller_setup;
+use encryption::{encryption_check, trusted_roots};
 use firmware::{SystemTable, print, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interrupts::load_interrupt_table;
@@ -48,7 +51,7 @@ use keyboard::{key_letter, keyboard_setup, next_key};
 use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
-use processor::stop;
+use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
 use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
@@ -99,6 +102,10 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     // From here on the kernel answers for its own failures.
     load_segment_table();
     load_interrupt_table();
+
+    // This kernel does not use the processor's SSE registers. Have the
+    // processor refuse any instruction that does.
+    sse_refuse();
 
     let mut serial = Serial;
     write!(serial, "The firmware has stepped aside. This machine is mine.\r\n").ok();
@@ -152,6 +159,15 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             write!(serial, "Date and time: unknown, because the clock chip gave no usable answer
 ").ok();
         }
+    }
+
+    // Encryption will be done by code that was not written for this kernel.
+    // Before relying on it, see that it computes correctly on this machine.
+    let (right, all) = encryption_check();
+    if right == all {
+        write!(serial, "Encryption: {} of {} checks of the arithmetic are right, and {} trusted roots are on board\r\n", right, all, trusted_roots()).ok();
+    } else {
+        write!(serial, "Encryption: not to be trusted here, only {} of {} checks of the arithmetic are right\r\n", right, all).ok();
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.

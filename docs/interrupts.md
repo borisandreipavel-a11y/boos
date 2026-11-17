@@ -57,7 +57,7 @@ Limits:
 - `device_entry!(handler)` in `interrupts.rs` makes the stub for one device line. It saves the nine registers that Rust code may change (`rax rcx rdx rsi rdi r8 r9 r10 r11`), runs `cld`, calls the handler, restores the registers and returns with `iretq`. It always returns to the code it interrupted.
 - The handler is an `extern "sysv64" fn()`. Under that convention the other registers are restored by the handler itself.
 - Nine pushes leave the stack aligned to 16 bytes at the `call`, as Rust code expects. Changing the number of pushes breaks that.
-- The build target has no SSE, so there are no other registers to save. If SSE is ever switched on, the stubs must save those registers too.
+- The build target has no SSE, so there are no other registers to save. If SSE is ever switched on, the stubs must save those registers too. Until then the processor is told to refuse SSE instructions (`sse_refuse`), so code that used them anyway stops with `CPU fault: device not available`; see [encryption.md](encryption.md).
 - Lines 32 to 47 are first filled with `ignore_signal`, a bare `iretq`. That makes a stray signal harmless instead of a failure, and it covers the controller's false alarm on line 7, which must not be answered with `signal_done`.
 - To listen to a new device: write an `extern "sysv64"` handler that ends with `signal_done()`, add its line in `load_interrupt_table` with `device_entry!`, and let its line through in `controller_setup`.
 

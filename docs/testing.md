@@ -7,7 +7,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 ## Build and run
 
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
-- The very first build on a computer fetches six small crates from crates.io, so it needs the internet once. After that, building works without it. The network stack itself is not fetched; it is a copy in `vendor/`.
+- The very first build on a computer fetches 58 crates from crates.io, about 3 MB, so it needs the internet once. After that, building works without it. Five crates are not fetched; they are copies in `vendor/`. A build from nothing takes about 13 seconds.
 - `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
 - The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
@@ -96,6 +96,7 @@ A test should be able to fail. For each protection or saved register that a test
 - A register test must compare after every single switch, not once at the end. With one register left unrestored, a test that set the registers once, gave up its turn many times and compared at the end reported nothing: the task that finished first put the right value back as its function ended, and the other task then found it. Comparing all 15 registers after every turn reported 99,995 changes in 100,000 turns.
 - Two steps that belong together and sit side by side, such as the clock chip's two ports, do not show a missing protection in ordinary use: a switch almost never lands between two neighbouring instructions. For the test, pull the two steps apart with a pause. Then the missing protection shows at once, and the protection in place still passes.
 - A check for a broken device needs a broken device. Replace the device's answer in the code, for the test, with the bad one: the same number every time, or never ready.
+- The value a check of arithmetic is compared with must come from outside the code under check. Doing an operation and undoing it proves little: it passes when both halves are wrong in the same way.
 - Two tasks doing ordinary work with lists did not catch a heap without protection in three seconds; a switch rarely lands inside the heap. Two tasks that do almost nothing but take and return pieces of one size caught it at once.
 
 ## A server on the test computer
@@ -130,11 +131,12 @@ A panic line names the file the panic is in, so the file name changes when code 
 - **Memory on the host.** The frame pile writes to every free frame at startup, so the host must really provide all of the guest's memory. On a host with about 1 GB free, guests were kept at 512 MB or less.
 - **Timing in windowless runs.** The kernel's clock counts timer signals. In some windowless runs, lines meant to be 1.0 s apart came 1.56 s apart, and in other runs of the same kernel exactly 1.0 s. The kernel before the memory work and the one after it showed the same 1.0 s when compared side by side, so the kernel is not the cause. The factor matches Windows' default timer step of 15.6 ms: QEMU then delivers at most 64 timer signals a second where the kernel asks for 100. The likely reason is that Windows does not give a hidden program its finer timer. Judge timing by a run with a visible QEMU window, and judge order by tick counts, which do not depend on it.
 - **Windows can refuse to run freshly compiled programs.** With Smart App Control switched on, Windows only runs programs that are signed or that Microsoft recognises. A build then stops with "An Application Control policy has blocked this file (os error 4551)" when it hits one that is neither.
-  - A crate's build script is such a program: cargo compiles it and runs it on the spot. With smoltcp taken from crates.io, the build script of `heapless` was blocked on every one of four tries. That is why the two crates with build scripts are kept as copies without them; see `vendor/README.md`.
+  - A crate's build script is such a program: cargo compiles it and runs it on the spot. With smoltcp taken from crates.io, the build script of `heapless` was blocked on every one of four tries. That is why crates with build scripts are kept as copies without them; see `vendor/README.md`.
   - The verdict is not predictable. In a temporary folder the same kind of build script had been let through, and Rust's own linker, `rust-lld`, was blocked once and never again.
   - Windows records each block in its Code Integrity log (`Microsoft-Windows-CodeIntegrity/Operational`, events 3033 and 3077), with the file's name.
   - Do not switch the protection off and do not try to slip a program past it. Find a way that runs no such program.
   - If the linker is blocked, running the build again has worked.
+- **The compiler stops on a crate for encryption.** `rustc-LLVM ERROR: Do not know how to split the result of this operator!` means that a crate's fast code, made for processors with special instructions, is being built for this target, which cannot be done. `.cargo/config.toml` holds one setting per such crate that selects its plain code; see [encryption.md](encryption.md).
 - **`cargo` may fetch more than a build uses.** Asked for smoltcp from crates.io, cargo downloaded 17 crates where the build used 8. The other nine were optional parts for a logging system, pulled in by one line in smoltcp's settings. `cargo tree` shows what a build uses; `Cargo.lock` shows what cargo will fetch. Check both before taking in a crate.
 
 ## What has been verified
@@ -288,6 +290,24 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - With the option: two tasks printing 12,161 lines tore none, two tasks hammering the heap found no wrong value, a page fault prints its report, keys are echoed, and the page is fetched from the test server and, once, from the real site. It boots with 64 MB (10 MB free) and 512 MB (458 MB free), with the newer-only card, and without a card. Fifteen boots in a row reached the prompt. The rest count read 393 to 399.
 - Not verified: a real processor's instruction (QEMU only plays it), a source that fails now and then, a chip that gives a mixed reading, a chip without a century value, and any real hardware.
 - A person ran `run.bat` and saw the line with the random number and the line with the date and time.
+
+**Encryption: the outside crates and the startup check**
+
+- A trial in a temporary folder came first, with a copy of the kernel. The crates built for the target with no helper program. Eleven operations gave the values that another program's fingerprints, published examples and Windows' own encryption code expect, on messages of 8192 bytes, both on QEMU's usual processor with the random-number instruction and on `-cpu max`. With the processor refusing SSE instructions, nothing was refused.
+- In the kernel itself the line reads 8 of 8: on the machine `run.bat` starts, without a network card, on QEMU's usual processor, on `-cpu max`, with 64 MB and with 512 MB.
+- Thirteen breaks made on purpose were each caught: one bit changed in each of nine expected values, one byte in each of the two published examples, the refusal of a changed text turned round, and the refusal of a changed message turned round. The line then reads 7 of 8, or 6 of 8 where two checks share the broken piece.
+- One SSE instruction put in on purpose stops the kernel with `CPU fault: device not available`, at startup and inside a task. With `sse_refuse` taken out on purpose the same instruction goes through.
+- Each of the five settings left out on its own stops the build with the compiler's error.
+- The check goes 45,696 bytes deep on the startup stack, which has 124 KB free there, and takes about 0.45 s.
+- The three new copies in `vendor/` were compared file by file with the crates as downloaded, whose checksums matched cargo's list: 165 of 169 files are identical and four were edited.
+- The build: 13 seconds from nothing, no warning, no program compiled along the way is run, and Windows recorded no block. `Cargo.lock` names 70 crates besides the kernel and no path of the building computer.
+- What a computer fetches the first time was measured with an empty cargo folder: 58 crate files, 2.97 MB. A copy of the project built from them in 11 seconds.
+- The two published examples in the check were compared with the documents that define them, RFC 8439 and the GCM specification, and match.
+- Git treats the eleven data files inside the rustls-webpki copy as binary, so it does not change their bytes.
+- With the crates in: two tasks printing 11,005 lines tore none, two tasks hammering the heap found no wrong value while a page of 300,000 bytes arrived whole, a page fault prints its report, keys are echoed, and the page is fetched from the test server and, once, from the real site. Fifteen boots in a row reached the prompt. The rest count read 396 to 399.
+- "Free memory" reads 201 MB: 203 without a card, 9 with 64 MB, 457 with 512 MB.
+- Not verified: any connection, since none is made yet; rustls's and the certificate checker's own code, of which only the counting of the roots runs; the arithmetic on a real processor; and whether a macro crate could be built on a computer that refuses unknown programs (none is needed, so none was tried).
+- A person ran `run.bat`, which built the kernel with the new crates, and saw the encryption line.
 
 **The split into files**
 

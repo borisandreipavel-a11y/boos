@@ -49,6 +49,18 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The setup runs once. Nothing handles a card that reports a failure later, and nothing sets it up a second time.
 - `pci_find` tries all 256 buses rather than following bridges. That is simple and was fast in QEMU; its speed on real hardware is not known.
 
+## Encryption
+
+- No connection is encrypted yet. The outside code is built in and checked; the provider that ties it together is not written.
+- **Stack.** A task has 64 KB of stack, and one constant sets that size for every task. The arithmetic alone went 63 KB deep in a trial, with larger keys and messages than the startup check uses, and a real connection will go deeper. The task that makes connections needs more: a size of its own, or a larger size for all. Building the outside crates optimized brought the trial down to 47 KB and made it two to nine times faster; that would change how smoltcp is built as well. Not decided.
+- The startup check runs on the firmware's stack and uses 46 of the 124 KB free there. That room is what QEMU's firmware leaves; another firmware may leave less. Nothing notices if that stack overflows.
+- The check delays startup by about half a second, and nothing reads its result yet. Code that encrypts must refuse to work when the check failed.
+- The versions of the crates for encryption are months old, and some are days old. Security advisories appear for them, and nothing in the kernel or its build watches for those.
+- The list of roots is fixed when the kernel is built. A root that loses its standing later stays trusted until the crate is renewed.
+- Ten crates are listed by cargo and never compiled, and three of them are downloaded on a first build.
+- The five compiler settings have to be kept in step with the crates: a new or renewed crate may need another one.
+- With SSE instructions refused, nothing may use those registers, the firmware's code included. No firmware code is called after the takeover today.
+
 ## Random numbers and the date
 
 - Random numbers have one source, the processor's own instruction. A processor without it gives none, and the kernel has no second source: not the firmware's, not a virtual machine's device, not noise it gathers itself.

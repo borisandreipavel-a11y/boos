@@ -24,6 +24,7 @@ The firmware's map lists stretches of memory, each with a kind:
 - Kinds 1 to 7, 9 and 10 count as real memory when working out where memory ends.
 - QEMU's map also has a kind 0 stretch at `0xfd00000000`, 12 GB long. It is not memory. Counting it would make the page tables cover a terabyte.
 - Kinds 3 and 4 are about 42 MB of QEMU's 256 MB. The firmware no longer needs them, but they are not handed out, because the kernel still runs on the firmware's stack, which sits in a kind 4 stretch (near `0xfe65600` in QEMU). The firmware's old page tables are in kind 4 too. They can be reclaimed once the kernel runs on a stack of its own. The sizes and addresses in this section were measured without a network card and with QEMU's usual processor. With the card and the processor that `run.bat` asks for now, free memory is 4 MB lower and the addresses shift a little; which kinds of the map grew was not measured again.
+- The firmware's stack, on which the kernel's startup code and main loop still run, is a stretch of kind 4 that is 128 KB long. In QEMU it runs from `0xfe46000` to `0xfe66000`, and the stack stands about 3 KB below its top when `efi_main` runs, so 124 KB lie free below it. The deepest use so far is the encryption check at startup, 46 KB. Nothing notices if this stack overflows.
 
 ## Frames
 
@@ -35,7 +36,7 @@ The firmware's map lists stretches of memory, each with a kind:
 - `frame_take` panics with "the machine is out of memory" when the pile is empty.
 - A frame's contents are whatever was there before. Zero it if that matters, as `empty_table` does.
 - Building the pile writes to every free frame once at startup. On a virtual machine that makes the host really provide all of the guest's memory.
-- "Free memory" at boot reads 202 MB on QEMU's 256 MB machine as `run.bat` starts it. The rest is what the firmware used during startup, and that depends on what the machine has. Without the network card it reads 205 MB. With QEMU's usual processor, in place of the one `run.bat` asks for so that the kernel has random numbers, it reads 205 MB with the card and 206 without. With `-cpu max` it reads 206 with the card. Why the firmware's share changes with the processor was not looked into. Before frames existed it read 207, because the first megabyte was still counted.
+- "Free memory" at boot reads 201 MB on QEMU's 256 MB machine as `run.bat` starts it. What is missing from 256 is what the firmware used during startup and the kernel's own file, which is 1.6 MB since the crates for encryption came in. The firmware's share depends on what the machine has. Without the network card the line reads 203 MB. With QEMU's usual processor, in place of the one `run.bat` asks for so that the kernel has random numbers, it reads 204 MB. With `-cpu max` it reads 205. With 64 MB it reads 9 MB, and with 512 MB 457. Why the firmware's share changes with the processor was not looked into. Before frames existed it read 207, because the first megabyte was still counted.
 
 ## Page tables
 
