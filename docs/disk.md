@@ -2,7 +2,7 @@
 
 Code: `src/disk.rs`, `src/parts.rs`, `pci_find_kind` in `src/pci.rs`, the calls in `efi_main`, the disk file that `run.bat` makes and attaches, and `make-disk.ps1`, which divides it.
 
-The kernel finds the controller that the machine's disks are plugged into, sets it up, asks the first disk on it who it is, its name and how many blocks it holds, and can read a block from it. It reads the list that says how the disk is divided into parts, and finds the part that is its own. **Nothing in the kernel can write to a disk.**
+The kernel finds the controller that the machine's disks are plugged into, sets it up, asks the first disk on it who it is, its name and how many blocks it holds, and can read a block from it. It reads the list that says how the disk is divided into parts, and finds the part that is its own. **It writes only inside that part,** and so far one block of it: a count of its own starts.
 
 ## The words
 
@@ -75,6 +75,28 @@ What is not recognised:
 - **The number of blocks:** bit 10 of number 83 says that the disk counts its blocks in 48 bits; then the count is in numbers 100 to 103, the lowest part first. Number 83 is believed only if, of its two top bits, the lower one alone is set, and the long count only if it is not 0. Otherwise the count is in numbers 60 and 61.
 - **A count that cannot be true is not believed:** none at all, or more than 48 bits can hold. The setup then stops with a reason. Before that check existed, a count of all ones, believed, stopped the kernel with `attempt to multiply with overflow` when the size was worked out; the size is now worked out by dividing.
 
+## Writing a block
+
+Code: `disk_write` in `src/disk.rs`, `part_write` and `WriteTicket` in `src/parts.rs`, and `src/starts.rs`, which is the only thing that writes so far.
+
+- **The kernel writes only inside its own part.** `part_write(block, from)` writes one block of the kernel's own part, numbered from 0 at the part's beginning, and refuses a number at or past the part's length, exactly as `part_read` does for reading. It is the only place in the kernel that writes to a disk.
+- **That is enforced when the kernel is built, not by habit.** `disk_write`, which writes a block of the disk by its own number, asks for a ticket, a `WriteTicket`. What a ticket holds is private to `parts.rs`, so only code in that file can make one, and `part_write` is the one place that does. Code anywhere else that tries to call `disk_write`, with a ticket it makes itself or with none, does not build.
+- `disk_write` also keeps its own bound: a block the disk does not have is refused, as for reading.
+- **The command is number `0x35`,** the write command for disks that count their blocks in 48 bits. The block to be written is put into the data frame first. The entry in the list of commands gets one more mark, bit 6, which says that the command's data goes to the disk.
+- The data frame is wiped before a command that reads, and must not be before one that writes: it holds the block on its way out.
+- **Then the disk is told to put it down for good,** command `0xEA`. A disk may keep written blocks in a store of its own for a while, where a power cut would lose them; this command empties that store onto the disk itself. It is a command without data: its entry names no place for data, and the check for a whole block does not apply to it.
+- A write that fails, because the disk reports a failure or does not answer, comes back as a reason in words, and the socket is got going again as after a failed read.
+
+### The count of starts
+
+`start_count()` in `starts.rs` counts how often the kernel has started. It shows that what the kernel writes is still there after the machine was switched off.
+
+- The count is kept in **the last block of the kernel's own part**, so that the part's first blocks stay free for what will later be kept there.
+- The block holds the 16 letters `boos start count`, then the count as a number of 8 bytes, lowest byte first, then a check value of those 24 bytes in 4 bytes. The rest is zeros.
+- At each start the kernel reads the block. Nothing but zeros means no start was counted yet. The letters with a check value that fits give the count. Anything else is not believed: the count begins again, and the line says so. The kernel's own part is its own, so it writes over what it finds there.
+- It adds 1, without going past the largest number there is, writes the block, **reads it back, and counts the start only if the disk holds exactly what was written.**
+- This is a demonstration. It can go, with its block, when something better is kept on the disk.
+
 ## Reading a block
 
 `disk_read(block, into)` reads the block with that number into 512 bytes that the caller hands over.
@@ -93,7 +115,7 @@ Code: `src/parts.rs`, and `make-disk.ps1`, which divides a new disk file.
 
 A PC's disk is divided into **parts** (the usual word is "partitions"). A list at the start of the disk says where each part begins and ends and what kind of part it is. Every system that uses the disk reads that list and keeps to its own parts. The list this kernel reads is the one PCs use today, the GUID partition table of the UEFI specification.
 
-**The kernel keeps its things in one part only, the one whose kind is its own.** This is the rule for writing, decided before any writing exists: the kernel will write only inside the part that the disk's own list names as its own. It never writes the list, never another part, and never divides a disk or takes one over. A disk without such a part is never written to. Dividing a disk is done from outside, on purpose.
+**The kernel keeps its things in one part only, the one whose kind is its own.** This is the rule for writing: the kernel writes only inside the part that the disk's own list names as its own; "Writing a block" says how that is enforced. It never writes the list, never another part, and never divides a disk or takes one over. A disk without such a part is never written to. Dividing a disk is done from outside, on purpose.
 
 ### How the list is laid out
 
@@ -106,7 +128,7 @@ A PC's disk is divided into **parts** (the usual word is "partitions"). A list a
 
 ### What `part_find` checks
 
-`part_find(disk_blocks)` reads the list and gives back where the kernel's own part is: its first block, its last and how many blocks it is long. Everything in the list comes from outside the kernel, and writing will later trust what is found here, so nothing is taken on trust. In this order, each with its reason in words:
+`part_find(disk_blocks)` reads the list and gives back where the kernel's own part is: its first block, its last and how many blocks it is long. Everything in the list comes from outside the kernel, and writing trusts what is found here, so nothing is taken on trust. In this order, each with its reason in words:
 
 1. Block 0 has an old-style entry of kind `0xEE` that begins at block 1. Otherwise: `it has no list of parts`.
 2. The head begins with its signature, is of version 1.0, is at least 92 bytes long and no longer than a block, and says that it lies in block 1. Otherwise: `the head of its list of parts is not as it must be`.
@@ -126,7 +148,7 @@ Steps 1 to 4, 8, 10 and 11 are what the reference firmware's own reader of such 
 
 ### The firmware may write to the disk before the kernel runs
 
-QEMU's firmware reads the list of every disk it finds, and **repairs it**: if the copy at the start is damaged and the copy at the end is whole, it writes the start copy anew from the end copy, and the other way round. It does that while starting, before the kernel has run a single instruction. A test disk whose head had a wrong check value came out of a boot with a head that was whole again, and the kernel found its part on it. A test disk with a whole copy at the start and none at the end came out with a second copy written at the block its head named, also where that block lay inside what the same head called usable. So "nothing is written to the disk" is true of the kernel; the firmware is another matter, and a real PC's firmware may do the same. To test the kernel's own checks of the head, a test disk must have no second copy to repair from.
+QEMU's firmware reads the list of every disk it finds, and **repairs it**: if the copy at the start is damaged and the copy at the end is whole, it writes the start copy anew from the end copy, and the other way round. It does that while starting, before the kernel has run a single instruction. A test disk whose head had a wrong check value came out of a boot with a head that was whole again, and the kernel found its part on it. A test disk with a whole copy at the start and none at the end came out with a second copy written at the block its head named, also where that block lay inside what the same head called usable. So the kernel is not the only thing that writes to a disk: besides the kernel's one block in its own part, the firmware may have written to the list, and a real PC's firmware may do the same. To test the kernel's own checks of the head, a test disk must have no second copy to repair from.
 
 ### Dividing a disk file
 
@@ -148,6 +170,7 @@ powershell -NoProfile -File make-disk.ps1 disk.img
 - The packet's first three bytes: the Linux kernel's source, the function that builds such a packet, and QEMU's source, which names `0x27` and the bit `0x80`.
 - The signature of a hard disk, `0x00000101`, and of a drive for CDs: QEMU's source.
 - Where the name and the counts stand in the disk's answer, and bit 10 of number 83: QEMU's source, the part that plays a disk and fills in that answer.
+- The command numbers `0x35` for writing and `0xEA` for putting down, and that the entry's bit 6 says "the data goes to the disk": the same two sources, and the AHCI specification's picture of an entry.
 - The command numbers `0xEC` and `0x25`, the `0x40` that says "block number", and the two rules for when number 83 and number 106 may be believed: the Linux kernel's source, the file that lists them, and QEMU's source, which has the same two numbers and the same `0x40`. That file could not be fetched when the setup was written, and was fetched for the reading.
 - Which bytes of the packet hold which part of the block number: the Linux function that builds the packet, and QEMU's source, the part that puts the number together again on the disk's side.
 - What to do after a failed command: the AHCI specification, section 6.2.2.1.
@@ -162,7 +185,7 @@ In QEMU the disk is a file on the building computer, `disk.img` in the project f
 - `run.bat` makes it the first time, 16 MB of zeros, with `qemu-img`, a program that comes with QEMU: `qemu-img create -f raw disk.img 16M`, and then divides it with `make-disk.ps1`; see "Dividing a disk file". If the file is there already it is left alone, divided or not. A disk file from before the list of parts came is not divided, and the kernel then says that the disk has no list of parts. The remedy is to delete the file, which loses what is in it; `run.bat` makes a new, divided one at its next run. If it cannot be made or divided, `run.bat` stops and says so, and leaves no half-made file behind.
 - `run.bat` then starts QEMU with three more options: `-device ich9-ahci,id=ahci0` adds an AHCI controller, `-drive if=none,id=disk0,format=raw,file=disk.img` names the file as a disk, and `-device ide-hd,drive=disk0,bus=ahci0.0` plugs that disk into the controller's first socket. (`ide-hd` is QEMU's name for a hard disk, also for one on a SATA controller.)
 - The options stand behind the network card's, so the card keeps its place on the PCI list, device 3, and the controller gets device 4.
-- **The file is not in the repository.** `.gitignore` names it. It will hold what the person at the machine has stored.
+- **The file is not in the repository.** `.gitignore` names it. It holds what the kernel has stored, today its count of starts. **Every start of the kernel changes it.**
 - **Tests never use this file.** Each test boot makes a disk file of its own in a temporary folder.
 - In QEMU the kernel can reach only what QEMU is given: this file, and the folder it boots from. It cannot reach the building computer's own disk.
 - **On the machine `run.bat` starts, the drive the kernel boots from is another device.** The `esp` folder is attached to QEMU's IDE controller (device 1, function 1), not to the AHCI controller. A driver that talks only to the AHCI controller cannot reach it there. That is true of this one machine. On QEMU's newer kind of PC, and on a real PC, every SATA disk is plugged into the one AHCI controller, the disk with the machine's own system among them, and the first disk the kernel finds there is usually that one. Today it only asks that disk who it is. On such a machine nothing but the rule in "The parts of a disk" keeps the kernel off what is not its own: it will write only inside the part that the disk's list names as its.
@@ -170,13 +193,19 @@ In QEMU the disk is a file on the building computer, `disk.img` in the project f
 
 ## What a boot prints
 
-Three lines, after the lines of the apps and before the network card's:
+Four lines, after the lines of the apps and before the network card's:
 
 ```
 Disk controller: found, device 4 on bus 0 of the PCI list
 Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller
 Disk: my own part is 14 MB, from block 2048 to block 32734
+Disk: this is start number 3
 ```
+
+- The fourth line counts the kernel's starts with this disk. The number is one higher at every start, because the kernel keeps it on the disk. A new disk file begins at 1.
+- If the block for the count holds something the kernel does not know, the line reads `Disk: the count of starts could not be read and begins again; this is start number 1`.
+- If the count cannot be written, or the disk does not hold what was written when it is read back, the line reads `Disk: this start could not be counted, because ...` with the reason, and the kernel carries on.
+- A disk with no part of the kernel's own gives no fourth line, and nothing is written to it.
 
 - The third line says where the kernel's own part lies on the disk, with its first and its last block, and its size in MB, rounded down.
 - If the kernel finds no part of its own, the third line reads `Disk: nothing on it is mine, because ...` with one of the reasons listed under "What `part_find` checks", or with the reason of a block that could not be read. A disk file that was never divided gives `it has no list of parts`.
@@ -198,4 +227,4 @@ All waiting for the controller is done by looking again and again, up to 3 milli
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel can read a block and cannot write one; it knows where its own part is and keeps nothing there yet; only an AHCI controller and the first disk on it are used; only startup code uses the disk; every list of parts it has read was made by this project's own script or tests; and several of the steps were never seen to matter in QEMU.
+See [open-points.md](open-points.md). In short: the kernel reads and writes one block at a time, and keeps one thing on the disk, a count of its starts; only an AHCI controller and the first disk on it are used; only startup code uses the disk; every list of parts it has read was made by this project's own script or tests; and several of the steps were never seen to matter in QEMU.

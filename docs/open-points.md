@@ -110,7 +110,12 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The disk
 
-- **The kernel can read a block and cannot write one.** Nothing is kept across a restart yet. It knows where its own part of the disk is and keeps nothing there.
+- **The kernel keeps one thing on the disk, a count of its own starts,** in one block. Nothing else is kept across a restart, and there is no way yet to keep a thing under a name.
+- **A write is one block, and is not safe against a power cut in the middle.** One block either gets written or does not, as far as is known; the check value on the count notices a block that was only half written, and the count then begins again. Anything larger than a block will need more than that.
+- **Three protections of writing were never seen to matter in QEMU:** with the "put it down for good" command left out, a count written just before QEMU's process was killed was still there; with the entry's mark "the data goes to the disk" left out, QEMU wrote all the same; and getting the socket going again after a failed command made no difference. A real disk and a real controller need all three.
+- **What a sync program does to the disk file was tried only briefly:** eight starts with a test disk file inside a synced folder went through and left nothing odd behind. Whether the sync program touched the file at all in those two minutes is not known, and longer use was not tried.
+- **The "put it down for good" command may be given up on too early on a real disk.** It can take far longer than reading or writing a block, and the kernel's patience is counted in looks, not in time. A start would then be reported as not counted although its block was written. This is expected, not seen: QEMU answers at once.
+- **The count of starts is a demonstration** and takes the last block of the kernel's own part. Whatever is kept in the part later has to leave that block alone or take the count away.
 - **Every list of parts the kernel has read was written by this project's own script or tests.** A list written by another system's tools, as a real disk's will be, has not been read, except for one head that QEMU's firmware had written anew while repairing a test disk. What may differ is not known: more or fewer entries, other marks in them, a second copy placed elsewhere.
 - **Only the list's copy at the start is read.** If it is damaged the kernel finds nothing of its own, also when the copy at the end is whole. It repairs nothing. A firmware may have repaired the list before the kernel runs; QEMU's does.
 - **A disk divided the older way is not understood.** The kernel reads the list PCs use today. A disk with only the old-style list in block 0 counts as having no list.
@@ -122,7 +127,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **A disk whose blocks are not 512 bytes long is refused.** Some large new disks have blocks of 4096 bytes. QEMU cannot play such a disk on this controller, so the refusal was seen only with the disk's answer replaced in the code.
 - **A disk that counts its blocks in 28 bits is set up and cannot be read.** The kernel knows the read command for disks that count in 48 bits only. Such disks are old and small.
 - **One block per command, one command at a time.** Reading many blocks takes one command each, a few thousandths of a second apiece, and holds everything else up meanwhile.
-- **Nothing decides who may use the disk.** `disk_read` keeps no protection; two tasks reading at once would overwrite each other's command. Only startup code reads today.
+- **Nothing decides who may use the disk.** Reading and writing keep no protection; two tasks using the disk at once would overwrite each other's command. Only startup code uses it today.
 - **Waiting is counted in looks, not in time,** 3 million of them, because the setup runs before the timer's signals are let through. The specification gives times: half a second for a socket to stop, up to 2 seconds for the firmware to let go. On a fast machine the looks may run out sooner than that, and a slow disk would be given up on too early.
 - **Several steps were never seen to matter in QEMU,** so they are untested as protections:
   - taking the controller over from the firmware: QEMU's controller says it has no control for that, so the code never ran;
@@ -136,7 +141,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Only an AHCI controller is recognised,** by the three numbers it states about its kind. A controller set to RAID mode or to the older IDE mode states other numbers and counts as none; some PCs are delivered that way. An NVMe disk, which newer PCs have, is not known either.
 - **The first controller found is taken.** A machine with two is not handled.
 - **In QEMU the disk is one file of 16 MB,** made by `run.bat`. Nothing makes it larger.
-- **The rule for writing is decided and not yet in use:** only inside the part that the disk's own list names as the kernel's. Nothing can write yet. When writing comes, every write must go through the one place that turns a block of the part into a block of the disk, as `part_read` does for reading, and there must be no way to write to a block of the disk by its own number.
+- **The rule for writing rests on one file.** Only `parts.rs` can make the ticket that writing asks for, so code elsewhere cannot write to a block of the disk by its own number. Code added to `parts.rs` itself can. Whoever changes that file must keep `part_write` the only caller of `disk_write`.
 - **Closing QEMU's window is a power cut** as far as the kernel can tell; there is no way to shut the machine down. Whatever is stored later has to survive being cut off in the middle of a write.
 
 ## The chat box

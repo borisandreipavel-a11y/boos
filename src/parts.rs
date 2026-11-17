@@ -4,7 +4,12 @@
 
 use alloc::vec::Vec;
 
-use crate::disk::{BLOCK_SIZE, disk_read};
+use crate::disk::{BLOCK_SIZE, disk_read, disk_write};
+
+// The ticket that `disk_write` asks for. What it holds is private to this
+// file, so only code in this file can make one, and so only code in this
+// file can write to the disk. The one place that does is `part_write`.
+pub struct WriteTicket(());
 
 // A PC's disk is divided into parts (the usual word is "partitions"), and a
 // list at the start of the disk says where each part begins and ends and
@@ -82,7 +87,7 @@ fn number_64(bytes: &[u8], at: usize) -> u64 {
 // Works out the check value of some bytes (CRC-32, the kind the list uses).
 // Whoever wrote the list worked out the same value and stored it. If a byte
 // has changed since, the two no longer agree.
-fn check_value(bytes: &[u8]) -> u32 {
+pub fn check_value(bytes: &[u8]) -> u32 {
     let mut check: u32 = 0xFFFF_FFFF;
     for byte in bytes {
         check ^= *byte as u32;
@@ -96,8 +101,8 @@ fn check_value(bytes: &[u8]) -> u32 {
 // Reads the disk's list of parts and finds the part that is this kernel's
 // own. `disk_blocks` is how many blocks the disk holds. Nothing is written.
 //
-// Everything in the list comes from outside the kernel, and the next step,
-// writing, will trust what is found here. So nothing is taken on trust: the
+// Everything in the list comes from outside the kernel, and writing trusts
+// what is found here. So nothing is taken on trust: the
 // list must be whole, and the part must lie where a part may lie and must
 // not share a block with any other part.
 pub fn part_find(disk_blocks: u64) -> Result<Part, &'static str> {
@@ -261,4 +266,24 @@ pub fn part_read(block: u64, into: &mut [u8; BLOCK_SIZE as usize]) -> Result<(),
         return Err("my part has no block with that number");
     }
     disk_read(first + block, into)
+}
+
+// Writes one block of the kernel's own part. Blocks are numbered as for
+// `part_read`, and a number past the part's end is refused in the same way.
+// This is the only place in the kernel that writes to a disk, so nothing
+// outside the kernel's own part can be written.
+pub fn part_write(block: u64, from: &[u8; BLOCK_SIZE as usize]) -> Result<(), &'static str> {
+    let (first, blocks) = unsafe { (PART_FIRST, PART_BLOCKS) };
+    if blocks == 0 {
+        return Err("the kernel has no part of its own on the disk");
+    }
+    if block >= blocks {
+        return Err("my part has no block with that number");
+    }
+    disk_write(&WriteTicket(()), first + block, from)
+}
+
+// Says how many blocks the kernel's own part is long, or 0 if it has none.
+pub fn part_size() -> u64 {
+    unsafe { PART_BLOCKS }
 }

@@ -1,12 +1,13 @@
 //! The disk: finding the controller that the machine's disks are plugged
-//! into, setting it up, asking the disk who it is, and reading a block from
-//! it. Notes: `docs/disk.md`.
+//! into, setting it up, asking the disk who it is, and reading and writing a
+//! block. Notes: `docs/disk.md`.
 
 use alloc::string::String;
 
 use crate::frames::{FRAME_SIZE, frame_take};
 use crate::page::plain_text;
 use crate::page_tables::map_device_memory;
+use crate::parts::WriteTicket;
 use crate::pci::{PciPlace, pci_find_kind, pci_memory_address, pci_read, pci_write};
 use crate::processor::{device_read_8, device_read_32, device_write_8, device_write_32};
 
@@ -109,6 +110,26 @@ const WHO_ARE_YOU: u8 = 0xEC;
 // The command that reads blocks from a disk that counts its blocks in 48
 // bits (READ DMA EXT). The packet names the block and how many to read.
 const READ_BLOCKS: u8 = 0x25;
+
+// The command that writes blocks to such a disk (WRITE DMA EXT), and the
+// command that makes the disk put down for good what it was told to write
+// (FLUSH CACHE EXT). A disk may keep written blocks in a store of its own
+// for a while, where a power cut would lose them; this command empties that
+// store onto the disk itself.
+const WRITE_BLOCKS: u8 = 0x35;
+const PUT_DOWN: u8 = 0xEA;
+
+// Which way a command's block of data goes.
+#[derive(Clone, Copy, PartialEq)]
+enum Passing {
+    FromDisk, // The disk sends a block, which lands in the data frame.
+    ToDisk,   // The block in the data frame is sent to the disk.
+    Nothing,  // The command has no block of data.
+}
+
+// In the first entry of the list of commands: "this command's data goes to
+// the disk" (W).
+const DATA_GOES_TO_DISK: u32 = 1 << 6;
 
 // Where some of those facts stand in the answer, counted in 2-byte numbers.
 const NAME_AT: usize = 27; // The disk's name: 40 letters, in 20 numbers.
@@ -273,7 +294,7 @@ pub fn disk_setup(place: PciPlace) -> Result<Disk, &'static str> {
     // Ask the disk who it is, and read its answer. The answer comes from
     // outside the kernel, so a count of blocks that cannot be true is not
     // believed: none at all, or more than 48 bits can count.
-    disk_command(socket, work, data, WHO_ARE_YOU, None)?;
+    disk_command(socket, work, data, WHO_ARE_YOU, None, Passing::FromDisk)?;
     let (name, blocks, counts_long) = disk_facts(data)?;
     if blocks == 0 || blocks >> 48 != 0 {
         return Err("the disk gave a number of blocks that cannot be true");
@@ -309,13 +330,40 @@ pub fn disk_read(block: u64, into: &mut [u8; BLOCK_SIZE as usize]) -> Result<(),
         return Err("the disk is of an older kind that the kernel cannot read");
     }
 
-    disk_command(socket, work, data, READ_BLOCKS, Some(block))?;
+    disk_command(socket, work, data, READ_BLOCKS, Some(block), Passing::FromDisk)?;
 
     // The block is in the data frame now. Copy it out.
     for (place, byte) in into.iter_mut().enumerate() {
         *byte = device_read_8(data + place as u64);
     }
     Ok(())
+}
+
+// Writes one block to the disk, and has the disk put it down for good.
+//
+// Writing asks for a ticket, and only the file `parts.rs` can make one. So
+// no other code can write to the disk by a block's own number: everything
+// that is written goes through `part_write` there, which keeps it inside
+// the kernel's own part.
+pub fn disk_write(_ticket: &WriteTicket, block: u64, from: &[u8; BLOCK_SIZE as usize]) -> Result<(), &'static str> {
+    let (socket, work, data) = unsafe { (SOCKET_CONTROLS, WORK_FRAME, DATA_FRAME) };
+    if socket == 0 {
+        return Err("the disk is not ready");
+    }
+    // The same two refusals as for reading.
+    if block >= unsafe { DISK_BLOCKS } {
+        return Err("the disk has no block with that number");
+    }
+    if !unsafe { DISK_COUNTS_LONG } {
+        return Err("the disk is of an older kind that the kernel cannot write");
+    }
+
+    // Put the block into the data frame, from where the disk takes it.
+    for (place, byte) in from.iter().enumerate() {
+        device_write_8(data + place as u64, *byte);
+    }
+    disk_command(socket, work, data, WRITE_BLOCKS, Some(block), Passing::ToDisk)?;
+    disk_command(socket, work, data, PUT_DOWN, None, Passing::Nothing)
 }
 
 // Gives the text a block begins with: its bytes up to the first 0, at most
@@ -353,11 +401,12 @@ fn socket_restart(socket: u64) {
     device_write_32(switches, device_read_32(switches) | RUN_COMMANDS);
 }
 
-// Hands the disk one command that makes it send back one block of data, and
-// waits until the data is in the data frame. `socket` is where the socket's
-// controls are, `work` and `data` are the two frames. A command that is
-// about a block of the disk names it in `block`.
-fn disk_command(socket: u64, work: u64, data: u64, command: u8, block: Option<u64>) -> Result<(), &'static str> {
+// Hands the disk one command and waits until the disk has finished it.
+// `socket` is where the socket's controls are, `work` and `data` are the two
+// frames. A command that is about a block of the disk names it in `block`,
+// and `passing` says which way the command's block of data goes, if it has
+// one.
+fn disk_command(socket: u64, work: u64, data: u64, command: u8, block: Option<u64>, passing: Passing) -> Result<(), &'static str> {
     let command_place = work + COMMAND_IN_FRAME;
 
     // A socket takes commands only while it is switched to carry them out.
@@ -366,10 +415,14 @@ fn disk_command(socket: u64, work: u64, data: u64, command: u8, block: Option<u6
     }
 
     // Wipe the notes of earlier events, so that an old failure is not taken
-    // for a failure of this command. Wipe the place for the data as well, so
-    // that what an earlier command read cannot be taken for this one's.
+    // for a failure of this command. Before a command that reads, wipe the
+    // place for the data as well, so that what an earlier command left there
+    // cannot be taken for this one's answer. Before a command that writes,
+    // the data frame holds the block to be written, and must stay as it is.
     device_write_32(socket + EVENTS, 0xFFFF_FFFF);
-    unsafe { core::ptr::write_bytes(data as *mut u8, 0, BLOCK_SIZE as usize) };
+    if passing == Passing::FromDisk {
+        unsafe { core::ptr::write_bytes(data as *mut u8, 0, BLOCK_SIZE as usize) };
+    }
 
     // The packet for the disk, 20 bytes. Start from zeros, so that nothing
     // of an earlier command is left in it. Then: what kind of packet it is,
@@ -402,10 +455,15 @@ fn disk_command(socket: u64, work: u64, data: u64, command: u8, block: Option<u6
     device_write_32(data_place + 12, BLOCK_SIZE as u32 - 1);
 
     // The first entry of the list of commands describes this command: how
-    // long its packet is (in the lowest 5 bits), that it has one place for
-    // data (in the upper half), and where the command lies. The bit that
-    // would say "data goes to the disk" stays 0: this command only reads.
-    device_write_32(work, PACKET_LENGTH | 1 << 16);
+    // long its packet is (in the lowest 5 bits), how many places for data it
+    // has (in the upper half: one, or none for a command without data),
+    // whether its data goes to the disk, and where the command lies.
+    let description = match passing {
+        Passing::FromDisk => PACKET_LENGTH | 1 << 16,
+        Passing::ToDisk => PACKET_LENGTH | 1 << 16 | DATA_GOES_TO_DISK,
+        Passing::Nothing => PACKET_LENGTH,
+    };
+    device_write_32(work, description);
     device_write_32(work + 4, 0);
     write_address(work + 8, command_place);
 
@@ -420,9 +478,9 @@ fn disk_command(socket: u64, work: u64, data: u64, command: u8, block: Option<u6
         if device_read_32(socket + COMMANDS_GIVEN) & 1 == 0 {
             // The command is finished. The controller has written into the
             // second 4 bytes of the entry how many bytes of data it passed
-            // on. Only a whole block counts as an answer.
-            if device_read_32(work + 4) != BLOCK_SIZE as u32 {
-                return Err("the disk finished the command without sending a whole block");
+            // on. For a command with data, only a whole block counts.
+            if passing != Passing::Nothing && device_read_32(work + 4) != BLOCK_SIZE as u32 {
+                return Err("the disk finished the command without passing a whole block");
             }
             return Ok(());
         }

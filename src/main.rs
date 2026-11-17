@@ -39,6 +39,7 @@ mod letters; // The shapes of the letters, drawn by hand.
 mod chat; // The chat box: typing on the screen, and what was said.
 mod disk; // The disk: its controller, asking the disk who it is, reading a block.
 mod parts; // The parts of the disk, and the one that is this kernel's own.
+mod starts; // A count of the kernel's starts, kept on the disk.
 
 use alloc::format;
 use alloc::string::String;
@@ -67,6 +68,7 @@ use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
 use screen::{Colour, screen_fill, screen_setup, screen_text};
 use segments::load_segment_table;
+use starts::start_count;
 use serial::{Serial, serial_print, serial_setup};
 use tasks::{RESTED_TICKS, task_add, task_rest, task_wait};
 use timer::{TICKS, TICKS_PER_SECOND, timer_setup};
@@ -237,7 +239,7 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         }
 
         // Set the controller up, ask the first disk on it who it is, and
-        // find the kernel's own part of it. Nothing is written to the disk.
+        // find the kernel's own part of it.
         match disk_setup(place) {
             Ok(disk) => {
                 // The size is shown in MB, and in GB for a disk of 10 GB or
@@ -253,6 +255,20 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                 match part_find(disk.blocks) {
                     Ok(part) => {
                         write!(serial, "Disk: my own part is {} MB, from block {} to block {}\r\n", part.blocks / (1024 * 1024 / BLOCK_SIZE), part.first, part.last).ok();
+
+                        // Count this start, in a block of that part. It is
+                        // the first thing the kernel writes to a disk.
+                        match start_count() {
+                            Ok((number, false)) => {
+                                write!(serial, "Disk: this is start number {}\r\n", number).ok();
+                            }
+                            Ok((number, true)) => {
+                                write!(serial, "Disk: the count of starts could not be read and begins again; this is start number {}\r\n", number).ok();
+                            }
+                            Err(reason) => {
+                                write!(serial, "Disk: this start could not be counted, because {}\r\n", reason).ok();
+                            }
+                        }
                     }
                     Err(reason) => {
                         write!(serial, "Disk: nothing on it is mine, because {}\r\n", reason).ok();
