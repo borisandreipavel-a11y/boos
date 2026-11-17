@@ -98,6 +98,7 @@ What is protected today:
 - **Printing.** `serial_print` keeps one text whole. But `write!` sends a line in several pieces, and another task's line can land between them. To print a line from a task, build it first and send it in one go: `serial_print(&format!("... {}\r\n", value))`.
 - **The list of tasks.** `task_add`, `task_wait` and `task_rest` switch signals off.
 - **The PCI list.** `pci_read` and `pci_write` take two port steps each and switch signals off around them.
+- **The clock chip.** Reading one of its values takes two port steps too, and `chip_value` switches signals off around them. Random numbers need no protection: each draw is a single instruction.
 - **The network card.** `network_card_send` and `network_card_receive` switch signals off while they change the waiting lines and the driver's counters. So do the card's setup and `map_device_memory`.
 - **The network stack** needs no protection of its own so far: only its own task, `network_task`, touches it. The page fetch runs inside that task for this reason. Anything another task wants from the network will have to go through that task or be protected.
 

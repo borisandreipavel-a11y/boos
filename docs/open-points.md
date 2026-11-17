@@ -16,7 +16,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Memory
 
-- Reclaim the firmware's startup memory (kinds 3 and 4, about 42 MB of QEMU's 256 MB) once task 0 has a stack of its own.
+- Reclaim the firmware's startup memory (kinds 3 and 4, about 42 MB of QEMU's 256 MB when it was measured, before the network card and the present processor option) once task 0 has a stack of its own.
 - Leave the lowest page unmapped, so that a broken pointer near zero gives a page fault instead of quietly reading memory.
 - Return heap memory to the frame pile.
 - Make a request that cannot be met fail, instead of stopping the kernel.
@@ -33,7 +33,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - A page arrives at about 70 KB a second. The card's adapter tells smoltcp "one packet at a time", so the other side sends one packet and waits, and the stack is looked at once per tick. The card could take 16 packets between two looks; saying so, and more room for arrived bytes, would speed this up.
 - After asking for one machine's hardware address, smoltcp asks for no other for a second. At each start that delays the page by a second, because the name server's address is asked for just before the gateway's. The by-hand gateway answer is not handed to the stack.
 - The by-hand gateway question is still asked at startup, with an assumed address (`10.0.2.15`) and gateway (`10.0.2.2`). The stack does not need it. It could go.
-- The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch.
+- The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch. The kernel has random numbers now, and neither place uses them yet.
 - The stack's clock is the tick count, in steps of 10 ms, and runs slow when timer signals come late.
 - The stack is looked at once per tick whether or not anything happened, because the card sends no signals. smoltcp can say how long it may be left alone (`poll_delay`); that is not used.
 - Only the stack's own task may touch it. There is no way yet for another task to ask it for something.
@@ -48,6 +48,19 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The frame pile hands out single frames. A device that needs several neighbouring frames in one piece cannot be served yet. The network card's newer way of working was chosen partly because it does not need that.
 - The setup runs once. Nothing handles a card that reports a failure later, and nothing sets it up a second time.
 - `pci_find` tries all 256 buses rather than following bridges. That is simple and was fast in QEMU; its speed on real hardware is not known.
+
+## Random numbers and the date
+
+- Random numbers have one source, the processor's own instruction. A processor without it gives none, and the kernel has no second source: not the firmware's, not a virtual machine's device, not noise it gathers itself.
+- The numbers are used as the processor hands them out. The kernel does not mix them with anything or run a generator of its own on top, so it trusts the processor's maker entirely, and in QEMU it trusts QEMU.
+- The source is tried once, at startup. If it breaks later, that shows only when a draw gives nothing.
+- Nothing uses the random numbers or the date yet.
+- The kernel does not know whether the clock chip holds local time or world time. Checking a certificate wants world time.
+- The date comes as year, month, day, hour, minute and second. Code that checks certificates will probably want a count of seconds since 1970, which is not written.
+- The century is looked for in one place of the chip (`0x32`). Real PCs name the place in a table of the firmware (ACPI), which the kernel does not read. Where the value is no century, the year is taken to be in the 2000s.
+- Nothing notices a clock that is plainly wrong, such as one whose battery is empty.
+- Waiting for a busy chip is counted in looks, not in time.
+- `run.bat` asks QEMU for its usual processor plus one instruction. The other processors QEMU can play change how much memory the firmware keeps, and `-cpu max` offers five-level page tables; see "Real hardware".
 
 ## Keyboard
 

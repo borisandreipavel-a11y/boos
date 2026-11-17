@@ -8,7 +8,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
 - The very first build on a computer fetches six small crates from crates.io, so it needs the internet once. After that, building works without it. The network stack itself is not fetched; it is a copy in `vendor/`.
-- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
+- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
 - The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
 - A normal boot reaches the internet: the kernel looks up one name and fetches one page. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
@@ -60,6 +60,10 @@ Other QEMU options that proved useful:
 | `-m 64M`, `-m 512M` | Other memory sizes (a later `-m` overrides the first) |
 | `-machine pc,max-ram-below-4g=128M` | Puts the rest of the guest's memory above 4 GB, without needing a large guest |
 | `-machine pc,i8042=off` | A machine without a keyboard controller |
+| `-cpu qemu64` | QEMU's usual processor, which cannot make random numbers. A later `-cpu` overrides an earlier one |
+| `-cpu max` | Every processor feature QEMU can play |
+| `-rtc base=localtime` | The clock chip set to the host's local time instead of world time |
+| `-rtc base=2000-02-29T23:59:58` | The clock chip started at a chosen date and time |
 | `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records 21; [network.md](network.md) lists them |
 | `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` | QEMU's built-in network with other addresses, to show that the kernel's address is given and not assumed |
 | `-netdev user,id=net0,restrict=on` | QEMU's built-in network with no way out. The kernel still gets its address, but no name server is named, so it prints `Network: no page fetched, because the network named no name server` and sends nothing more. Use it for boots that should not touch the internet |
@@ -90,6 +94,8 @@ A test should be able to fail. For each protection or saved register that a test
 
 - Swapping two registers in the timer's stub is not a good break: every switch swaps them back, and the test passes by luck. Leaving one register unrestored cannot cancel out.
 - A register test must compare after every single switch, not once at the end. With one register left unrestored, a test that set the registers once, gave up its turn many times and compared at the end reported nothing: the task that finished first put the right value back as its function ended, and the other task then found it. Comparing all 15 registers after every turn reported 99,995 changes in 100,000 turns.
+- Two steps that belong together and sit side by side, such as the clock chip's two ports, do not show a missing protection in ordinary use: a switch almost never lands between two neighbouring instructions. For the test, pull the two steps apart with a pause. Then the missing protection shows at once, and the protection in place still passes.
+- A check for a broken device needs a broken device. Replace the device's answer in the code, for the test, with the bad one: the same number every time, or never ready.
 - Two tasks doing ordinary work with lists did not catch a heap without protection in three seconds; a switch rarely lands inside the heap. Two tasks that do almost nothing but take and return pieces of one size caught it at once.
 
 ## A server on the test computer
@@ -263,6 +269,25 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - A page-fault report still prints after a fetch. Keys are echoed. It boots and fetches with 64 MB and 512 MB and with the newer-only card. Without a card the boot is as before. Fifteen boots in a row each fetched the page from the test server. The rest count stays at 397 to 399 of 400; one run with every packet being recorded read 394.
 - Not verified: the line `the site refused the connection` (QEMU's network passes no refusal on, so it was never seen), packets lost or arriving out of order, a site that redirects or keeps the connection open, a site with several addresses of which the first does not work, a page too big for the 10 seconds (above roughly 700 KB), a host computer that is offline, and any real hardware.
 - A person ran `run.bat` and saw the name line and the page report.
+
+**Random numbers and the date**
+
+- As `run.bat` starts it, the kernel prints a random number and the date and time. The number was different in every boot looked at. The date and time agreed with the host's clock in world time, a few seconds on, which is how long the boot takes.
+- 100,000 random numbers took 4 ticks. None was missing, no two were equal, 3,200,215 of their 6,400,000 bits were set, and each of the 64 bit places was set between 49,619 and 50,351 times. That shows the numbers are not plainly broken. It does not show that they cannot be guessed, and no test can.
+- On QEMU's usual processor, which lacks the instruction, the kernel prints "none" and carries on. With the question to the processor taken out on purpose, the same boot stops with `CPU fault: invalid instruction`.
+- A source made to hand out one number every time, on purpose, is refused: "none". With the kernel's check taken out as well, that one number is printed as random. A source made never to have a number ready gives "none".
+- `processor_ask(0)` gives the maker's name as QEMU states it.
+- The date from made-up chip values: 47 cases, all right. They cover both ways of writing, both ways of counting hours, 12 at night and 12 at noon, the centuries 19, 20 and 21, values that are no century, the last second of a year, a leap day, and 23 kinds of nonsense that must give no date. Six breaks made on purpose were each caught, with 4 to 18 cases wrong.
+- QEMU's chip switched to each of the other three forms gave the right date and time: at three in the afternoon, at half past midnight and at half past noon. The chip's raw hour value showed that it had really changed its form.
+- The chip started at 2000-02-29 23:59:58 gave 2000-03-01. Started at 1999-12-31 23:59:58 it gave 2000-01-01, the century value going from 19 to 20. Started at 2099-12-31 23:59:58, QEMU's own chip says 2000 afterwards, and the kernel shows that.
+- With the chip set to the host's local time, the kernel shows local time.
+- Two tasks read the clock without pause for three seconds, across a change of hour: about 140,000 reads each, none without a date and none going backwards. The chip was found busy at 1,330 looks, and two readings had to be taken again.
+- With the two steps of a chip read pulled apart by a pause: no bad read with the protection in place, and 10 of about 40 reads without a date in each task with the protection taken out on purpose. Without the pause the missing protection did not show.
+- Taking out the wait for a busy chip and the reading-twice rule, on purpose, changed nothing: QEMU's chip never gave a mixed reading. Those two are untested as protections.
+- QEMU prints no warning about the processor option.
+- With the option: two tasks printing 12,161 lines tore none, two tasks hammering the heap found no wrong value, a page fault prints its report, keys are echoed, and the page is fetched from the test server and, once, from the real site. It boots with 64 MB (10 MB free) and 512 MB (458 MB free), with the newer-only card, and without a card. Fifteen boots in a row reached the prompt. The rest count read 393 to 399.
+- Not verified: a real processor's instruction (QEMU only plays it), a source that fails now and then, a chip that gives a mixed reading, a chip without a century value, and any real hardware.
+- A person ran `run.bat` and saw the line with the random number and the line with the date and time.
 
 **The split into files**
 

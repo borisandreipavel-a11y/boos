@@ -62,6 +62,27 @@ pub fn time_stamp() -> u64 {
     (high_half as u64) << 32 | low_half as u64
 }
 
+// The processor answers questions about itself: who made it, and what it can
+// do (CPUID). A question is a number, and the answer is four numbers.
+pub fn processor_ask(question: u32) -> [u32; 4] {
+    let (first, second, third, fourth): (u32, u32, u32, u32);
+    // The second number of the answer arrives in the register `rbx`, which
+    // Rust keeps for its own use. So the register's old content is set aside
+    // before the question and swapped back in after it.
+    unsafe {
+        asm!(
+            "mov {aside:r}, rbx",
+            "cpuid",
+            "xchg {aside:r}, rbx",
+            aside = out(reg) second,
+            inout("eax") question => first,
+            inout("ecx") 0u32 => third,
+            out("edx") fourth,
+        );
+    }
+    [first, second, third, fourth]
+}
+
 // Switches device signals off and says whether they were on. While they are
 // off nothing can interrupt the running code, so no other task gets a turn.
 pub fn signals_off() -> bool {

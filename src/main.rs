@@ -27,6 +27,8 @@ mod pci; // The PCI list of the machine's cards and devices.
 mod network_card; // The network card.
 mod network; // The first words on the network.
 mod page; // Fetching one page from the web.
+mod random; // Random numbers, made by the processor.
+mod clock; // The clock chip: the date and the time.
 
 use alloc::format;
 use alloc::string::String;
@@ -37,6 +39,7 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
+use clock::clock_read;
 use controller::controller_setup;
 use firmware::{SystemTable, print, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
@@ -46,6 +49,7 @@ use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::stop;
+use random::{random_number, random_setup};
 use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
 use tasks::{RESTED_TICKS, task_add, task_rest, task_wait};
@@ -118,6 +122,36 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             squares.push(number * number);
         }
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
+    }
+
+    // Encryption, when it comes, needs two things from the machine: numbers
+    // that nobody can guess, and today's date.
+    random_setup();
+    match random_number() {
+        // The number shown is only a sample. It is used for nothing else.
+        Some(number) => {
+            write!(serial, "Random numbers: made by the processor, for example {:016x}
+", number).ok();
+        }
+        None => {
+            write!(serial, "Random numbers: none, because this processor has no sound source for them
+").ok();
+        }
+    }
+    match clock_read() {
+        Some(date) => {
+            write!(
+                serial,
+                "Date and time: {:04}-{:02}-{:02} {:02}:{:02}:{:02}, by this machine's clock
+",
+                date.year, date.month, date.day, date.hour, date.minute, date.second
+            )
+            .ok();
+        }
+        None => {
+            write!(serial, "Date and time: unknown, because the clock chip gave no usable answer
+").ok();
+        }
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.

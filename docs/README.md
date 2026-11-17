@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. With it the kernel fetches one web page at startup, without encryption, and prints how the page begins.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. With it the kernel fetches one web page at startup, without encryption, and prints how the page begins. It can also get random numbers from the processor and read the date from the clock chip, which encryption will need.
 
 ## Read in this order
 
@@ -18,8 +18,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 4. [memory.md](memory.md): the memory map, frames, page tables, the heap.
 5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
 6. [network.md](network.md): the PCI list, the network card, sending and receiving packets, the network stack, fetching a page, QEMU's built-in network.
-7. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-8. [open-points.md](open-points.md): known limits and what later work must deal with.
+7. [random-and-date.md](random-and-date.md): random numbers from the processor, the date from the clock chip.
+8. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+9. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -29,7 +30,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | --- | --- | --- |
 | `main.rs` | `efi_main` (the order of startup and the main loop) and the panic handler | [startup.md](startup.md) |
 | `firmware.rs` | The firmware's tables, `print` through the firmware, `take_over`, the saved memory map | [startup.md](startup.md) |
-| `processor.rs` | `port_read`, `port_write` and their 4-byte pair, `device_read_...` and `device_write_...` for controls kept in memory, `signals_off`, `signals_back`, `stop`, `TablePointer` | used everywhere |
+| `processor.rs` | `port_read`, `port_write` and their 4-byte pair, `device_read_...` and `device_write_...` for controls kept in memory, `time_stamp`, `processor_ask`, `signals_off`, `signals_back`, `stop`, `TablePointer` | used everywhere |
 | `serial.rs` | `serial_setup`, `serial_print`, `Serial` for `write!` | [startup.md](startup.md) |
 | `segments.rs` | The segment table (GDT) and `load_segment_table` | [interrupts.md](interrupts.md) |
 | `faults.rs` | The 32 processor failures: `fault_entry!`, `FAULTS`, `report_fault` | [interrupts.md](interrupts.md) |
@@ -45,6 +46,8 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
 | `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, and `network_task`, which also starts the page fetch | [network.md](network.md) |
 | `page.rs` | Fetching one page from the web: `page_fetch`, the name lookup, the connection, and `Answer`, which reads what the site sends | [network.md](network.md) |
+| `random.rs` | Random numbers from the processor: `random_setup`, `random_number` | [random-and-date.md](random-and-date.md) |
+| `clock.rs` | The clock chip: `clock_read`, which gives a `Date` | [random-and-date.md](random-and-date.md) |
 
 Which file uses which:
 
@@ -57,6 +60,7 @@ Which file uses which:
 - `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs` and `processor.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
 - `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
 - `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `page.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp. `page.rs` uses `network.rs` (for `Card` and `now`), `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and smoltcp.
+- `random.rs` and `clock.rs` use `processor.rs`.
 
 Outside `src/`:
 
@@ -64,7 +68,7 @@ Outside `src/`:
 - `Cargo.toml` names smoltcp as the one dependency and points cargo at the copies. `Cargo.lock` lists eight crates besides the kernel.
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`.
-- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a virtio network card on QEMU's built-in network.
+- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers and a virtio network card on QEMU's built-in network.
 - Not in the repository: `esp/` and `target/` (build output) and `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder).
 
 ## Conventions
