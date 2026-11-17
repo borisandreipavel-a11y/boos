@@ -103,7 +103,13 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The screen
 
-- Drawing on the screen needs the framebuffer's details from the firmware's graphics service. They must be fetched before the takeover, so `take_over` or the code before it will need revisiting then.
+- **Nothing is drawn.** The kernel asks the firmware where the screen's memory is and how large the screen is, keeps the answer and prints one line about it. See [startup.md](startup.md).
+- **The screen's memory may lie above what the page tables cover.** In QEMU it starts at `0x80000000`, inside the covered 4 GB. On another machine it may not, and then it has to be made reachable with `map_device_memory` before the first dot is written.
+- **The screen's memory may lie in ordinary memory.** With QEMU's `ramfb` display it does, in a stretch the firmware set aside. Whether the frame pile could ever hand out those frames was not checked. It takes only memory the map calls free, which should keep it away, but that rests on the firmware's map.
+- **Two ways of writing a colour are known:** red, green, blue and blue, green, red, at four bytes a dot. A screen that describes its colours with masks is refused, although it could be used. Only the second order was ever seen.
+- **The screen is taken as the firmware left it.** The kernel does not choose a size, and looks at the first graphics service only, so a machine with two screens shows one.
+- **A screen that can only be drawn on through the firmware's functions is refused.** Those functions are gone after the takeover.
+- The firmware's own text stays on the screen until something paints over it.
 
 ## Real hardware
 

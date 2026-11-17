@@ -7,7 +7,7 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 `efi_main` in `main.rs` runs these steps. The order matters; the reason for each rule is given.
 
 1. **`serial_setup()`** comes first, so that everything after it can report problems.
-2. **`print(table, ...)`** writes "Hello" through the firmware. It works only before the takeover.
+2. **`print(table, ...)`** writes "Hello" through the firmware. It works only before the takeover. **`screen_find(table)`** follows: it asks the firmware's graphics service where the screen's memory is and how large the screen is. That works only before the takeover too. The answer is kept and printed later, after the heap line. See "The screen" below.
 3. **`take_over(image, table)`** gets the memory map and tells the firmware to step aside. After it returns, no firmware service may be called again.
 4. **`cli`** switches device signals off. The firmware may have left them on, and the kernel has nothing to catch them with yet.
 5. **`load_segment_table()`, then `load_interrupt_table()`.** The interrupt table's lines name the kernel's code segment, so the segment table goes first. From here on a processor failure prints a report instead of resetting the machine. Right after, **`sse_refuse()`** tells the processor to refuse SSE instructions. It must not come before step 3, because the firmware uses them. See [encryption.md](encryption.md).
@@ -27,8 +27,9 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 - The firmware's structures are written by hand with `#[repr(C)]`, naming only what is used and skipping the rest with padding:
   - `SystemTable`: `console_out` at offset 64, `boot_services` at offset 96.
   - `TextOutput`: `output_string` at offset 8.
-  - `BootServices`: `get_memory_map` at offset 56, `exit_boot_services` at offset 232.
+  - `BootServices`: `get_memory_map` at offset 56, `exit_boot_services` at offset 232, `locate_protocol` at offset 320.
   - `MemoryEntry`: kind (u32), physical start, virtual start, page count, attribute.
+  - `ServiceName`, `GraphicsService`, `GraphicsMode`, `GraphicsDetails`: the graphics service; see "The screen" below.
 - Adding another firmware service means adding its field at the right offset. Check the offset against the UEFI specification; a wrong one calls a random function.
 
 ## The takeover
@@ -37,7 +38,35 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 - Nothing may call a firmware service between those two calls, not even `print`.
 - The memory map is saved in `MEMORY_MAP`, a `static mut [u64; 4096]` (32 KB), reached through `&raw`. `take_over` returns how many bytes of it are filled and the size of one entry.
 - Step through the map by the entry size the firmware reports, not by the size of `MemoryEntry`. The firmware's entries are larger than the struct (48 bytes in QEMU).
-- Anything else wanted from the firmware must be fetched before `take_over`. See [open-points.md](open-points.md) for the screen.
+- Anything else wanted from the firmware must be fetched before `take_over`. The screen's details are fetched that way.
+
+## The screen
+
+A picture on the screen is a grid of dots (pixels). The screen's memory (the framebuffer) holds four bytes for every dot: how much red, green and blue it shows, and one byte that is not used. Writing there changes the picture. The kernel does not draw yet. It only asks where that memory is.
+
+- `screen_find` in `firmware.rs` asks the firmware for its graphics service (GOP, the Graphics Output Protocol) with the boot service `locate_protocol`. A service is named by 16 bytes; the graphics service's are `9042a9de-23dc-4a38-96fb-7aded080516a`, written in `GRAPHICS_SERVICE`. The firmware answers 0 and a pointer when it has the service, and a failure code when it has none (`0x800000000000000e`, "not found", in QEMU).
+- The service is a list of three functions, which the kernel does not call, and a pointer to the facts (`GraphicsMode`): where the screen's memory starts, how many bytes it is, and a pointer to the details (`GraphicsDetails`): width and height in dots, the form of a dot's colour, and how many dots one row takes up in the memory.
+- A row in the memory can be longer than the picture is wide. The dot at column x of row y sits at `memory_start + (y * row_length + x) * 4`. Use `row_length` there, not `width`.
+- The form of a dot's colour is a number: 0 means the bytes are red, green, blue, unused; 1 means blue, green, red, unused; 2 means "described by four masks"; 3 means the screen has no memory to write into and can only be drawn on through the firmware's functions. The kernel takes 0 and 1 and refuses the others.
+- Everything is copied into a `Screen` before the takeover, because the facts lie in the firmware's memory. `efi_main` keeps the `Screen`; nothing uses it yet.
+- The kernel takes the screen as the firmware left it. It does not choose a size, and it asks for the first graphics service only.
+- What the kernel refuses, with the reason in its line: no graphics service; no facts or details; a colour form other than 0 or 1; facts that do not fit together (no memory address, a width or height of zero, a row shorter than the picture, or less memory than rows times height times four).
+- The layout of the structures and the place of `locate_protocol` were taken from the header files of the firmware QEMU uses (edk2: `UefiSpec.h` and `GraphicsOutput.h`), because the pages of the UEFI specification could not be fetched. The two places the kernel used before, 56 and 232, agree with the same list.
+
+Seen in QEMU 11.1 with its UEFI firmware:
+
+| Display card | Size in dots | Memory starts at | Memory size in bytes |
+| --- | --- | --- | --- |
+| QEMU's usual one (`-vga std`), also `-vga vmware`, `virtio-vga`, `bochs-display` | 1280 by 800 | `0x80000000` | 4,096,000 |
+| `-vga cirrus` | 800 by 600 | `0x80000000` | 1,921,024 |
+| `-vga none -device VGA,xres=1024,yres=768` | 1024 by 768 | `0x80000000` | 3,145,728 |
+| `-vga none -device ramfb` | 800 by 600 | near `0xe4cf000` | 3,145,728 |
+| none (`-vga none`) | no graphics service | | |
+
+- Every one of them writes colours as blue, green, red, and none had a row longer than the picture. The other order and longer rows have not been seen.
+- `0x80000000` is the display card's first memory area on the PCI list, as QEMU's `info pci` shows it. It lies inside the 4 GB that the kernel's page tables cover.
+- With `ramfb` the screen's memory lies in ordinary memory, in a stretch the firmware set aside. See [open-points.md](open-points.md).
+- The firmware's own text, the line "Hello from my kernel!" among it, stays on the screen, because nothing paints over it.
 
 State of the processor at handover, as seen in QEMU with its UEFI firmware. The addresses were measured without a network card; with the card `run.bat` now attaches, the kernel and the stack sit a little lower (a fault then reports code near `0xde2c000`), lower again with the processor `run.bat` now asks for (near `0xdad0000`), again since the kernel's file grew with the crates for encryption (near `0xd8a0000`), and once more with the code that runs apps (near `0xd02c000`):
 
@@ -66,6 +95,7 @@ The firmware has stepped aside. This machine is mine.
 Free memory: 197 MB
 Page tables: the kernel's own, covering 4 GB
 Heap: Hello from the heap! [1, 4, 9, 16, 25, 36, 49, 64, 81, 100], kept at 0x400000000020
+Screen: found, 1280 dots wide and 800 dots high, its memory starts at 0x80000000
 Random numbers: made by the processor, for example <16 signs, different at every start>
 Date and time: 2026-11-17 05:37:53, by this machine's clock
 Encryption: 8 of 8 checks of the arithmetic are right, and 112 trusted roots are on board
@@ -90,7 +120,7 @@ The processor rested through 344 of the first 400 ticks.
 Click the QEMU window and type. The letters appear here:
 ```
 
-That is with QEMU's 256 MB, and with the network card and the processor that `run.bat` asks for. The random number is written with 16 signs, the digits and the letters a to f. The date and time are the clock chip's. QEMU sets its chip to world time, so the time shown is not the time on the wall. On a processor that cannot make random numbers the line reads "Random numbers: none, because this processor has no sound source for them", and if the clock chip gives nothing usable, "Date and time: unknown, because the clock chip gave no usable answer". The kernel carries on after either. The encryption line follows about half a second later, the time its checks take. If one of them fails it reads "Encryption: not to be trusted here, only N of 8 checks of the arithmetic are right", and the kernel carries on then too. The box line follows at once, and after it the line of the second app, which the app itself asks the kernel to print; every line an app prints begins with "App: ". If the first program cannot be run or answers wrongly its line reads "Box: not working, ..." with the reason, and if the second app is stopped, "Box: the app was stopped, because ..." takes the place of its line. The kernel carries on either way; [box.md](box.md) has the wording. The address line comes from the network stack's task, within about a tenth of a second of the tasks starting, well before the first task line. Without a card, "Free memory" reads 199 MB and all the network lines become one, "Network card: none found". A card that cannot be set up gives "Network card: not set up, because ..." with the reason, and no gateway line. If nobody answers the question, the gateway line reads "Network: the gateway 10.0.2.2 did not answer", after a wait of about a second. If nobody hands out an address, no address line is printed and no page is fetched. The task lines arrive half a second apart, taking turns. The rest count and the prompt follow a second after the last one; the count reads 336 to 365 in the runs so far, because the arithmetic of the encrypted link keeps the processor busy for about half a second. Without a network card, or when no link is made, it reads 393 to 399.
+That is with QEMU's 256 MB, and with the network card and the processor that `run.bat` asks for. The screen line tells what the firmware said before the takeover; on a machine without a display card it reads "Screen: none found, the firmware has no graphics service", and for a screen the kernel cannot use, "Screen: found but not usable, ..." with the reason. The kernel carries on after either. The random number is written with 16 signs, the digits and the letters a to f. The date and time are the clock chip's. QEMU sets its chip to world time, so the time shown is not the time on the wall. On a processor that cannot make random numbers the line reads "Random numbers: none, because this processor has no sound source for them", and if the clock chip gives nothing usable, "Date and time: unknown, because the clock chip gave no usable answer". The kernel carries on after either. The encryption line follows about half a second later, the time its checks take. If one of them fails it reads "Encryption: not to be trusted here, only N of 8 checks of the arithmetic are right", and the kernel carries on then too. The box line follows at once, and after it the line of the second app, which the app itself asks the kernel to print; every line an app prints begins with "App: ". If the first program cannot be run or answers wrongly its line reads "Box: not working, ..." with the reason, and if the second app is stopped, "Box: the app was stopped, because ..." takes the place of its line. The kernel carries on either way; [box.md](box.md) has the wording. The address line comes from the network stack's task, within about a tenth of a second of the tasks starting, well before the first task line. Without a card, "Free memory" reads 199 MB and all the network lines become one, "Network card: none found". A card that cannot be set up gives "Network card: not set up, because ..." with the reason, and no gateway line. If nobody answers the question, the gateway line reads "Network: the gateway 10.0.2.2 did not answer", after a wait of about a second. If nobody hands out an address, no address line is printed and no page is fetched. The task lines arrive half a second apart, taking turns. The rest count and the prompt follow a second after the last one; the count reads 336 to 365 in the runs so far, because the arithmetic of the encrypted link keeps the processor busy for about half a second. Without a network card, or when no link is made, it reads 393 to 399.
 
 The lines about the page come from the network stack's task as well. The name line follows the address line within about a tenth of a second. Under two seconds later come the line saying that the site proved who it is, and then the report (the answer line, the page's rows and the length line) in one piece. They land among the task lines: after the third of them in both runs against the real site. The way of scrambling named in the first of them is the site's choice between the two the kernel offers. The address in the name line and the page itself belong to the site and can change; the listing shows what came on 2026-11-17, with the page's rows left out. If the page cannot be fetched, one line says why instead, `Network: no page fetched, because ...`, and it can come as late as after the prompt. [network.md](network.md) and [encryption.md](encryption.md) list the reasons. Keys typed in the QEMU window (not in the terminal) are echoed in the terminal at any time, also while the tasks are still running.
 

@@ -48,7 +48,7 @@ use app_box::{ADDING_APP, GREETING_APP, box_check, box_run};
 use clock::clock_read;
 use controller::controller_setup;
 use encryption::{encryption_check, trusted_roots};
-use firmware::{SystemTable, print, take_over};
+use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
@@ -98,6 +98,9 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
 
     print(table, "Hello from my kernel!\r\n");
 
+    // Only the firmware can say where the screen is, so ask before it goes.
+    let screen = screen_find(table);
+
     let (map_size, entry_size) = take_over(image, table);
 
     // No device signals until the kernel is ready for them.
@@ -133,6 +136,16 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             squares.push(number * number);
         }
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
+    }
+
+    // What the firmware said about the screen. Nothing is drawn on it yet.
+    match &screen {
+        Ok(screen) => {
+            write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
+        }
+        Err(reason) => {
+            write!(serial, "Screen: {}\r\n", reason).ok();
+        }
     }
 
     // Encryption, when it comes, needs two things from the machine: numbers

@@ -44,6 +44,7 @@ Monitor commands that proved useful:
 | `info mem` | What the current page tables cover |
 | `info pic`, `info irq` | The interrupt controller's state and how many signals each line sent |
 | `info pci` | QEMU's own PCI list: each device's place, maker and model, signal line, ports and memory |
+| `screendump <file>.ppm` | Saves the picture on the screen as a file, also when QEMU runs without a window. The file is a short text header (`P6`, width and height, `255`) and then three bytes a dot: red, green, blue, row by row from the top left |
 | `info network` | The network cards and what they are attached to |
 | `info virtio` | The path of each virtio device, needed by the next two |
 | `info virtio-status <path>` | How far a virtio device's handshake has got, and which features are in use |
@@ -62,6 +63,11 @@ Other QEMU options that proved useful:
 | `-machine pc,i8042=off` | A machine without a keyboard controller |
 | `-cpu qemu64` | QEMU's usual processor, which cannot make random numbers. A later `-cpu` overrides an earlier one |
 | `-cpu max` | Every processor feature QEMU can play |
+| `-vga none` | A machine without a display card. The firmware then has no graphics service |
+| `-vga cirrus`, `-vga vmware`, `-vga none -device virtio-vga`, `-vga none -device bochs-display` | Display cards of other makes |
+| `-vga none -device VGA,xres=1024,yres=768` | QEMU's usual display card with another size of screen |
+| `-vga none -device ramfb` | A display whose memory lies in the machine's ordinary memory |
+| `-machine q35` | A newer kind of PC than QEMU's usual one |
 | `-rtc base=localtime` | The clock chip set to the host's local time instead of world time |
 | `-rtc base=2000-02-29T23:59:58` | The clock chip started at a chosen date and time |
 | `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records 37; [network.md](network.md) lists them |
@@ -366,9 +372,23 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - Stack: 45,408 bytes for the greeting app, at startup and in a task. Memory: three rounds took 274 frames in the first and none after.
 - With the print call in: fifteen boots in a row showed both lines and reached the prompt, with the rest count at 399. Keys are echoed. All 23 lines of a boot end in bytes 13 and 10.
 - A person ran `run.bat` and saw the app's line, `App: Hello from inside the box`, after the box line.
+- Checked after the change that brought the print call in: a clean export of it differed from the working files in line ends only; it built on its own in 18 seconds with no warning and no program run along the way; and its kernel booted to the `Box:` and `App:` lines, with all 23 lines ending in bytes 13 and 10 and no byte that is not plain text.
 - Not verified: any program made by a compiler; programs larger than 540 bytes; tables in use, values shared across functions, whole numbers of 64 bits; several apps at once; a run while other tasks are busy; an app that prints while other tasks print; a program with WebAssembly's own "start section", which names a function to run while the app is being started (no test program had one); how long the two runs at startup take; the arithmetic on a real processor; and whether wasmi holds against a program written to break out, beyond the cases above.
 - A person ran `run.bat`, which built the kernel with the new crates, and saw the box line after the encryption line.
 - Line ends: every one of the 22 lines of a boot ends in the two bytes 13 and 10, also on a processor without random numbers. Four lines in `main.rs` (two about random numbers, two about the date) had ended in byte 10 alone: their text held a real line break where the others have the escape `\r\n`. Looking for a closing quote at the start of a line finds such a text; no other source file has one.
+
+**The screen**
+
+- The kernel prints `Screen: found, 1280 dots wide and 800 dots high, its memory starts at 0x80000000` on the machine `run.bat` starts. QEMU's own view agrees: a picture saved with `screendump` is 1280 by 800, and `info pci` shows the display card's first memory area at `0x80000000`.
+- The facts were then used, by a temporary snippet that wrote single dots and two small blocks into the screen's memory at places worked out from them: the four corners, the middle, and two blocks of ten by ten. In the picture QEMU saved, every one had the colour written and sat where it was meant to, and the dot just outside a block was untouched. That checks the address, the row length and the order of the colours together.
+- The same on other display cards, sizes and machines, all right: `-vga cirrus` (800 by 600), `-vga vmware`, `virtio-vga`, `bochs-display`, a screen of 1024 by 768, `ramfb` (800 by 600, its memory in ordinary memory), `-machine q35`, `-cpu max`, 96 and 512 MB, no network card, and a machine with half of its memory above 4 GB.
+- Without a display card (`-vga none`) the line reads `Screen: none found, the firmware has no graphics service`, and the kernel carries on to the prompt and echoes keys. The firmware's answer there was `0x800000000000000e`, its code for "not found", which is what the service-finding function is documented to answer; a wrong place in the firmware's table would have called some other function.
+- The refusals, each by replacing one of the firmware's facts in the code for the test: a colour form of 2 and of 3, a row shorter than the picture, no memory address, and one byte too little memory. Each gave its `Screen: found but not usable, ...` line, and the kernel carried on.
+- The test can fail: with the colour form replaced by the other order, red and blue came out swapped in the picture, and the check named five dots as wrong.
+- With the screen line in: the kernel boots to the prompt on the machine `run.bat` starts, on `-cpu max` and without a display card; keys are echoed; the rest count reads 399; all 24 lines of a boot end in bytes 13 and 10 and hold no byte that is not plain text. "Free memory" still reads 197 MB (194 with `ramfb`, 196 on `-machine q35`).
+- The build: no warning, no program compiled along the way is run, and Windows recorded no block. The kernel's file is 6.2 MB as before.
+- A person ran `run.bat` and saw the screen line after the heap line.
+- Not verified: a screen that writes red first, or one with rows longer than the picture (QEMU showed neither); a screen whose memory lies above 4 GB; a machine with two screens; real hardware.
 
 **The split into files**
 

@@ -8,12 +8,12 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for one thing so far, to print a text.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for one thing so far, to print a text. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover; it does not draw yet.
 
 ## Read in this order
 
 1. This file: where things are, and the conventions.
-2. [startup.md](startup.md): what the firmware hands over, the takeover, and the order of startup.
+2. [startup.md](startup.md): what the firmware hands over, the screen's details, the takeover, and the order of startup.
 3. [interrupts.md](interrupts.md): failures, device signals, the interrupt controller, the timer, the keyboard.
 4. [memory.md](memory.md): the memory map, frames, page tables, the heap.
 5. [tasks.md](tasks.md): several tasks taking turns, the switch, and the rules for code that runs in tasks.
@@ -31,7 +31,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | File | What it holds | Notes |
 | --- | --- | --- |
 | `main.rs` | `efi_main` (the order of startup and the main loop) and the panic handler | [startup.md](startup.md) |
-| `firmware.rs` | The firmware's tables, `print` through the firmware, `take_over`, the saved memory map | [startup.md](startup.md) |
+| `firmware.rs` | The firmware's tables, `print` through the firmware, `screen_find`, which gives a `Screen`, `take_over`, the saved memory map | [startup.md](startup.md) |
 | `processor.rs` | `port_read`, `port_write` and their 4-byte pair, `device_read_...` and `device_write_...` for controls kept in memory, `time_stamp`, `processor_ask`, `sse_refuse`, `signals_off`, `signals_back`, `stop`, `TablePointer` | used everywhere |
 | `serial.rs` | `serial_setup`, `serial_print`, `Serial` for `write!` | [startup.md](startup.md) |
 | `segments.rs` | The segment table (GDT) and `load_segment_table` | [interrupts.md](interrupts.md) |
