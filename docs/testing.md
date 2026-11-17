@@ -82,7 +82,7 @@ Other QEMU options that proved useful:
 | `-device ide-hd,drive=disk0,bus=ahci0.3` | The disk in the controller's socket 3 instead of 0 |
 | `-device ide-cd,bus=ahci0.0` | A drive for CDs in a socket |
 | `-device ide-hd,...,model=<name>` | The disk with another name of its own. A name is cut at 40 signs |
-| `-drive if=none,id=disk0,format=qcow2,file=<path>` with a file from `qemu-img create -f qcow2 <path> 300G` | A disk of any size in a small file: the file holds only what was written |
+| `-drive if=none,id=disk0,format=qcow2,file=<path>` with a file from `qemu-img create -f qcow2 <path> 300G` | A disk of any size in a small file: the file holds only what was written. `qemu-io -f qcow2 -c "write -q -P 76 <offset> 512" <path>` writes 512 bytes of the sign with number 76 into it at a place counted in bytes, with QEMU not running |
 | `-device pci-bridge,id=bridge1,chassis_nr=1 -device ich9-ahci,id=ahci1,bus=bridge1,addr=2` | The disk controller behind a bridge, on bus 1 |
 | `-drive if=none,id=nv,format=raw,file=<path> -device nvme,serial=test,drive=nv` | A disk of another kind (NVMe), which the kernel does not know |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
@@ -521,6 +521,32 @@ The entries above that say "keys are echoed" are from before the chat box: the t
 - A mistake of the test, not of the kernel: one case gave the disk a name of 42 signs and expected all of them; the disk keeps 40, and the kernel showed those.
 - Not verified: a real controller and a real disk; a firmware that leaves the socket at work or holds the controller as its own; a disk that reports a failure in ordinary use; a disk with blocks of another size; a disk that counts in 28 bits only.
 - A person ran `run.bat` and saw the line saying that the disk is ready, with its name, its size and its socket.
+
+- Checked after the change that brought the setup in: a clean export of it differed from the working files in line ends only and held no disk file; it built on its own in 19 seconds with no warning and no program run along the way; its kernel made the disk ready on three machines (the usual one, the disk in socket 3, memory above 4 GB), each test disk unchanged, and the chat box test passed on it.
+
+**Reading a block**
+
+- What was read first: the Linux kernel's file that lists the commands and the rules for the disk's answer (it could be fetched this time), QEMU's file with the same command numbers and its code that puts a block number together on the disk's side, and the AHCI specification's section on what to do after a failed command.
+- With a text written into the last 512 bytes of a test disk file: `Disk: its last block begins "Hello from the disk file!"`. Also with the disk in socket 3, with the memory above 4 GB, with 96 MB and on `-cpu max`.
+- Other last blocks, each line as meant: nothing but zeros, `is empty`; a text of 66 signs, cut at 40; a block of 512 times `x` with no 0 in it, 40 of them shown; zeros first and other bytes after, `does not begin with a text`; a text only in the block before the last, `is empty`, so it is the last one that is read.
+- A text meant to do harm, with a terminal command, a line end, a made-up `Kernel panic:` line, a bell and a byte above 126: it came out as one line with a dot for each such byte, and the output held no byte that is not plain text.
+- **Every block of a small disk.** A test disk of 2,048 blocks, each beginning with its own number as text, was read whole by a temporary snippet: 2,048 of 2,048 right. The block one past the end and the largest number there is both came back as `the disk has no block with that number`. That boot took 17 seconds from the start of QEMU to the prompt; three boots with the same disk and without the reads took 16.
+- **Large block numbers,** on disks kept in thin files and written with QEMU's own tool `qemu-io`: a disk of 300 GB, whose last block has a number past 24 bits, and one of 3 TB, past 32 bits. The last block held 512 times `L`, and the blocks that would be read if the upper bytes of the number were lost held `m` and `n`. Both showed `L`.
+- **Nothing is written.** A fingerprint of each plain test disk file was the same after the boot as before, also after all 2,048 reads. Of the thin files, the one of 300 GB was compared once, and was the same.
+- A read the disk refuses, by telling the kernel the disk is larger than it is and reading block 5,000 of 2,048: `the disk reported that it could not do what was asked`. A read of block 7 right after gave block 7.
+- Breaks made on purpose, and what the kernel then said:
+  - the mark "a block number is meant" left out, and another command number: `its last block could not be read, because the disk reported that it could not do what was asked`;
+  - the fourth byte of the block number left out, on the 300 GB disk: the `m` block was shown; the fifth left out, on the 3 TB disk: the `n` block;
+  - the lowest byte left out: `is empty`, another block;
+  - how many blocks left out, which asks for 65,536: `the disk finished the command without sending a whole block`. This is the one time that check was seen to fire;
+  - the disk's answer replaced by "blocks of 4096 bytes": `Disk: not ready, because the disk's blocks are not 512 bytes long`. QEMU refuses to play such a disk on this controller, so this was the only way;
+  - the list of features not believed: the disk is ready, and `its last block could not be read, because the disk is of an older kind that the kernel cannot read`.
+- **One break changed nothing:** with the getting-going-again after a failure taken out, the read after the refused one worked all the same. QEMU does not need it; the specification asks for it.
+- With reading in: a boot has one line more, 27 on a machine with no way out to the internet; "Free memory" still reads 196 MB; the rest count read 395 to 397 where it had read 398 or 399 earlier the same day. That is the test computer and not the reading: the kernel from before this change and the one with it, booted turn about four times each, read 397 every time; every line ends in bytes 13 and 10 and no byte is anything but plain text; the chat box test and the Shift test still pass. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
+- A mistake of the test, twice: two expected texts were 41 signs long where the kernel shows 40.
+- The disk file `run.bat` uses was given its text by a script on the building computer, with QEMU not running: 25 bytes at the start of the last 512, into a file that was all zeros before and after holds those 25 bytes and nothing else. No test booted with that file. The PowerShell line in [disk.md](disk.md) that does the same was tried on a fresh file in a temporary folder and left exactly those 25 bytes.
+- Not verified: a real disk; a disk that counts in 28 bits or has larger blocks, except by replacing its answer; a failure in the middle of a read; two readers at once.
+- A person ran `run.bat`, with the text in the disk file, and saw the line with the text read from the disk's last block.
 
 **The split into files**
 

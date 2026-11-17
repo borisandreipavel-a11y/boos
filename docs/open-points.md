@@ -110,19 +110,22 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The disk
 
-- **The kernel knows the disk's name and size and can do nothing with it.** It cannot read or write a block. Nothing is kept across a restart yet.
+- **The kernel can read a block and cannot write one.** Nothing is kept across a restart yet. The one block it reads, the last, is read to show that reading works.
 - **The first disk on the controller is taken,** the one in the lowest socket. On a machine with two disks the other is ignored, and nothing lets a person choose.
-- **A block is taken to be 512 bytes.** A disk can state another size; where it does so was not read, so such a disk would be reported with a wrong size, and later be read and written wrongly.
+- **A disk whose blocks are not 512 bytes long is refused.** Some large new disks have blocks of 4096 bytes. QEMU cannot play such a disk on this controller, so the refusal was seen only with the disk's answer replaced in the code.
+- **A disk that counts its blocks in 28 bits is set up and cannot be read.** The kernel knows the read command for disks that count in 48 bits only. Such disks are old and small.
+- **One block per command, one command at a time.** Reading many blocks takes one command each, a few thousandths of a second apiece, and holds everything else up meanwhile.
+- **Nothing decides who may use the disk.** `disk_read` keeps no protection; two tasks reading at once would overwrite each other's command. Only startup code reads today.
 - **Waiting is counted in looks, not in time,** 3 million of them, because the setup runs before the timer's signals are let through. The specification gives times: half a second for a socket to stop, up to 2 seconds for the firmware to let go. On a fast machine the looks may run out sooner than that, and a slow disk would be given up on too early.
 - **Several steps were never seen to matter in QEMU,** so they are untested as protections:
   - taking the controller over from the firmware: QEMU's controller says it has no control for that, so the code never ran;
   - "take answers" before "carry out commands": with that switch left off on purpose, QEMU's disk answered all the same;
-  - the check that a whole block arrived: with room for half a block named on purpose, QEMU still wrote 512 into the entry;
+  - the check that a whole block arrived fired once, when a read was made to ask for 65,536 blocks into room for one; with room for half a block named on purpose in the "who are you" command, QEMU still wrote 512 into the entry;
   - the short count of blocks, for disks that count in 28 bits: QEMU's disk always gives the long one. With the short one taken on purpose the size came out the same.
-- **A failed command is not cleaned up after.** The specification has steps for getting a socket going again after the disk reported a failure. The kernel reports the failure and leaves the socket as it is.
+- **Getting a socket going again after a failure was never seen to matter.** The kernel does what the specification says after a failed command. In QEMU the next command worked just as well with that taken out on purpose. If the disk is still busy after a failure, the socket stays stopped for good: the harder push the specification names for that case is not written.
 - **A disk that is asleep or slow to wake is counted as not there.** The kernel does not wake a disk or start it spinning; it uses what the firmware left running.
 - **The two frames lent to the controller are never given back,** also when the setup fails after taking them.
-- **The command's number rests on QEMU answering it,** not on a document; see [disk.md](disk.md).
+- **The disk's own documents were not read.** What the kernel knows about commands and about the disk's answer comes from the source of Linux and of QEMU, which agree; see [disk.md](disk.md).
 - **Only an AHCI controller is recognised,** by the three numbers it states about its kind. A controller set to RAID mode or to the older IDE mode states other numbers and counts as none; some PCs are delivered that way. An NVMe disk, which newer PCs have, is not known either.
 - **The first controller found is taken.** A machine with two is not handled.
 - **In QEMU the disk is one file of 16 MB,** made by `run.bat`. Nothing makes it larger.
