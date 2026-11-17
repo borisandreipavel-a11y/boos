@@ -79,6 +79,10 @@ Other QEMU options that proved useful:
 | `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
 | leaving out `-device ich9-ahci,...`, `-drive if=none,id=disk0,...` and `-device ide-hd,...` | A machine without a disk controller of the kind the kernel knows |
 | `-device ich9-ahci,id=ahci0` alone | A disk controller with no disk plugged in |
+| `-device ide-hd,drive=disk0,bus=ahci0.3` | The disk in the controller's socket 3 instead of 0 |
+| `-device ide-cd,bus=ahci0.0` | A drive for CDs in a socket |
+| `-device ide-hd,...,model=<name>` | The disk with another name of its own. A name is cut at 40 signs |
+| `-drive if=none,id=disk0,format=qcow2,file=<path>` with a file from `qemu-img create -f qcow2 <path> 300G` | A disk of any size in a small file: the file holds only what was written |
 | `-device pci-bridge,id=bridge1,chassis_nr=1 -device ich9-ahci,id=ahci1,bus=bridge1,addr=2` | The disk controller behind a bridge, on bus 1 |
 | `-drive if=none,id=nv,format=raw,file=<path> -device nvme,serial=test,drive=nv` | A disk of another kind (NVMe), which the kernel does not know |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
@@ -490,6 +494,33 @@ The entries above that say "keys are echoed" are from before the chat box: the t
 - Every test boot used a disk file of its own in a temporary folder.
 - Not verified: a real controller (QEMU plays one model); a controller set to RAID mode or IDE mode, which states other numbers and counts as none; a machine with two AHCI controllers.
 - A person ran `run.bat`, which made the disk file, 16,777,216 bytes, and saw the line saying that the disk controller was found.
+
+- Checked after the change that brought the finding of the controller in: a clean export of it differed from the working files in line ends only and held no disk file; its `run.bat` had all 15 lines ending in bytes 13 and 10; it built on its own in 20 seconds with no warning and no program run along the way; its kernel booted to the prompt with the controller's line, and the chat box test passed on it.
+
+**Setting the disk up and asking it who it is**
+
+- What was read first: the AHCI specification, version 1.3.1, for the controller's controls, the layouts and the steps; the Linux kernel's and QEMU's source for the packet, the signatures and the layout of the disk's answer. [disk.md](disk.md) says which fact rests on which.
+- On the machine `run.bat` starts: `Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller`. The name is the one QEMU gives its disks.
+- The exact count, by a temporary probe that printed it: 32,768 blocks for 16 MB, 3,072 for a file of 1,536 KB, 629,145,600 for a disk of 300 GB, which is past what 28 bits can count, and 1,032,192 for the folder QEMU's newer kind of PC boots from. Each is the file's size divided by 512.
+- Other disks and sockets, each line as meant: 1 MB; 20 GB, shown in GB; the disk in socket 3; a drive for CDs in socket 0 and the disk in socket 1; two disks, of which the one in the lower socket is taken; a drive for CDs only, and a controller with nothing in it, both `no disk is plugged into the controller`; a name of 40 signs with quotes and other signs in it, shown as it is.
+- Other machines, each line as meant: 96 MB, `-cpu max`, QEMU's newer kind of PC, where the disk found is the one the kernel was started from, and a machine with its memory above 4 GB. There the probe showed the two lent frames at `0x117fdb000` and `0x117fda000`, so the upper halves of all the addresses handed to the controller were in use.
+- **Nothing is written.** Every test disk held a pattern, and a fingerprint of the file taken before the boot was the same after it, in every case that has a file to compare.
+- **The stopping of a socket.** The probe showed what the socket's switches read when the kernel arrives: `0x00000006` on both kinds of PC, which is neither carrying out commands nor taking answers. So QEMU's firmware leaves the socket stopped, and the stopping code has nothing to do in a normal boot. To give it something, the setup was run twice in one boot: the second time found `0x0000c017`, all four at-work bits on, read `0x00004016` after stopping and letting answers in again, and made the disk ready again with the same count. Also with the memory above 4 GB.
+- Breaks made on purpose, and what the kernel then said:
+  - another command number: `the disk reported that it could not do what was asked`;
+  - another signature: `no disk is plugged into the controller`;
+  - no place for the data named in the entry: `the disk gave a number of blocks that cannot be true`, because the data frame stayed empty;
+  - "carry out commands" never switched on: `the disk did not answer in time`, about 3 seconds after the controller's line;
+  - a count of all ones put in place of the disk's, and a count of none: `the disk gave a number of blocks that cannot be true`;
+  - the same count of all ones believed, with the size worked out by multiplying as a first draft did: `Kernel panic: src\main.rs:...: attempt to multiply with overflow`. That is what the check and the dividing are for;
+  - the controller said to be unable to name high memory, on the machine with its memory above 4 GB: `the controller cannot reach the memory the kernel has for it`;
+  - the short count taken instead of the long one: the same 16 MB.
+- **Two breaks changed nothing, so two protections are untested:** with "take answers" never switched on, QEMU's disk answered all the same; and with room named for half a block only, the kernel still got its answer and QEMU still wrote 512 into the entry, so the check for a whole block never fired.
+- Not run at all: the taking over from the firmware. QEMU's controller reads 0 where it would say that it has that control.
+- With the disk set up: a boot has one line more, 26 on a machine with no way out to the internet; "Free memory" still reads 196 MB; the rest count reads 399; every line ends in bytes 13 and 10 and no byte is anything but plain text; the chat box test and the Shift test still pass. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
+- A mistake of the test, not of the kernel: one case gave the disk a name of 42 signs and expected all of them; the disk keeps 40, and the kernel showed those.
+- Not verified: a real controller and a real disk; a firmware that leaves the socket at work or holds the controller as its own; a disk that reports a failure in ordinary use; a disk with blocks of another size; a disk that counts in 28 bits only.
+- A person ran `run.bat` and saw the line saying that the disk is ready, with its name, its size and its socket.
 
 **The split into files**
 

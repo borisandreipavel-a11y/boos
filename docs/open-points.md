@@ -110,11 +110,23 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The disk
 
-- **The controller is only found.** The kernel does not talk to it, does not know whether a disk is plugged in, and cannot read or write a block. Nothing is kept across a restart yet.
+- **The kernel knows the disk's name and size and can do nothing with it.** It cannot read or write a block. Nothing is kept across a restart yet.
+- **The first disk on the controller is taken,** the one in the lowest socket. On a machine with two disks the other is ignored, and nothing lets a person choose.
+- **A block is taken to be 512 bytes.** A disk can state another size; where it does so was not read, so such a disk would be reported with a wrong size, and later be read and written wrongly.
+- **Waiting is counted in looks, not in time,** 3 million of them, because the setup runs before the timer's signals are let through. The specification gives times: half a second for a socket to stop, up to 2 seconds for the firmware to let go. On a fast machine the looks may run out sooner than that, and a slow disk would be given up on too early.
+- **Several steps were never seen to matter in QEMU,** so they are untested as protections:
+  - taking the controller over from the firmware: QEMU's controller says it has no control for that, so the code never ran;
+  - "take answers" before "carry out commands": with that switch left off on purpose, QEMU's disk answered all the same;
+  - the check that a whole block arrived: with room for half a block named on purpose, QEMU still wrote 512 into the entry;
+  - the short count of blocks, for disks that count in 28 bits: QEMU's disk always gives the long one. With the short one taken on purpose the size came out the same.
+- **A failed command is not cleaned up after.** The specification has steps for getting a socket going again after the disk reported a failure. The kernel reports the failure and leaves the socket as it is.
+- **A disk that is asleep or slow to wake is counted as not there.** The kernel does not wake a disk or start it spinning; it uses what the firmware left running.
+- **The two frames lent to the controller are never given back,** also when the setup fails after taking them.
+- **The command's number rests on QEMU answering it,** not on a document; see [disk.md](disk.md).
 - **Only an AHCI controller is recognised,** by the three numbers it states about its kind. A controller set to RAID mode or to the older IDE mode states other numbers and counts as none; some PCs are delivered that way. An NVMe disk, which newer PCs have, is not known either.
 - **The first controller found is taken.** A machine with two is not handled.
 - **In QEMU the disk is one file of 16 MB,** made by `run.bat`. Nothing makes it larger.
-- **Nothing decides yet which disk the kernel may write to.** On a real machine the disk it finds will usually hold another system and somebody's data. Before the kernel can write at all it needs a rule that keeps it off a disk that is not its own.
+- **Nothing decides yet which disk the kernel may write to.** On a real machine the disk it finds will usually hold another system and somebody's data; on QEMU's newer kind of PC it is the drive the kernel was started from. Before the kernel can write at all it needs a rule that keeps it off a disk that is not its own.
 - **Closing QEMU's window is a power cut** as far as the kernel can tell; there is no way to shut the machine down. Whatever is stored later has to survive being cut off in the middle of a write.
 
 ## The chat box

@@ -105,6 +105,7 @@ What is protected today:
 Not protected, and fine as long as it stays that way:
 
 - The keyboard's waiting line is taken from by one task only, the main loop.
+- **The disk** is set up once at startup, before any task runs, and nothing uses it afterwards yet. Its code keeps no protection of its own: a command lies in one frame and the socket has one place for it, so two tasks giving commands at once would overwrite each other. A rule for who may use the disk is still to be made; see [disk.md](disk.md).
 - **The chat box** is used by one task only, the main loop, and nothing protects its lists. A second task must not call its functions; see [chat.md](chat.md).
 - The screen. Two tasks drawing at once would give a mixed picture and nothing worse; see [screen.md](screen.md). Today only startup draws.
 

@@ -37,7 +37,7 @@ mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
 mod chat; // The chat box: typing on the screen, and what was said.
-mod disk; // The disk: finding its controller.
+mod disk; // The disk: its controller, and asking the disk who it is.
 
 use alloc::format;
 use alloc::string::String;
@@ -52,7 +52,7 @@ use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
 use chat::{chat_key, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
-use disk::disk_controller_find;
+use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
 use encryption::{encryption_check, trusted_roots};
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
@@ -227,16 +227,30 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     // Look for the controller that the machine's disks are plugged into.
     // Several devices can share one slot of the PCI list; a controller that
     // is not the first in its slot gets its number in the slot named too.
-    match disk_controller_find() {
-        Some(place) if place.function == 0 => {
+    if let Some(place) = disk_controller_find() {
+        if place.function == 0 {
             write!(serial, "Disk controller: found, device {} on bus {} of the PCI list\r\n", place.device, place.bus).ok();
-        }
-        Some(place) => {
+        } else {
             write!(serial, "Disk controller: found, device {} (function {}) on bus {} of the PCI list\r\n", place.device, place.function, place.bus).ok();
         }
-        None => {
-            write!(serial, "Disk controller: none found\r\n").ok();
+
+        // Set the controller up and ask the first disk on it who it is.
+        // Nothing is written to the disk.
+        match disk_setup(place) {
+            Ok(disk) => {
+                // The size is shown in MB, and in GB for a disk of 10 GB or
+                // more. So many blocks make 1 MB; dividing by that cannot
+                // overflow, where multiplying the blocks by their size could.
+                let megabytes = disk.blocks / (1024 * 1024 / BLOCK_SIZE);
+                let (size, unit) = if megabytes >= 10 * 1024 { (megabytes / 1024, "GB") } else { (megabytes, "MB") };
+                write!(serial, "Disk: ready, \"{}\", {} {}, in socket {} of its controller\r\n", disk.name, size, unit, disk.socket).ok();
+            }
+            Err(reason) => {
+                write!(serial, "Disk: not ready, because {}\r\n", reason).ok();
+            }
         }
+    } else {
+        write!(serial, "Disk controller: none found\r\n").ok();
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.
