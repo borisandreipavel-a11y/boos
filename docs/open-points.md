@@ -110,7 +110,14 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The disk
 
-- **The kernel can read a block and cannot write one.** Nothing is kept across a restart yet. The one block it reads, the last, is read to show that reading works.
+- **The kernel can read a block and cannot write one.** Nothing is kept across a restart yet. It knows where its own part of the disk is and keeps nothing there.
+- **Every list of parts the kernel has read was written by this project's own script or tests.** A list written by another system's tools, as a real disk's will be, has not been read, except for one head that QEMU's firmware had written anew while repairing a test disk. What may differ is not known: more or fewer entries, other marks in them, a second copy placed elsewhere.
+- **Only the list's copy at the start is read.** If it is damaged the kernel finds nothing of its own, also when the copy at the end is whole. It repairs nothing. A firmware may have repaired the list before the kernel runs; QEMU's does.
+- **A disk divided the older way is not understood.** The kernel reads the list PCs use today. A disk with only the old-style list in block 0 counts as having no list.
+- **The kernel cannot divide a disk.** A disk gets its list and the kernel's part from outside: the disk file from the script, a real disk from another system's tools. Nothing in the kernel can make or change a part, and nothing asks the person at the machine.
+- **Nothing puts the kernel on a disk.** A machine can only start the kernel from a part that holds it as a file in a file system the firmware reads. The kernel cannot make such a part or copy itself into one; in QEMU it is started from a folder, on a real machine from a USB stick.
+- **Two parts of the kernel's kind are refused,** and so is one that shares a block with another part, although the reference firmware would only ignore the overlapping entries. Refusing is the safe answer for a kernel that will write there.
+- **The dividing script needs a computer that runs script files.** Where the settings refuse them, `run.bat` stops. The script was run on one computer.
 - **The first disk on the controller is taken,** the one in the lowest socket. On a machine with two disks the other is ignored, and nothing lets a person choose.
 - **A disk whose blocks are not 512 bytes long is refused.** Some large new disks have blocks of 4096 bytes. QEMU cannot play such a disk on this controller, so the refusal was seen only with the disk's answer replaced in the code.
 - **A disk that counts its blocks in 28 bits is set up and cannot be read.** The kernel knows the read command for disks that count in 48 bits only. Such disks are old and small.
@@ -129,7 +136,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Only an AHCI controller is recognised,** by the three numbers it states about its kind. A controller set to RAID mode or to the older IDE mode states other numbers and counts as none; some PCs are delivered that way. An NVMe disk, which newer PCs have, is not known either.
 - **The first controller found is taken.** A machine with two is not handled.
 - **In QEMU the disk is one file of 16 MB,** made by `run.bat`. Nothing makes it larger.
-- **Nothing decides yet which disk the kernel may write to.** On a real machine the disk it finds will usually hold another system and somebody's data; on QEMU's newer kind of PC it is the drive the kernel was started from. Before the kernel can write at all it needs a rule that keeps it off a disk that is not its own.
+- **The rule for writing is decided and not yet in use:** only inside the part that the disk's own list names as the kernel's. Nothing can write yet. When writing comes, every write must go through the one place that turns a block of the part into a block of the disk, as `part_read` does for reading, and there must be no way to write to a block of the disk by its own number.
 - **Closing QEMU's window is a power cut** as far as the kernel can tell; there is no way to shut the machine down. Whatever is stored later has to survive being cut off in the middle of a write.
 
 ## The chat box

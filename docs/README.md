@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, small letters and with Shift capitals and the second signs of the keys, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back. It also finds the controller that the machine's disks are plugged into, sets it up, asks the first disk for its name and size, and reads one block from it; it cannot write to a disk.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, small letters and with Shift capitals and the second signs of the keys, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back. It also finds the controller that the machine's disks are plugged into, sets it up, asks the first disk for its name and size, reads the list that says how the disk is divided into parts, and finds the part that is its own; it cannot write to a disk.
 
 ## Read in this order
 
@@ -23,7 +23,7 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 9. [box.md](box.md): running an app locked in a box, the outside code for it, and the limits an app is held to.
 10. [screen.md](screen.md): the screen's memory, painting rectangles, the rule that keeps drawing inside the screen, letters, and the box that shows an app's text.
 11. [chat.md](chat.md): the chat box, where the person at the machine types and reads the answers.
-12. [disk.md](disk.md): the disk: which kind and why, finding its controller, setting it up, a command, asking the disk who it is, reading a block, the disk file in QEMU.
+12. [disk.md](disk.md): the disk: which kind and why, finding its controller, setting it up, a command, asking the disk who it is, reading a block, the parts of a disk and the kernel's own part, the disk file in QEMU and the script that divides it.
 13. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
 14. [open-points.md](open-points.md): known limits and what later work must deal with.
 
@@ -62,6 +62,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `letters.rs` | The shapes of the letters, digits and signs, drawn by hand as grids of dots: `SHAPES`, `letter_shape` | [screen.md](screen.md) |
 | `chat.rs` | The chat box: `chat_setup`, `chat_key`, the rows of what was said, the line being typed, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
 | `disk.rs` | The disk: `disk_controller_find`, which looks for the controller that disks are plugged into, `disk_setup`, which sets it up and gives a `Disk` with the first disk's name and size, `disk_read`, which reads one block, and `block_text` | [disk.md](disk.md) |
+| `parts.rs` | The parts of the disk: `part_find`, which reads the disk's list of parts and finds the kernel's own, and `part_read`, which reads one block of that part | [disk.md](disk.md) |
 
 Which file uses which:
 
@@ -79,7 +80,7 @@ Which file uses which:
 - `app_box.rs` uses `page.rs` (for `plain_text`), `serial.rs`, `screen.rs` (for `screen_panel`) and the crate wasmi.
 - `screen.rs` uses `firmware.rs` (for `Screen`), `page_tables.rs`, `processor.rs` and `letters.rs`. `letters.rs` uses nothing.
 - `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`) and `serial.rs`.
-- `disk.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs`, `processor.rs` and `page.rs` (for `plain_text`).
+- `disk.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs`, `processor.rs` and `page.rs` (for `plain_text`). `parts.rs` uses `disk.rs`.
 
 Outside `src/`:
 
@@ -87,7 +88,8 @@ Outside `src/`:
 - `Cargo.toml` names twelve dependencies, smoltcp, ten crates for encryption and wasmi, and points cargo at the copies. `Cargo.lock` lists 78 crates besides the kernel; 68 of them are compiled.
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`, and tells the crates for encryption to use their plain code; see [encryption.md](encryption.md).
-- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers, a virtio network card on QEMU's built-in network, and a disk controller with one disk, which is the file `disk.img`. It makes that file the first time, empty.
+- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers, a virtio network card on QEMU's built-in network, and a disk controller with one disk, which is the file `disk.img`. It makes that file the first time and has `make-disk.ps1` divide it into parts.
+- `make-disk.ps1` divides a new, empty disk file into parts, with one part for the kernel; see [disk.md](disk.md). It is written in PowerShell, which comes with Windows.
 - Not in the repository: `esp/` and `target/` (build output), `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder) and `disk.img` (the machine's disk, which holds what was stored on it).
 
 ## Conventions

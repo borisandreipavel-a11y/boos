@@ -38,6 +38,7 @@ mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
 mod chat; // The chat box: typing on the screen, and what was said.
 mod disk; // The disk: its controller, asking the disk who it is, reading a block.
+mod parts; // The parts of the disk, and the one that is this kernel's own.
 
 use alloc::format;
 use alloc::string::String;
@@ -52,7 +53,7 @@ use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
 use chat::{chat_key, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
-use disk::{BLOCK_SIZE, block_text, disk_controller_find, disk_read, disk_setup};
+use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
 use encryption::{encryption_check, trusted_roots};
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
@@ -61,6 +62,7 @@ use keyboard::{key_letter, keyboard_setup, next_key};
 use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
+use parts::part_find;
 use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
 use screen::{Colour, screen_fill, screen_setup, screen_text};
@@ -235,7 +237,7 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         }
 
         // Set the controller up, ask the first disk on it who it is, and
-        // read one block from it. Nothing is written to the disk.
+        // find the kernel's own part of it. Nothing is written to the disk.
         match disk_setup(place) {
             Ok(disk) => {
                 // The size is shown in MB, and in GB for a disk of 10 GB or
@@ -245,22 +247,15 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                 let (size, unit) = if megabytes >= 10 * 1024 { (megabytes / 1024, "GB") } else { (megabytes, "MB") };
                 write!(serial, "Disk: ready, \"{}\", {} {}, in socket {} of its controller\r\n", disk.name, size, unit, disk.socket).ok();
 
-                // Read the disk's last block and show the text it begins
-                // with. A text was put there from outside for this.
-                let mut block = [0u8; BLOCK_SIZE as usize];
-                match disk_read(disk.blocks - 1, &mut block) {
-                    Ok(()) => {
-                        let text = block_text(&block, 40);
-                        if !text.is_empty() {
-                            write!(serial, "Disk: its last block begins \"{}\"\r\n", text).ok();
-                        } else if block.iter().all(|byte| *byte == 0) {
-                            write!(serial, "Disk: its last block is empty\r\n").ok();
-                        } else {
-                            write!(serial, "Disk: its last block does not begin with a text\r\n").ok();
-                        }
+                // A disk is divided into parts, and a list at its start says
+                // which part is which. Read that list and find the part that
+                // is this kernel's own. Only there will the kernel ever write.
+                match part_find(disk.blocks) {
+                    Ok(part) => {
+                        write!(serial, "Disk: my own part is {} MB, from block {} to block {}\r\n", part.blocks / (1024 * 1024 / BLOCK_SIZE), part.first, part.last).ok();
                     }
                     Err(reason) => {
-                        write!(serial, "Disk: its last block could not be read, because {}\r\n", reason).ok();
+                        write!(serial, "Disk: nothing on it is mine, because {}\r\n", reason).ok();
                     }
                 }
             }
