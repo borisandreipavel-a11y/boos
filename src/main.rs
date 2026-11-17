@@ -37,6 +37,7 @@ mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
 mod chat; // The chat box: typing on the screen, and what was said.
+mod disk; // The disk: finding its controller.
 
 use alloc::format;
 use alloc::string::String;
@@ -51,6 +52,7 @@ use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
 use chat::{chat_key, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
+use disk::disk_controller_find;
 use encryption::{encryption_check, trusted_roots};
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
@@ -220,6 +222,21 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     // text in it. Nothing is printed for it unless the app is stopped.
     if let Err(reason) = box_run(&SHOWING_APP) {
         write!(serial, "Box: the app that shows a text was stopped, because {}\r\n", reason).ok();
+    }
+
+    // Look for the controller that the machine's disks are plugged into.
+    // Several devices can share one slot of the PCI list; a controller that
+    // is not the first in its slot gets its number in the slot named too.
+    match disk_controller_find() {
+        Some(place) if place.function == 0 => {
+            write!(serial, "Disk controller: found, device {} on bus {} of the PCI list\r\n", place.device, place.bus).ok();
+        }
+        Some(place) => {
+            write!(serial, "Disk controller: found, device {} (function {}) on bus {} of the PCI list\r\n", place.device, place.function, place.bus).ok();
+        }
+        None => {
+            write!(serial, "Disk controller: none found\r\n").ok();
+        }
     }
 
     // Look for the network card among the machine's cards and devices, and set it up.

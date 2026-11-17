@@ -11,6 +11,7 @@ So far the kernel finds the network card, sets it up, and sends and receives pac
 - `pci_read(place, offset)` reads 4 bytes of that table. It takes two steps: write which place and which 4 bytes to port `0xCF8`, then read the answer from port `0xCFC`. The two steps belong together, so signals are switched off around them. `pci_read_8` picks one byte out of the 4.
 - `pci_write(place, offset, value)` writes 4 bytes the same way. Only a few bytes of the table are settings; see "Setting the card up".
 - Those two ports work with 4 bytes at a time, which is what `port_write_32` and `port_read_32` are for.
+- Bytes 9, 10 and 11 of the table say what kind of thing the device is. `pci_find_kind(broad_kind, narrow_kind, way)` walks the list in the same way as `pci_find` below and returns the first place that states those three numbers. It finds a device whose maker and model are not known beforehand; the disk controller is found that way, see [disk.md](disk.md).
 - `pci_find(maker, model)` walks the whole list and returns the first place that states that maker and model.
   - It tries every bus and every slot. It does not follow bridges; trying all 256 buses finds devices behind them as well.
   - If function 0 of a slot is empty, the slot is empty and its other functions are skipped.
@@ -28,7 +29,7 @@ How the usual card shows up in QEMU 11.1, as seen with the monitor's `info pci` 
 
 - device 3 on bus 0, function 0;
 - signal line 11. That line is on the second chip of the interrupt controller, which the kernel holds back entirely today; see [interrupts.md](interrupts.md);
-- address field 0: ports at `0xc000`, 32 of them. This is the older way of working;
+- address field 0: ports at `0xc020`, 32 of them (at `0xc000` before the disk controller was attached, which now has those). This is the older way of working, which the kernel does not use;
 - address fields 4 and 5: 64-bit memory at `0xc000000000`, 16 KB. This is the newer way of working;
 - a list of control groups, all in that memory: group 1 at its start, group 3 at `0x1000`, group 4 at `0x2000`, group 2 at `0x3000` with a knock step of 4.
 
@@ -206,7 +207,7 @@ Every start of the kernel fetches the page, so every start sends one name questi
 - the network can be changed for a test: `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` made the kernel print `192.168.76.9`, given by `192.168.76.2`;
 - nothing outside can reach the kernel; only what the kernel sends out gets answers.
 
-With the card attached, the firmware uses more memory during startup: "Free memory" reads 197 MB with the card and 199 without, on the machine that `run.bat` starts. [memory.md](memory.md) has the figures for other processors.
+With the card attached, the firmware uses more memory during startup: "Free memory" reads 196 MB with the card and 198 without, on the machine that `run.bat` starts. [memory.md](memory.md) has the figures for other processors.
 
 A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records 37:
 

@@ -8,7 +8,8 @@ There are no automated tests. The kernel is verified by booting it in QEMU, read
 
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
 - The very first build on a computer fetches 64 crates from crates.io, about 3.4 MB, so it needs the internet once. After that, building works without it. Seven crates are not fetched; they are copies in `vendor/`. A build from nothing takes about 16 seconds.
-- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
+- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, a disk controller with the file `disk.img` as its disk, the UEFI firmware file, the `esp` folder as a second disk to boot from, and the serial port connected to the terminal. It makes `disk.img` the first time, 16 MB of zeros, with `qemu-img`, which comes with QEMU.
+- **A test boot never uses the project's `disk.img`.** That file holds what was stored on the machine. Make a disk file for the test in a temporary folder (`qemu-img create -f raw <path> 16M`) and name that one in the `-drive` option.
 - The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with one sentence in white, in the middle a light box with an app's text, and along the bottom the chat box. Keys are typed in the QEMU window, not in the terminal, and appear in the chat box; a line sent with Enter is repeated in the terminal with the kernel's answer.
 - What a normal boot prints is listed in [startup.md](startup.md).
 - A normal boot reaches the internet: the kernel looks up one name and fetches one page over an encrypted link. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
@@ -44,6 +45,7 @@ Monitor commands that proved useful:
 | `info mem` | What the current page tables cover |
 | `info pic`, `info irq` | The interrupt controller's state and how many signals each line sent |
 | `info pci` | QEMU's own PCI list: each device's place, maker and model, signal line, ports and memory |
+| `info block` | The disks QEMU plays, the file behind each, and what each is attached to |
 | `screendump <file>.ppm` | Saves the picture on the screen as a file, also when QEMU runs without a window. The file is a short text header (`P6`, width and height, `255`) and then three bytes a dot: red, green, blue, row by row from the top left |
 | `info network` | The network cards and what they are attached to |
 | `info virtio` | The path of each virtio device, needed by the next two |
@@ -75,6 +77,10 @@ Other QEMU options that proved useful:
 | `-netdev user,id=net0,restrict=on` | QEMU's built-in network with no way out. The kernel still gets its address, but no name server is named, so it prints `Network: no page fetched, because the network named no name server` and sends nothing more. Use it for boots that should not touch the internet |
 | `-device virtio-net-pci` with no `-netdev` | A card attached to nothing, so nobody can answer |
 | `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
+| leaving out `-device ich9-ahci,...`, `-drive if=none,id=disk0,...` and `-device ide-hd,...` | A machine without a disk controller of the kind the kernel knows |
+| `-device ich9-ahci,id=ahci0` alone | A disk controller with no disk plugged in |
+| `-device pci-bridge,id=bridge1,chassis_nr=1 -device ich9-ahci,id=ahci1,bus=bridge1,addr=2` | The disk controller behind a bridge, on bus 1 |
+| `-drive if=none,id=nv,format=raw,file=<path> -device nvme,serial=test,drive=nv` | A disk of another kind (NVMe), which the kernel does not know |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
 | `-device e1000,netdev=net0` | A network card of another make |
 | `-device virtio-net-pci,netdev=net0,mac=52:54:00:aa:bb:cc` | The card with another address of its own |
@@ -133,6 +139,7 @@ A panic line names the file the panic is in, so the file name changes when code 
 ## Traps
 
 - **A QEMU left running** keeps the serial file and `BOOTX64.EFI` locked, and the next run then shows the old output. Always end QEMU with `quit`, or kill it, and check that none is left.
+- **Keys sent too fast through the monitor.** A key with Shift is four key numbers with pauses between them inside QEMU. A long row of them sent 90 thousandths of a second apart piled up there, and a picture saved right after showed the row not yet arrived: the same 7,720 dots wrong in every run, while the terminal's lines and the later pictures were right. Sent 200 apart, every picture was right. It looked like a fault in the kernel and was the test's pace.
 - **A picture saved too soon after a key.** Painting takes time: the chat box needs about a twentieth of a second after Enter. A picture saved with `screendump` in the middle of that shows rows wiped and not yet written. Wait about half a second after the last key.
 - **Cutting a script's output short** (for example with `Select-Object -First 1`) can end the script before it sends `quit`. That leaves a QEMU running.
 - **Restoring a file by copying a backup** keeps the backup's old timestamp, and `cargo build` then skips the rebuild and the old kernel is booted. Set the file's time to now before building.
@@ -466,6 +473,23 @@ The entries above that say "keys are echoed" are from before the chat box: the t
 - With Shift in: the earlier chat box test still passes, every dot and every line; the kernel's lines up to the prompt are unchanged; no byte in the terminal is anything but plain text. The build: no warning, no program compiled along the way is run.
 - A person ran `run.bat` and typed `Hello, World!?` in the chat box in the QEMU window, capitals and signs included.
 - Not verified: a keyboard that is not passed on by QEMU; what a real keyboard sends around the arrow keys and the number pad; a Shift let-go number lost to a full waiting line (the rule for it is only reasoned).
+
+- Checked after the change that brought Shift in: a clean export of it differed from the working files in line ends only; it built on its own in 17 seconds with no warning and no program run along the way; its kernel booted to the prompt, and the five pictures of the Shift test were right in every dot and the terminal's lines as meant.
+
+**Finding the disk controller**
+
+- What the specification says was read first: the AHCI specification, version 1.3.1, section 2.1, for the three numbers a controller states about its kind and where they stand.
+- QEMU was then started with an AHCI controller and a disk file, with the kernel as it was before: it booted as before. QEMU's `info pci` showed the controller as device 4 on bus 0, maker `8086`, model `2922`, with its controls in memory at `0x81040000`, and the network card still at device 3. `info block` showed the disk file attached to that controller and the folder the kernel boots from attached to another device.
+- With the finding code in: `Disk controller: found, device 4 on bus 0 of the PCI list`, on the machine `run.bat` starts, with 96 MB and on `-cpu max`. A temporary snippet printed what the found device states at byte 8 of its table and at byte 0: `0x01060102` and maker `8086`, model `2922`, which is kind 1, 6, 1 as the specification has it and the device `info pci` shows.
+- On other machines, each line as meant: no controller, `none found`; QEMU's newer kind of PC, whose own controller is not the first device in its slot, `device 31 (function 2) on bus 0`, with the same `0x01060102`; the controller behind a bridge, `device 2 on bus 1`; a controller with no disk plugged in, found all the same; a machine with only an NVMe disk, `none found`; without a network card, `device 3 on bus 0`.
+- Three breaks made on purpose each gave `none found` on the usual machine: another number for the way of talking, another number for the narrow kind, and the revision byte not dropped before comparing.
+- What the other devices state, by a temporary snippet that printed the three numbers of every device on the list: QEMU's IDE controller 1, 1 and `0x80`, its NVMe disk 1, 8 and 2, the display card 3, 0, 0, the network card 2, 0, 0. Only the AHCI controller states 1, 6, 1.
+- `run.bat` as a whole file, in a copy of the folder, with the line that builds and the line that starts QEMU replaced by lines that only say they were reached: the first run made the disk file and reached the QEMU line; the second left the disk file alone and reached it too; with no kernel file it stopped before the disk file was made. All of the file's 15 lines end in bytes 13 and 10.
+- `run.bat`'s own new lines were also run as they stand, taken out of the file: the first made a disk file of 16,777,216 bytes; run a second time it left the file alone, a text written into it in between was still there; and the kernel started by `run.bat`'s QEMU line found the controller at device 4 and left the disk file as it was.
+- With the controller attached: "Free memory" reads 196 MB, one less than before (198 without a network card, 200 on `-cpu max`, 36 with 96 MB); the network card keeps device 3; a boot has one line more; every line ends in bytes 13 and 10 and no byte is anything but plain text; the chat box test and the Shift test still pass, every dot and every line. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
+- Every test boot used a disk file of its own in a temporary folder.
+- Not verified: a real controller (QEMU plays one model); a controller set to RAID mode or IDE mode, which states other numbers and counts as none; a machine with two AHCI controllers.
+- A person ran `run.bat`, which made the disk file, 16,777,216 bytes, and saw the line saying that the disk controller was found.
 
 **The split into files**
 

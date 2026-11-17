@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, small letters and with Shift capitals and the second signs of the keys, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, small letters and with Shift capitals and the second signs of the keys, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back. It also finds the controller that the machine's disks are plugged into; it cannot read or write a disk yet.
 
 ## Read in this order
 
@@ -23,8 +23,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 9. [box.md](box.md): running an app locked in a box, the outside code for it, and the limits an app is held to.
 10. [screen.md](screen.md): the screen's memory, painting rectangles, the rule that keeps drawing inside the screen, letters, and the box that shows an app's text.
 11. [chat.md](chat.md): the chat box, where the person at the machine types and reads the answers.
-12. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-13. [open-points.md](open-points.md): known limits and what later work must deal with.
+12. [disk.md](disk.md): the disk: which kind and why, finding its controller, the disk file in QEMU.
+13. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+14. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -46,7 +47,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `page_tables.rs` | The kernel's page tables: `page_tables_setup`, `map_page`, `map_device_memory` | [memory.md](memory.md) |
 | `heap.rs` | The heap: `heap_take`, `heap_give_back`, and `KernelHeap` for Rust's `alloc` | [memory.md](memory.md) |
 | `tasks.rs` | Tasks: `switch_entry!` (the switch, for the timer and for a task stepping aside), the list of tasks, `task_add`, `task_wait`, `task_rest` | [tasks.md](tasks.md) |
-| `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_memory_address` | [network.md](network.md) |
+| `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_find_kind`, `pci_memory_address` | [network.md](network.md) |
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
 | `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, and `network_task`, which also starts the page fetch | [network.md](network.md) |
 | `page.rs` | Fetching one page from the web over an encrypted link: `page_fetch`, the name lookup, the connection, `ConnectionWire`, and `Answer`, which reads what the site sends | [network.md](network.md) |
@@ -60,6 +61,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `screen.rs` | Drawing on the screen: `Colour`, `screen_setup`, `screen_size`, `screen_rectangle`, `screen_fill`, `screen_text`, and `screen_panel` with `PANEL_STYLE`, the box an app's text is shown in and its look | [screen.md](screen.md) |
 | `letters.rs` | The shapes of the letters, digits and signs, drawn by hand as grids of dots: `SHAPES`, `letter_shape` | [screen.md](screen.md) |
 | `chat.rs` | The chat box: `chat_setup`, `chat_key`, the rows of what was said, the line being typed, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
+| `disk.rs` | The disk: `disk_controller_find`, which looks for the controller that disks are plugged into | [disk.md](disk.md) |
 
 Which file uses which:
 
@@ -77,6 +79,7 @@ Which file uses which:
 - `app_box.rs` uses `page.rs` (for `plain_text`), `serial.rs`, `screen.rs` (for `screen_panel`) and the crate wasmi.
 - `screen.rs` uses `firmware.rs` (for `Screen`), `page_tables.rs`, `processor.rs` and `letters.rs`. `letters.rs` uses nothing.
 - `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`) and `serial.rs`.
+- `disk.rs` uses `pci.rs`.
 
 Outside `src/`:
 
@@ -84,8 +87,8 @@ Outside `src/`:
 - `Cargo.toml` names twelve dependencies, smoltcp, ten crates for encryption and wasmi, and points cargo at the copies. `Cargo.lock` lists 78 crates besides the kernel; 68 of them are compiled.
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`, and tells the crates for encryption to use their plain code; see [encryption.md](encryption.md).
-- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers and a virtio network card on QEMU's built-in network.
-- Not in the repository: `esp/` and `target/` (build output) and `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder).
+- `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers, a virtio network card on QEMU's built-in network, and a disk controller with one disk, which is the file `disk.img`. It makes that file the first time, empty.
+- Not in the repository: `esp/` and `target/` (build output), `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder) and `disk.img` (the machine's disk, which holds what was stored on it).
 
 ## Conventions
 

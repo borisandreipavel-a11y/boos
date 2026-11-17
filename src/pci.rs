@@ -91,3 +91,34 @@ pub fn pci_find(maker: u16, model: u16) -> Option<PciPlace> {
     }
     None
 }
+
+// Looks through the whole list for a device by what kind of thing it is.
+// Every device states its kind in three numbers, in the three bytes that
+// follow byte 8 of its table: the way it is talked to (byte 9), the narrow
+// kind (byte 10) and the broad kind (byte 11). A disk controller, say, has
+// the broad kind "stores data", whoever made it. So this finds a device that
+// `pci_find` cannot: one whose maker and model are not known beforehand.
+// Returns the place of the first one found.
+pub fn pci_find_kind(broad_kind: u8, narrow_kind: u8, way: u8) -> Option<PciPlace> {
+    // The three numbers as they stand in the table, the broad kind highest.
+    let wanted = (broad_kind as u32) << 16 | (narrow_kind as u32) << 8 | way as u32;
+
+    // The same walk as in `pci_find`.
+    for bus in 0..=255 {
+        for device in 0..32 {
+            for function in 0..8 {
+                let place = PciPlace { bus, device, function };
+                let maker_and_model = pci_read(place, 0);
+                // Byte 8 is the device's revision, which is not part of its
+                // kind. Shifting right by 8 bits drops it.
+                if maker_and_model != 0xFFFF_FFFF && pci_read(place, 8) >> 8 == wanted {
+                    return Some(place);
+                }
+                if function == 0 && (maker_and_model == 0xFFFF_FFFF || pci_read(place, 12) & 0x0080_0000 == 0) {
+                    break;
+                }
+            }
+        }
+    }
+    None
+}

@@ -108,6 +108,15 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Any other number behind the mark is looked up like an ordinary key's.** A key that sends the mark and then a number from a row of signs would type that sign. The up arrow, Delete and Print Screen do not; no other such key was looked for.
 - The waiting line holds 16 key numbers, two for each key pressed and let go. Keys that arrive faster than the main loop takes them out are dropped, and the main loop paints after every key, about 8 thousandths of a second each time. Keys 10 thousandths of a second apart all arrived; keys 5 apart did not.
 
+## The disk
+
+- **The controller is only found.** The kernel does not talk to it, does not know whether a disk is plugged in, and cannot read or write a block. Nothing is kept across a restart yet.
+- **Only an AHCI controller is recognised,** by the three numbers it states about its kind. A controller set to RAID mode or to the older IDE mode states other numbers and counts as none; some PCs are delivered that way. An NVMe disk, which newer PCs have, is not known either.
+- **The first controller found is taken.** A machine with two is not handled.
+- **In QEMU the disk is one file of 16 MB,** made by `run.bat`. Nothing makes it larger.
+- **Nothing decides yet which disk the kernel may write to.** On a real machine the disk it finds will usually hold another system and somebody's data. Before the kernel can write at all it needs a rule that keeps it off a disk that is not its own.
+- **Closing QEMU's window is a power cut** as far as the kernel can tell; there is no way to shut the machine down. Whatever is stored later has to survive being cut off in the middle of a write.
+
 ## The chat box
 
 - **The kernel only gives the typed line back.** Nothing reads the line, and nothing else can answer in the chat box.
