@@ -1,6 +1,6 @@
 # The screen: painting, letters and the panel
 
-Code: `src/screen.rs`, and `src/letters.rs` for the shapes of the letters. The question to the firmware, `screen_find`, and the `Screen` it gives are in `src/firmware.rs`; [startup.md](startup.md) covers them.
+Code: `src/screen.rs`, and `src/letters.rs` for the shapes of the letters. The chat box, which is drawn with these pieces, has its own file and note: `src/chat.rs` and [chat.md](chat.md). The question to the firmware, `screen_find`, and the `Screen` it gives are in `src/firmware.rs`; [startup.md](startup.md) covers them.
 
 ## What the screen is
 
@@ -13,6 +13,7 @@ Code: `src/screen.rs`, and `src/letters.rs` for the shapes of the letters. The q
 ## The pieces
 
 - **`Colour`** is three amounts, `red`, `green` and `blue`, each a byte.
+- **`screen_size()`** says how many dots the screen is across and down, or nothing on a machine without a usable screen. The chat box works out its place from it.
 - **`screen_setup(screen)`** takes the `Screen` that `screen_find` gave, makes its memory reachable with `map_device_memory`, and keeps it in `SCREEN`. It is called once from `efi_main`, after the kernel's own page tables are in place: `map_device_memory` changes those tables. On a machine without a usable screen it is not called, `SCREEN` stays `None`, and the drawing functions do nothing.
 - **`dot_value(order, colour)`** turns a colour into the number that is written for a dot. A dot is written as one number of four bytes. The lowest byte of a number is the one that lands first in memory, so the colour the screen wants first goes into the lowest byte. The fourth byte stays 0.
 - **`screen_rectangle(left, top, width, height, colour)`** paints a filled rectangle, one dot at a time with `device_write_32`.
@@ -57,11 +58,12 @@ An app can ask the kernel to show a text on the screen (`kernel.show`, see [box.
 
 - Nothing protects the screen against two tasks drawing at once. Each dot is written in one step and no state is shared, so the worst that can happen is a mixed picture: some dots from one task, some from the other. Nothing is damaged.
 - `SCREEN` is written once, at startup, before any task runs. After that it is only read.
-- Today all drawing happens at startup, before device signals are let through: `efi_main` draws once, and so does the app that shows a text, which runs there.
+- Most drawing happens at startup, before device signals are let through: `efi_main` draws once, and so does the app that shows a text, which runs there.
+- The chat box is the one thing drawn after startup, with device signals on: the main loop paints it again whenever a key is typed. The main loop is the only task that draws then, so nothing mixes. See [chat.md](chat.md).
 
 ## What a boot shows
 
-`efi_main` tries the screen right after printing the screen line: it fills the screen with dark blue (red 0, green 40, blue 90) and writes one sentence in white, at size 2, with its top left corner 40 dots from the left and 40 from the top: "Hello from my kernel! I draw my own letters now." The firmware's own text, "Hello from my kernel!" among it, is painted over by the fill.
+`efi_main` tries the screen right after printing the screen line: it fills the screen with dark blue (red 0, green 40, blue 90) and writes one sentence in white, at size 2, with its top left corner 40 dots from the left and 40 from the top: "Hello from my kernel! I draw my own letters now." The firmware's own text, "Hello from my kernel!" among it, is painted over by the fill. Right after the sentence, `chat_setup` paints the chat box along the bottom; [chat.md](chat.md) says where it sits and how it looks.
 
 A little later, after the encryption line, an app in the box asks for its text to be shown, and the panel appears in the middle of the screen with "Hello from an app in the box" in it. On QEMU's usual screen of 1280 by 800 dots the panel covers columns 380 to 899 and rows 370 to 429, and its text begins at column 400, row 391.
 

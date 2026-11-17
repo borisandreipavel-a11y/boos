@@ -75,12 +75,19 @@ pub fn next_key() -> Option<u8> {
     Some(key)
 }
 
+// What `key_letter` gives for the Backspace key, the key that takes the last
+// typed sign away. It is the number computers have long used for it.
+pub const BACKSPACE: u8 = 8;
+
 // Turns a key number into its letter on a US keyboard. A key number says where
 // the key sits, not what is printed on it: the keys are numbered row by row.
 // Letting a key go sends its number plus 128, which has no letter here.
+// Enter and Backspace have no letter either; they come back as the numbers
+// that stand for them, `b'\n'` and `BACKSPACE`.
 pub fn key_letter(key: u8) -> Option<u8> {
     let (first_key, row): (u8, &[u8]) = match key {
         2..=13 => (2, b"1234567890-="),
+        14 => return Some(BACKSPACE),
         16..=27 => (16, b"qwertyuiop[]"),
         28 => return Some(b'\n'), // Enter.
         30..=41 => (30, b"asdfghjkl;'`"),

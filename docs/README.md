@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back.
 
 ## Read in this order
 
@@ -22,8 +22,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 8. [encryption.md](encryption.md): the outside code for encryption, the settings it needs, the check at startup, the provider and the encrypted link.
 9. [box.md](box.md): running an app locked in a box, the outside code for it, and the limits an app is held to.
 10. [screen.md](screen.md): the screen's memory, painting rectangles, the rule that keeps drawing inside the screen, letters, and the box that shows an app's text.
-11. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-12. [open-points.md](open-points.md): known limits and what later work must deal with.
+11. [chat.md](chat.md): the chat box, where the person at the machine types and reads the answers.
+12. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+13. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -40,7 +41,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `interrupts.rs` | The interrupt table (IDT), `device_entry!`, `ignore_signal`, `load_interrupt_table` | [interrupts.md](interrupts.md) |
 | `controller.rs` | The interrupt controller (PIC): `controller_setup`, `signal_done`, the line numbers | [interrupts.md](interrupts.md) |
 | `timer.rs` | The timer (PIT): `timer_setup`, `on_timer`, `TICKS` | [interrupts.md](interrupts.md) |
-| `keyboard.rs` | The keyboard: `keyboard_setup`, `on_keyboard`, the waiting line, `key_letter` | [interrupts.md](interrupts.md) |
+| `keyboard.rs` | The keyboard: `keyboard_setup`, `on_keyboard`, the waiting line, `key_letter`, `BACKSPACE` | [interrupts.md](interrupts.md) |
 | `frames.rs` | Free memory as a pile of frames: `frames_setup`, `frame_take`, `frame_give_back` | [memory.md](memory.md) |
 | `page_tables.rs` | The kernel's page tables: `page_tables_setup`, `map_page`, `map_device_memory` | [memory.md](memory.md) |
 | `heap.rs` | The heap: `heap_take`, `heap_give_back`, and `KernelHeap` for Rust's `alloc` | [memory.md](memory.md) |
@@ -56,8 +57,9 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `provider.rs` | The adapter between the TLS library and the crates that do the arithmetic: `provider` | [encryption.md](encryption.md) |
 | `tls.rs` | The encrypted link: `Wire`, `secure_ready`, `secure_exchange` | [encryption.md](encryption.md) |
 | `app_box.rs` | The locked box that apps run in, and what an app may ask the kernel for: `box_run`, `box_check`, `kernel_print`, `kernel_show`, the limits, and three whole apps written by hand, `ADDING_APP`, `GREETING_APP` and `SHOWING_APP` | [box.md](box.md) |
-| `screen.rs` | Drawing on the screen: `Colour`, `screen_setup`, `screen_rectangle`, `screen_fill`, `screen_text`, and `screen_panel` with `PANEL_STYLE`, the box an app's text is shown in and its look | [screen.md](screen.md) |
+| `screen.rs` | Drawing on the screen: `Colour`, `screen_setup`, `screen_size`, `screen_rectangle`, `screen_fill`, `screen_text`, and `screen_panel` with `PANEL_STYLE`, the box an app's text is shown in and its look | [screen.md](screen.md) |
 | `letters.rs` | The shapes of the letters, digits and signs, drawn by hand as grids of dots: `SHAPES`, `letter_shape` | [screen.md](screen.md) |
+| `chat.rs` | The chat box: `chat_setup`, `chat_key`, the rows of what was said, the line being typed, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
 
 Which file uses which:
 
@@ -74,6 +76,7 @@ Which file uses which:
 - `encryption.rs` uses `encryption_values.rs` and the crates for encryption. `provider.rs` uses `random.rs` and those crates. `tls.rs` uses `provider.rs`, `encryption.rs`, `clock.rs`, `random.rs`, `serial.rs`, `page.rs` (for `plain_text`) and rustls.
 - `app_box.rs` uses `page.rs` (for `plain_text`), `serial.rs`, `screen.rs` (for `screen_panel`) and the crate wasmi.
 - `screen.rs` uses `firmware.rs` (for `Screen`), `page_tables.rs`, `processor.rs` and `letters.rs`. `letters.rs` uses nothing.
+- `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`) and `serial.rs`.
 
 Outside `src/`:
 
@@ -112,12 +115,12 @@ The code is written to be readable without a background in kernels: plain words,
 **Shared values**
 
 - A value shared between a signal handler and other code is an atomic from `core::sync::atomic`, used with `Ordering::Relaxed`.
-- Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed.
+- Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed. One file departs from "by value": the chat box keeps two lists that grow, which cannot be copied in and out, so `chat.rs` has two small functions that hand them out through their addresses. The rule that goes with them is written above them and in [chat.md](chat.md).
 - Several tasks run at once, and a switch can happen between any two instructions. State that more than one task changes is changed with device signals off: `let were_on = signals_off(); ... signals_back(were_on);`. See [tasks.md](tasks.md).
 - Signal handlers only count or store. They never print.
 
 **Output**
 
-- Everything the kernel says goes through the serial port: `serial_print("...")` or `write!(serial, "...")` with `let mut serial = Serial;`. Lines end in `\r\n`.
+- Everything the kernel says goes through the serial port: `serial_print("...")` or `write!(serial, "...")` with `let mut serial = Serial;`. Lines end in `\r\n`. What is said in the chat box is on the screen as well, and is repeated through the serial port as whole lines.
 - From a task, build the line first and send it in one go, `serial_print(&format!(...))`, so another task's line cannot land in the middle of it. Lines that must stay together, such as the report about a fetched page, are built as one text and sent in one go too.
 - Text that comes from outside the kernel, such as a web page, is never printed as it arrived. Only plain letters, digits and signs pass; see `plain_sign` in `page.rs`.

@@ -102,17 +102,32 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Keyboard
 
-- Shift and capitals, Backspace, and layouts other than US are left out.
+- Shift and capitals, and layouts other than US, are left out. With Shift held down a key gives its small letter.
+- The waiting line holds 16 key numbers, two for each key pressed and let go. Keys that arrive faster than the main loop takes them out are dropped, and the main loop paints after every key, about 8 thousandths of a second each time. Keys 10 thousandths of a second apart all arrived; keys 5 apart did not.
+
+## The chat box
+
+- **The kernel only gives the typed line back.** Nothing reads the line, and nothing else can answer in the chat box.
+- **Only the main loop may use the chat box.** Its lists are not protected, and there is no way yet for another task to hand it a text. A task that gets an answer from somewhere, such as the network task, cannot show it there.
+- **Six rows of what was said are shown, and nothing older is kept.** There is no scrolling back.
+- **A long text is cut into rows where the row ends,** in the middle of a word if need be.
+- **A line is at most 50 signs,** small letters, digits and a few signs. There are no capital letters and no way to move inside the line; only its last sign can be taken away.
+- **The mark for the next sign does not blink.** A key held down repeats as fast as the keyboard sends it; the kernel sets no pace of its own.
+- **Sending a line paints the rows again from nothing,** about a twentieth of a second in this kind of build. For that moment the rows are blank. In a QEMU window that showed no flicker; on a slower machine or with more rows it might. Painting a row in one go (see "The screen") would shorten it.
+- **The look is fixed when the kernel is built,** as a set of values in `chat.rs`. Neither the person at the machine nor anything else can change it while the kernel runs. The box that shows an app's text has its own set in `screen.rs`; the two are not one.
+- **On a machine without a screen the typing is blind:** nothing shows until Enter, when the line appears in the terminal.
+- **On a screen smaller than 800 by 600 dots** the chat box may lie over the box that shows an app's text. Nothing was tried there.
+- The row from the kernel that says what to do, and the answer that gives the line back, are demonstrations.
 
 ## The screen
 
 - **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures. An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).
 - **Text is one line of plain English signs.** Nothing wraps round at the right edge, a line break is not understood, and every sign outside the 95 plain ones, a letter with an accent among them, shows as an empty box. The letters have one shape and one thickness; larger text is the same shapes with bigger dots.
-- **The kernel's own lines do not appear on the screen.** They go to the serial port only, so a machine without one shows the picture and says nothing.
-- **Nothing remembers what is written where.** Text cannot be taken off again except by painting over it, and there is no place on the screen that scrolls.
+- **The kernel's own lines do not appear on the screen.** They go to the serial port only, so a machine without one shows the picture and the chat box, and none of the lines about its start.
+- **Nothing remembers what is written where,** except the chat box, which keeps its own rows and paints them again. Elsewhere text cannot be taken off again except by painting over it.
 - **Painting is slow.** Filling the screen takes roughly 0.16 s in this kind of build, possibly up to half as much again, at startup with device signals off. Dots are written one at a time, each through a function call; writing a row in one go was measured at twenty times the speed and not kept, for the sake of plain code.
 - **There is one picture and no copy of it.** What is painted shows at once, half-finished drawing included, and nothing remembers what was under a rectangle.
-- **Nothing decides who may draw.** Any code in the kernel can paint anywhere, and two tasks drawing at once give a mixed picture. Today all drawing happens at startup.
+- **Nothing decides who may draw.** Any code in the kernel can paint anywhere, and two tasks drawing at once give a mixed picture. Today drawing happens at startup and, for the chat box, in the main loop; no other task draws.
 - **The screen's memory may lie in ordinary memory.** With QEMU's `ramfb` display it does, in a stretch the firmware's memory map calls kind 0, "set aside". The frame pile takes only kind 7, and the plan to hand out the firmware's startup memory (kinds 3 and 4, see "Memory") would not touch kind 0 either. This rests on the firmware's map: a firmware that listed the screen's memory as one of those kinds would have it handed out.
 - The screen's memory is device memory and is mapped like ordinary memory; see "Network" for the "do not cache" mark. For a screen, real hardware has a mark of its own that makes many small writes fast, which the kernel does not set either.
 - **Two ways of writing a colour are known:** red, green, blue and blue, green, red, at four bytes a dot. A screen that describes its colours with masks is refused, although it could be used. Only the second order was ever seen.

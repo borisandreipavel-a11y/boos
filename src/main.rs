@@ -36,6 +36,7 @@ mod tls; // The encrypted link.
 mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
+mod chat; // The chat box: typing on the screen, and what was said.
 
 use alloc::format;
 use alloc::string::String;
@@ -47,6 +48,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
 use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
+use chat::{chat_key, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
 use encryption::{encryption_check, trusted_roots};
@@ -142,8 +144,8 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     }
 
     // What the firmware said about the screen. If there is one, try it:
-    // paint all of it dark blue, and write a sentence in white near the top
-    // left corner.
+    // paint all of it dark blue, write a sentence in white near the top left
+    // corner, and put the chat box along the bottom.
     match screen {
         Ok(screen) => {
             write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
@@ -151,6 +153,7 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             screen_fill(Colour { red: 0, green: 40, blue: 90 });
             // The 2 makes every dot of a letter a block of 2 by 2 dots.
             screen_text(40, 40, "Hello from my kernel! I draw my own letters now.", 2, Colour { red: 255, green: 255, blue: 255 });
+            chat_setup();
         }
         Err(reason) => {
             write!(serial, "Screen: {}\r\n", reason).ok();
@@ -271,17 +274,14 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         if seconds >= 4 && !hint_shown {
             hint_shown = true;
             write!(serial, "The processor rested through {} of the first {} ticks.\r\n", RESTED_TICKS.load(Ordering::Relaxed), ticks).ok();
-            write!(serial, "Click the QEMU window and type. The letters appear here:\r\n").ok();
+            write!(serial, "Click the QEMU window and type in its chat box. What is said there is repeated here:\r\n").ok();
         }
 
-        // Print the letters of the keys that arrived in the meantime.
+        // Hand the keys that arrived in the meantime to the chat box. A key
+        // without a letter, or a key being let go, gives nothing.
         while let Some(key) = next_key() {
-            match key_letter(key) {
-                Some(b'\n') => serial_print("\r\n"),
-                Some(letter) => {
-                    write!(serial, "{}", letter as char).ok();
-                }
-                None => {} // A key without a letter, or a key being let go.
+            if let Some(letter) = key_letter(key) {
+                chat_key(letter);
             }
         }
     }

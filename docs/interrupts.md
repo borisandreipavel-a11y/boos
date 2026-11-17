@@ -78,11 +78,12 @@ Limits:
 - All waits in `keyboard_setup` give up after 100,000 tries.
 - `on_keyboard` checks that a byte is really waiting, reads it and puts it in `KEY_QUEUE`: 16 slots, with the counters `KEYS_ARRIVED` and `KEYS_TAKEN`, all atomics. When the queue is full the key is dropped. It always ends with `signal_done`.
 - The mouse is switched off in the settings byte on purpose. The mouse shares the keyboard's waiting byte, and nothing listens on its line, so a mouse byte would block the keyboard.
-- The main loop takes keys out with `next_key` and turns them into letters with `key_letter`.
+- The main loop takes keys out with `next_key`, turns them into letters with `key_letter`, and hands each letter to the chat box (`chat_key`, see [chat.md](chat.md)).
 - A key number says where the key sits, not what is printed on it. Letting a key go sends the same number plus 128.
-- `key_letter` knows the US layout in lower case, Enter and the space bar. Everything else gives nothing.
+- `key_letter` knows the US layout in lower case, the space bar, Enter and Backspace. Enter and Backspace have no letter; they come back as the numbers that stand for them, `b'\n'` and `BACKSPACE` (8). Backspace is key number 14. Everything else gives nothing.
+- Shift is not understood: with Shift held down, a key gives the same small letter as without.
 
-Left out on purpose, as possible additions: Shift and capitals, Backspace, any layout other than US.
+Left out on purpose, as possible additions: Shift and capitals, any layout other than US.
 
 ## Rules for handlers
 

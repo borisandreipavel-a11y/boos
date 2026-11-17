@@ -9,7 +9,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU, read
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
 - The very first build on a computer fetches 64 crates from crates.io, about 3.4 MB, so it needs the internet once. After that, building works without it. Seven crates are not fetched; they are copies in `vendor/`. A build from nothing takes about 16 seconds.
 - `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
-- The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with one sentence in white, and in the middle a light box with an app's text. Keys are typed in the QEMU window, not in the terminal.
+- The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with one sentence in white, in the middle a light box with an app's text, and along the bottom the chat box. Keys are typed in the QEMU window, not in the terminal, and appear in the chat box; a line sent with Enter is repeated in the terminal with the kernel's answer.
 - What a normal boot prints is listed in [startup.md](startup.md).
 - A normal boot reaches the internet: the kernel looks up one name and fetches one page over an encrypted link. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
 
@@ -38,7 +38,7 @@ Monitor commands that proved useful:
 
 | Command | What it gives |
 | --- | --- |
-| `sendkey a`, `sendkey ret`, `sendkey spc`, `sendkey shift-a` | A key press, as if typed in the window |
+| `sendkey a`, `sendkey ret`, `sendkey spc`, `sendkey backspace`, `sendkey shift-a` | A key press, as if typed in the window. The signs have names: `minus`, `equal`, `bracket_left`, `bracket_right`, `semicolon`, `apostrophe`, `grave_accent`, `backslash`, `comma`, `dot`, `slash`. A number behind the key says how many thousandths of a second it is held down (`sendkey a 20`); without one it is 100 |
 | `mouse_move 20 20`, `mouse_button 1`, `mouse_button 0` | Mouse movement and clicks |
 | `info registers` | Where the processor is (`RIP`), whether it sleeps (`HLT=1`), `CR3` |
 | `info mem` | What the current page tables cover |
@@ -133,6 +133,7 @@ A panic line names the file the panic is in, so the file name changes when code 
 ## Traps
 
 - **A QEMU left running** keeps the serial file and `BOOTX64.EFI` locked, and the next run then shows the old output. Always end QEMU with `quit`, or kill it, and check that none is left.
+- **A picture saved too soon after a key.** Painting takes time: the chat box needs about a twentieth of a second after Enter. A picture saved with `screendump` in the middle of that shows rows wiped and not yet written. Wait about half a second after the last key.
 - **Cutting a script's output short** (for example with `Select-Object -First 1`) can end the script before it sends `quit`. That leaves a QEMU running.
 - **Restoring a file by copying a backup** keeps the backup's old timestamp, and `cargo build` then skips the rebuild and the old kernel is booted. Set the file's time to now before building.
 - **`powershell -File script.ps1 -Keys a,b,c`** passes `a,b,c` as one string. Use `powershell -Command "& 'script.ps1' -Keys a,b,c"` to pass a list.
@@ -427,8 +428,31 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - Stack: 45,776 bytes for the showing app at startup, and the same for the greeting app, of 124 KB free. The kernel's file grew by 8 KB.
 - With the showing app in: the kernel boots to the prompt, keys are echoed, the rest count reads 399, all 24 lines end in bytes 13 and 10, and "Free memory" reads 197 MB. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
 - A person ran `run.bat` and saw the box with the app's text in the middle of the QEMU window.
+- Checked after the change that brought the showing app in: a clean export of it differed from the working files in line ends only; it built on its own in 18 seconds with no warning and no program run along the way; its kernel booted to the prompt, all 24 lines ending in bytes 13 and 10, and the picture saved after the boot was right in every dot, the app's box included.
 - Not verified for an app's text on the screen: a screen smaller than the box (the smallest tried was 800 by 600); an app that shows from a task, or while other tasks draw; two apps one after the other in real use; how the box looks on a real screen; programs made by a compiler.
 - Not verified for letters: whether every one of the 95 signs reads well to other eyes (a person has read the one sentence); text on a real screen; text written by two tasks at once; a text long enough to matter for time.
+
+**The chat box**
+
+The entries above that say "keys are echoed" are from before the chat box: the terminal showed each letter as it was typed then. Now the letters appear in the chat box, and the terminal gets whole lines when Enter is pressed.
+
+- Every check below compared a picture saved with `screendump` dot by dot with the picture that is meant, and the end of the terminal's output word for word with the lines that are meant. The checking script builds its picture from the style's numbers typed into it and the grids in `letters.rs`, and keeps its own account of what the chat box should hold after each key. Nothing in it comes from what the kernel prints or paints.
+- The plain case, on the machine `run.bat` starts, a picture after each step, every dot right each time: the empty chat box with the kernel's first row; ten signs typed and not sent, which shows that letters appear while they are typed; four of them taken away with Backspace; six more and Enter, after which the line and the answer stand in the rows above and the row for typing is empty; Enter, Backspace and Enter on an empty line, which change nothing; and eight keys of which only two have a letter.
+- Keys without a letter: the up and left arrows, F1, Esc, Tab and Delete gave nothing. Shift with `a` typed `a`, and Ctrl with `c` typed `c`.
+- Limits and long rows: 55 keys typed and 50 signs taken; that line sent; four more lines sent, so that the six rows are full and the oldest go, with a short row landing where a long one stood; twelve signs typed and fourteen Backspaces; and every sign the keyboard knows, typed and sent. Eight pictures, every dot right, and the terminal's lines as meant.
+- The same on other machines, every dot right: `-vga cirrus` and `ramfb` (800 by 600, where a row holds 57 signs and the answer to the longest line takes two rows), a screen of 1024 by 768, `-machine q35`, `-cpu max`, and 96 MB. On all of them the chat box, the app's box and the sentence do not touch.
+- Without a display card (`-vga none`): nothing is painted, and the terminal's lines are the same as with a screen, the limit of 50 signs included.
+- Keys typed during the first seconds, while the tasks were still printing: the line and the answer landed between two task lines in the terminal, and the picture was right in every dot.
+- Fast keys: a sentence of 39 keys and Enter arrived whole when the keys were sent 60, 30, 20 and 10 thousandths of a second apart. Sent 5 apart, the line was never sent, so keys were lost, the Enter among them. Of 43 keys sent with no pause at all, most were lost.
+- Five breaks made on purpose were each caught, by wrong dots, wrong lines in the terminal, or both: Backspace not understood; the limit on a line's length taken out; the oldest row not dropped (the rows then ran on over the row for typing); the wiping of the rows taken out; and, on a screen 800 dots wide, the cut in `chat_write` and the cutting into rows taken out together, where the long answer ran past the right edge of the chat box.
+- Another look, by changing nothing but the values of `CHAT_STYLE` for the test, and the same numbers in the checking script: four rows, 20 dots from the edges, a frame 5 dots thick, letters at size 3, other gaps and five other colours. The same eight pictures were right in every dot, on a screen of 1280 by 800 and on one of 800 by 600, where a row then holds 41 signs and a line may have only 38. So the place and the sizes follow from the style's values.
+- Time and memory, by a temporary snippet that called the chat box 840 times from the main loop: 400 paintings of the row being typed took 333 ticks, and 200 lines sent took 1,123 ticks, so about 8 and about 50 thousandths of a second each. The run had no window, so the times may be up to half as much again. The count of free frames was the same before, after 20 lines and after 220.
+- Ten boots in a row each showed the typed line and the answer, on the screen and in the terminal. The rest count read 398 or 399.
+- With the chat box in: "Free memory" still reads 197 MB, the kernel's lines up to the prompt are the same 24 except for the prompt's wording, every line ends in bytes 13 and 10, and from the kernel's first line on no byte is anything but plain text. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
+- A picture saved too soon after Enter, 80 thousandths of a second on a screen of 1024 by 768, showed rows wiped and not yet written. With half a second's wait every dot was right. It is the kernel still painting, not a fault; see "Traps".
+- How the chat box looks was judged by eye in three of the saved pictures: one on the usual screen, one on a screen of 800 by 600 with full rows and an answer that takes two, and one with every sign.
+- A person ran `run.bat`, typed in the chat box in the QEMU window, and saw the letters and the kernel's answer there. Sending a line showed no flicker, and a key held down typed more of its letter.
+- Not verified: a screen smaller than 800 by 600; style values that make the chat box larger than the screen or leave no room for a sign; a second task using the chat box; the page being fetched while keys are typed (the test boots stayed off the internet); the failure reports and the 15-boots check of earlier work were not repeated.
 
 **The split into files**
 

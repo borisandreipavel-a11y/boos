@@ -1,5 +1,6 @@
 //! Drawing on the screen: filling it, filled rectangles, text, and the box
-//! in which an app's text is shown. Notes: `docs/screen.md`.
+//! in which an app's text is shown. Notes: `docs/screen.md`. (The chat box
+//! is drawn with these pieces by `chat.rs`.)
 
 use crate::firmware::{ColourOrder, Screen};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH, letter_shape};
@@ -26,6 +27,15 @@ pub fn screen_setup(screen: Screen) {
     // above the range the page tables cover, so make sure it can be reached.
     map_device_memory(screen.memory_start, screen.memory_size);
     unsafe { SCREEN = Some(screen) };
+}
+
+// Says how many dots the screen is across and down. Gives nothing on a
+// machine without a usable screen.
+pub fn screen_size() -> Option<(u32, u32)> {
+    let Some(screen) = (unsafe { SCREEN }) else {
+        return None;
+    };
+    Some((screen.width, screen.height))
 }
 
 // Turns a colour into the number that is written into the screen's memory.

@@ -105,6 +105,7 @@ What is protected today:
 Not protected, and fine as long as it stays that way:
 
 - The keyboard's waiting line is taken from by one task only, the main loop.
+- **The chat box** is used by one task only, the main loop, and nothing protects its lists. A second task must not call its functions; see [chat.md](chat.md).
 - The screen. Two tasks drawing at once would give a mixed picture and nothing worse; see [screen.md](screen.md). Today only startup draws.
 
 ## The demonstration
