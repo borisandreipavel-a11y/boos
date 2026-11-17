@@ -1,6 +1,6 @@
 # Building, running and verifying
 
-There are no automated tests. The kernel is verified by booting it in QEMU and reading what it prints. This file says how, what has been verified so far, and which traps cost time before.
+There are no automated tests. The kernel is verified by booting it in QEMU, reading what it prints, and comparing a saved picture of the screen with the picture that is meant. This file says how, what has been verified so far, and which traps cost time before.
 
 **Rule:** if you can run commands on the machine, build and boot to verify each change before calling it done. Say plainly what was tested and what was not.
 
@@ -9,7 +9,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
 - The very first build on a computer fetches 64 crates from crates.io, about 3.4 MB, so it needs the internet once. After that, building works without it. Seven crates are not fetched; they are copies in `vendor/`. A build from nothing takes about 16 seconds.
 - `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
-- The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
+- The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with an orange rectangle. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
 - A normal boot reaches the internet: the kernel looks up one name and fetches one page over an encrypted link. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
 
@@ -388,7 +388,20 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - With the screen line in: the kernel boots to the prompt on the machine `run.bat` starts, on `-cpu max` and without a display card; keys are echoed; the rest count reads 399; all 24 lines of a boot end in bytes 13 and 10 and hold no byte that is not plain text. "Free memory" still reads 197 MB (194 with `ramfb`, 196 on `-machine q35`).
 - The build: no warning, no program compiled along the way is run, and Windows recorded no block. The kernel's file is 6.2 MB as before.
 - A person ran `run.bat` and saw the screen line after the heap line.
-- Not verified: a screen that writes red first, or one with rows longer than the picture (QEMU showed neither); a screen whose memory lies above 4 GB; a machine with two screens; real hardware.
+- Checked after the change that brought the screen line in: a clean export of it differed from the working files in line ends only; it built on its own in 18 seconds with no warning and no program run along the way; and its kernel booted to the prompt with the screen line, all 24 lines ending in bytes 13 and 10.
+- **Painting.** A picture saved with `screendump` after the whole boot was compared dot by dot with the picture that is meant: dark blue everywhere and an orange rectangle on columns 490 to 789 and rows 300 to 499. All 1,024,000 dots are right. The expected picture is built by the checking script from the colours and the sizes, not from anything the kernel reports.
+- The same on other display cards, sizes and machines, every dot right: `-vga cirrus` (800 by 600), `-vga vmware`, `virtio-vga`, `bochs-display`, a screen of 1024 by 768, `ramfb` (800 by 600), `-machine q35`, `-cpu max`, 96 and 512 MB, and a machine with half of its memory above 4 GB. Without a display card the kernel prints its "none found" line, paints nothing and carries on.
+- Edges, by a temporary snippet with twelve more rectangles: one reaching past the right edge, one past the bottom, one in the corner with the largest width and height there are, four that begin outside the screen or at the largest number, two with a width or height of 0, single dots in the first and the last place of the screen, and a plain one. Every dot of the picture is right, and a marker written just behind the last row of the screen's memory was unchanged.
+- With the cutting off at the edges taken out, the same marker was overwritten and 285 dots past the right edge showed up at the start of the next rows. So the test notices a missing cut.
+- Rows longer than the picture, which no display in QEMU has, by halving the width the firmware reports and keeping the row length: the left half was painted, with the rectangle in the middle of that half, and the right half stayed as the firmware left it, dot for dot. With the rows counted in the width instead, 572,000 dots were wrong.
+- A screen's memory outside the range the page tables cover, by building the tables for 1 GB only: the picture is right, every dot. Without the call that makes the memory reachable, the kernel stops with `CPU fault: page fault ..., touching 0x80000000`.
+- With the colour order replaced by the other one, every dot was wrong, red and blue swapped.
+- A screen address that cannot be divided by four, by adding 2 to the firmware's answer: `Screen: found but not usable, the firmware's facts about it do not fit together`, and the screen stays as the firmware left it, dot for dot.
+- Where the screen's memory lies in the firmware's memory map: with QEMU's usual display card, in no stretch of the map at all; with `ramfb`, in a stretch of kind 0. With `ramfb` the picture was still right in every dot at the end of a boot, after the heap, the apps and the tasks had taken their memory.
+- Time: ten fills of the screen took 155 ticks, so one takes roughly 0.16 s. The run had no window, and such runs can count too few ticks (see "Timing in windowless runs" under "Traps"), so it may be up to half as much again. With a row written in one go the ten fills took 7 ticks, in the same kind of run.
+- With painting in: the kernel boots to the prompt, keys are echoed, the rest count reads 399, all 24 lines end in bytes 13 and 10, and "Free memory" reads 197 MB. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
+- Not verified: a real screen that writes red first or has rows longer than the picture (both were only played by replacing the firmware's answer); a screen whose memory really lies above 4 GB; a machine with two screens; drawing from a task, or from two at once; real hardware. Every check above looked at pictures QEMU saved, not at a window.
+- A person ran `run.bat` and saw the QEMU window dark blue with an orange rectangle in the middle.
 
 **The split into files**
 

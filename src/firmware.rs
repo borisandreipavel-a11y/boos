@@ -127,12 +127,14 @@ pub fn print(table: *mut SystemTable, text: &str) {
 // A picture on the screen is a grid of dots (pixels). Every dot has a place in
 // the screen's memory (the framebuffer): four bytes that hold how much red,
 // green and blue the dot shows. This says which of the three comes first.
+#[derive(Clone, Copy)]
 pub enum ColourOrder {
     RedGreenBlue,
     BlueGreenRed,
 }
 
 // What the kernel knows about the screen.
+#[derive(Clone, Copy)]
 pub struct Screen {
     // Where the screen's memory starts, and how many bytes it is.
     pub memory_start: u64,
@@ -185,9 +187,10 @@ pub fn screen_find(table: *mut SystemTable) -> Result<Screen, &'static str> {
         _ => return Err("found but not usable, its colours are written in a way this kernel does not know"),
     };
 
-    // The memory must hold every row, at four bytes a dot.
+    // The memory must hold every row, at four bytes a dot, and a dot must
+    // begin at an address that four bytes can be written to in one go.
     let needed = row_length as u64 * height as u64 * 4;
-    if memory_start == 0 || width == 0 || height == 0 || row_length < width || memory_size < needed {
+    if memory_start == 0 || memory_start % 4 != 0 || width == 0 || height == 0 || row_length < width || memory_size < needed {
         return Err("found but not usable, the firmware's facts about it do not fit together");
     }
 

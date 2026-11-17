@@ -103,13 +103,16 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The screen
 
-- **Nothing is drawn.** The kernel asks the firmware where the screen's memory is and how large the screen is, keeps the answer and prints one line about it. See [startup.md](startup.md).
-- **The screen's memory may lie above what the page tables cover.** In QEMU it starts at `0x80000000`, inside the covered 4 GB. On another machine it may not, and then it has to be made reachable with `map_device_memory` before the first dot is written.
-- **The screen's memory may lie in ordinary memory.** With QEMU's `ramfb` display it does, in a stretch the firmware set aside. Whether the frame pile could ever hand out those frames was not checked. It takes only memory the map calls free, which should keep it away, but that rests on the firmware's map.
+- **Only filled rectangles can be painted.** There are no letters, lines or pictures, and no app can draw. See [screen.md](screen.md).
+- **Painting is slow.** Filling the screen takes roughly 0.16 s in this kind of build, possibly up to half as much again, at startup with device signals off. Dots are written one at a time, each through a function call; writing a row in one go was measured at twenty times the speed and not kept, for the sake of plain code.
+- **There is one picture and no copy of it.** What is painted shows at once, half-finished drawing included, and nothing remembers what was under a rectangle.
+- **Nothing decides who may draw.** Any code can paint anywhere, and two tasks drawing at once give a mixed picture. Today only startup draws.
+- **The screen's memory may lie in ordinary memory.** With QEMU's `ramfb` display it does, in a stretch the firmware's memory map calls kind 0, "set aside". The frame pile takes only kind 7, and the plan to hand out the firmware's startup memory (kinds 3 and 4, see "Memory") would not touch kind 0 either. This rests on the firmware's map: a firmware that listed the screen's memory as one of those kinds would have it handed out.
+- The screen's memory is device memory and is mapped like ordinary memory; see "Network" for the "do not cache" mark. For a screen, real hardware has a mark of its own that makes many small writes fast, which the kernel does not set either.
 - **Two ways of writing a colour are known:** red, green, blue and blue, green, red, at four bytes a dot. A screen that describes its colours with masks is refused, although it could be used. Only the second order was ever seen.
 - **The screen is taken as the firmware left it.** The kernel does not choose a size, and looks at the first graphics service only, so a machine with two screens shows one.
 - **A screen that can only be drawn on through the firmware's functions is refused.** Those functions are gone after the takeover.
-- The firmware's own text stays on the screen until something paints over it.
+- The picture at startup, a blue screen with an orange rectangle, is a demonstration.
 
 ## Real hardware
 

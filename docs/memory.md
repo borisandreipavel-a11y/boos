@@ -47,6 +47,7 @@ The firmware's map lists stretches of memory, each with a kind:
 - `map_page(address, frame)` makes one 4096-byte page lead to a frame, creating the tables it needs on the way. `table_line` picks a line of a table; `table_below` follows a line down or creates the next table.
 - **`map_page` must not be used inside the range covered by 2 MB pages.** `table_below` would mistake a 2 MB line for a table and corrupt memory.
 - `map_device_memory(address, size)` makes a device's controls reachable, each address leading to itself. Pages inside the self-leading range are skipped, because they are reachable already and `map_page` must not touch them. `COVERED` remembers where that range ends. A device may sit on either side: QEMU puts the network card's controls at `0xc000000000`, far above the range, and another of its fields at `0x81040000`, inside it.
+- The screen's memory is made reachable the same way, by `screen_setup`. In QEMU it starts at `0x80000000`, inside the range, so nothing is changed there.
 - Device memory is mapped like ordinary memory. On real hardware it should also carry the "do not cache" mark, which no code sets yet.
 - Every page is writable and nothing is protected. The firmware left write protection on (`cr0` bit 16), so a page mapped without the writable mark would refuse writes even from the kernel.
 - Nothing is ever unmapped. If that changes, the processor must be told to forget the page (`invlpg`), which no code does yet.

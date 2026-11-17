@@ -34,6 +34,7 @@ mod encryption_values; // The values that check is made against.
 mod provider; // The adapter between the TLS library and the arithmetic.
 mod tls; // The encrypted link.
 mod app_box; // The locked box that apps run in.
+mod screen; // Drawing on the screen.
 
 use alloc::format;
 use alloc::string::String;
@@ -57,6 +58,7 @@ use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
+use screen::{Colour, screen_fill, screen_rectangle, screen_setup};
 use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
 use tasks::{RESTED_TICKS, task_add, task_rest, task_wait};
@@ -138,10 +140,18 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
     }
 
-    // What the firmware said about the screen. Nothing is drawn on it yet.
-    match &screen {
+    // What the firmware said about the screen. If there is one, try it:
+    // paint all of it dark blue, and an orange rectangle in the middle.
+    match screen {
         Ok(screen) => {
             write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
+            screen_setup(screen);
+            screen_fill(Colour { red: 0, green: 40, blue: 90 });
+            // The rectangle is 300 dots across and 200 down. Half the
+            // screen's width less half its own puts it in the middle.
+            let left = (screen.width / 2).saturating_sub(150);
+            let top = (screen.height / 2).saturating_sub(100);
+            screen_rectangle(left, top, 300, 200, Colour { red: 255, green: 150, blue: 0 });
         }
         Err(reason) => {
             write!(serial, "Screen: {}\r\n", reason).ok();

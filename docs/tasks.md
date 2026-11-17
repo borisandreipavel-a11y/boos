@@ -105,6 +105,7 @@ What is protected today:
 Not protected, and fine as long as it stays that way:
 
 - The keyboard's waiting line is taken from by one task only, the main loop.
+- The screen. Two tasks drawing at once would give a mixed picture and nothing worse; see [screen.md](screen.md). Today only startup draws.
 
 ## The demonstration
 
