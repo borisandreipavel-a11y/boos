@@ -35,6 +35,7 @@ mod provider; // The adapter between the TLS library and the arithmetic.
 mod tls; // The encrypted link.
 mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
+mod letters; // The shapes of the letters, drawn by hand.
 
 use alloc::format;
 use alloc::string::String;
@@ -58,7 +59,7 @@ use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
-use screen::{Colour, screen_fill, screen_rectangle, screen_setup};
+use screen::{Colour, screen_fill, screen_rectangle, screen_setup, screen_text};
 use segments::load_segment_table;
 use serial::{Serial, serial_print, serial_setup};
 use tasks::{RESTED_TICKS, task_add, task_rest, task_wait};
@@ -141,7 +142,8 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     }
 
     // What the firmware said about the screen. If there is one, try it:
-    // paint all of it dark blue, and an orange rectangle in the middle.
+    // paint all of it dark blue, an orange rectangle in the middle, and a
+    // sentence in white near the top left corner.
     match screen {
         Ok(screen) => {
             write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
@@ -152,6 +154,8 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             let left = (screen.width / 2).saturating_sub(150);
             let top = (screen.height / 2).saturating_sub(100);
             screen_rectangle(left, top, 300, 200, Colour { red: 255, green: 150, blue: 0 });
+            // The 2 makes every dot of a letter a block of 2 by 2 dots.
+            screen_text(40, 40, "Hello from my kernel! I draw my own letters now.", 2, Colour { red: 255, green: 255, blue: 255 });
         }
         Err(reason) => {
             write!(serial, "Screen: {}\r\n", reason).ok();

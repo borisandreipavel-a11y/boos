@@ -1,7 +1,8 @@
-//! Drawing on the screen: filling it, and filled rectangles.
+//! Drawing on the screen: filling it, filled rectangles, and text.
 //! Notes: `docs/screen.md`.
 
 use crate::firmware::{ColourOrder, Screen};
+use crate::letters::{LETTER_WIDTH, letter_shape};
 use crate::page_tables::map_device_memory;
 use crate::processor::device_write_32;
 
@@ -64,6 +65,36 @@ pub fn screen_rectangle(left: u32, top: u32, width: u32, height: u32, colour: Co
         for x in left..right {
             device_write_32(row + x as u64 * 4, value);
         }
+    }
+}
+
+// Writes one line of text. `left` and `top` say where the top left corner of
+// the first sign goes. `size` says how large a dot of a letter is painted:
+// with 1 it is one dot of the screen, with 2 a block of 2 by 2 dots, and so
+// on, which makes the letters twice as large. Only the dots of the letters
+// are painted. What lies between them stays as it was.
+pub fn screen_text(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
+    let mut sign_left = left;
+    for sign in text.chars() {
+        // Go through the sign's picture row by row, and paint a small
+        // square for every `#` in it.
+        let shape = letter_shape(sign);
+        for (row, dots) in shape.iter().enumerate() {
+            for (column, dot) in dots.iter().enumerate() {
+                if *dot == b'#' {
+                    // (`saturating_mul` and `saturating_add` stop at the
+                    // largest number instead of wrapping round. A square
+                    // that lands outside the screen is not painted:
+                    // `screen_rectangle` sees to that.)
+                    let square_left = sign_left.saturating_add(size.saturating_mul(column as u32));
+                    let square_top = top.saturating_add(size.saturating_mul(row as u32));
+                    screen_rectangle(square_left, square_top, size, size, colour);
+                }
+            }
+        }
+        // The next sign starts one sign's width further right, plus one
+        // empty column so that the signs do not touch.
+        sign_left = sign_left.saturating_add(size.saturating_mul(LETTER_WIDTH + 1));
     }
 }
 

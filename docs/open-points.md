@@ -103,7 +103,10 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The screen
 
-- **Only filled rectangles can be painted.** There are no letters, lines or pictures, and no app can draw. See [screen.md](screen.md).
+- **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures, and no app can draw. See [screen.md](screen.md).
+- **Text is one line of plain English signs.** Nothing wraps round at the right edge, a line break is not understood, and every sign outside the 95 plain ones, a letter with an accent among them, shows as an empty box. The letters have one shape and one thickness; larger text is the same shapes with bigger dots.
+- **The kernel's own lines do not appear on the screen.** They go to the serial port only, so a machine without one shows the picture and says nothing.
+- **Nothing remembers what is written where.** Text cannot be taken off again except by painting over it, and there is no place on the screen that scrolls.
 - **Painting is slow.** Filling the screen takes roughly 0.16 s in this kind of build, possibly up to half as much again, at startup with device signals off. Dots are written one at a time, each through a function call; writing a row in one go was measured at twenty times the speed and not kept, for the sake of plain code.
 - **There is one picture and no copy of it.** What is painted shows at once, half-finished drawing included, and nothing remembers what was under a rectangle.
 - **Nothing decides who may draw.** Any code can paint anywhere, and two tasks drawing at once give a mixed picture. Today only startup draws.
@@ -112,7 +115,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Two ways of writing a colour are known:** red, green, blue and blue, green, red, at four bytes a dot. A screen that describes its colours with masks is refused, although it could be used. Only the second order was ever seen.
 - **The screen is taken as the firmware left it.** The kernel does not choose a size, and looks at the first graphics service only, so a machine with two screens shows one.
 - **A screen that can only be drawn on through the firmware's functions is refused.** Those functions are gone after the takeover.
-- The picture at startup, a blue screen with an orange rectangle, is a demonstration.
+- The picture at startup, a blue screen with an orange rectangle and one sentence, is a demonstration.
 
 ## Real hardware
 
