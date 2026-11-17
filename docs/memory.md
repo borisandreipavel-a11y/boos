@@ -74,7 +74,7 @@ Known limits:
 
 - `alloc` is the part of Rust's own library with `Vec` (a list) and `String` (a text). It ships with Rust next to `core`; nothing is downloaded and `Cargo.toml` is unchanged.
 - `KernelHeap` with `#[global_allocator]` in `heap.rs` is the thin layer that connects it: `alloc` calls `heap_take` and `heap_give_back` by itself.
-- To drop `alloc` again: remove `extern crate alloc;`, the `use alloc::...` lines, the heap demonstration and the `format!` in the demonstration tasks in `main.rs`, and the `KernelHeap` block in `heap.rs`. `heap_take` and `heap_give_back` work without it; task stacks already come straight from them.
+- The network stack needs `alloc`, so it can no longer be dropped without dropping the stack too. `heap_take` and `heap_give_back` themselves work without it; task stacks come straight from them.
 
 ## Protection against task switches
 

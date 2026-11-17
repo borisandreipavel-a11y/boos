@@ -7,6 +7,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU and r
 ## Build and run
 
 - `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
+- The very first build on a computer fetches six small crates from crates.io, so it needs the internet once. After that, building works without it. The network stack itself is not fetched; it is a copy in `vendor/`.
 - `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, a virtio network card on QEMU's built-in network, the UEFI firmware file, the `esp` folder as a disk, and the serial port connected to the terminal.
 - The kernel's output appears in the terminal, not in the QEMU window. Keys are typed in the QEMU window, not in the terminal.
 - What a normal boot prints is listed in [startup.md](startup.md).
@@ -58,7 +59,8 @@ Other QEMU options that proved useful:
 | `-m 64M`, `-m 512M` | Other memory sizes (a later `-m` overrides the first) |
 | `-machine pc,max-ram-below-4g=128M` | Puts the rest of the guest's memory above 4 GB, without needing a large guest |
 | `-machine pc,i8042=off` | A machine without a keyboard controller |
-| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records two: the gateway question and its answer |
+| `-object filter-dump,id=dump0,netdev=net0,file=<path>` | Records every packet on the card's network in a file (pcap format: a 24-byte header, then each packet behind a 16-byte header whose third 4-byte field is the packet's length). A file of 24 bytes means no packet passed. A normal boot records six: the by-hand gateway question and its answer, then the four packets of the address request |
+| `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` | QEMU's built-in network with other addresses, to show that the kernel's address is given and not assumed |
 | `-device virtio-net-pci` with no `-netdev` | A card attached to nothing, so nobody can answer |
 | `-net none` in place of the `-netdev` and `-device` options | A machine without a network card |
 | `-device virtio-net-pci-non-transitional,netdev=net0` | The virtio card that knows only the newer way of working (model `1041`) |
@@ -110,7 +112,13 @@ A panic line names the file the panic is in, so the file name changes when code 
 - **`powershell -File script.ps1 -Keys a,b,c`** passes `a,b,c` as one string. Use `powershell -Command "& 'script.ps1' -Keys a,b,c"` to pass a list.
 - **Memory on the host.** The frame pile writes to every free frame at startup, so the host must really provide all of the guest's memory. On a host with about 1 GB free, guests were kept at 512 MB or less.
 - **Timing in windowless runs.** The kernel's clock counts timer signals. In some windowless runs, lines meant to be 1.0 s apart came 1.56 s apart, and in other runs of the same kernel exactly 1.0 s. The kernel before the memory work and the one after it showed the same 1.0 s when compared side by side, so the kernel is not the cause. The factor matches Windows' default timer step of 15.6 ms: QEMU then delivers at most 64 timer signals a second where the kernel asks for 100. The likely reason is that Windows does not give a hidden program its finer timer. Judge timing by a run with a visible QEMU window, and judge order by tick counts, which do not depend on it.
-- **The linker blocked once.** One build stopped with "An Application Control policy has blocked this file" for `rust-lld`. The same build worked when run again, and nothing was changed in between.
+- **Windows can refuse to run freshly compiled programs.** With Smart App Control switched on, Windows only runs programs that are signed or that Microsoft recognises. A build then stops with "An Application Control policy has blocked this file (os error 4551)" when it hits one that is neither.
+  - A crate's build script is such a program: cargo compiles it and runs it on the spot. With smoltcp taken from crates.io, the build script of `heapless` was blocked on every one of four tries. That is why the two crates with build scripts are kept as copies without them; see `vendor/README.md`.
+  - The verdict is not predictable. In a temporary folder the same kind of build script had been let through, and Rust's own linker, `rust-lld`, was blocked once and never again.
+  - Windows records each block in its Code Integrity log (`Microsoft-Windows-CodeIntegrity/Operational`, events 3033 and 3077), with the file's name.
+  - Do not switch the protection off and do not try to slip a program past it. Find a way that runs no such program.
+  - If the linker is blocked, running the build again has worked.
+- **`cargo` may fetch more than a build uses.** Asked for smoltcp from crates.io, cargo downloaded 17 crates where the build used 8. The other nine were optional parts for a logging system, pulled in by one line in smoltcp's settings. `cargo tree` shows what a build uses; `Cargo.lock` shows what cargo will fetch. Check both before taking in a crate.
 
 ## What has been verified
 
@@ -209,6 +217,21 @@ All of it in QEMU 11.1 with its UEFI firmware, on Windows, on 2026-11-16 and 202
 - The task lines, the key echo and a page-fault report still work. It boots with 64 MB and 512 MB. Fifteen boots in a row each showed the gateway's answer.
 - A person ran `run.bat` and saw the line with the gateway's answer.
 - Not verified: a packet other than the answer arriving first (none ever did, so the passing-over was never exercised), more than 16 packets arriving before the kernel looks, packets longer than the question, more than one packet waiting to be sent, a card that hands back a description the driver did not lend, and any real hardware.
+
+**The network stack and the address it is given**
+
+- The kernel prints the address it was given, `10.0.2.15`, and who gave it, `10.0.2.2`.
+- A recording of a whole boot holds six packets: the by-hand question and answer, then the kernel asking everybody for an address, the server's offer of `10.0.2.15`, the kernel's request, and the server's confirmation of `10.0.2.15`. The printed address is the confirmed one.
+- On another network (`192.168.76.0`, handing out from `.9`) the kernel prints `192.168.76.9`, given by `192.168.76.2`. So the address is given, not assumed. The by-hand gateway question, which does assume, prints "did not answer" there.
+- With the card attached to nothing, no address line is printed, nothing floods the output, and the boot goes on.
+- Renewal: with the address made to run out after 10 seconds, the stack renewed it every 5 seconds, eight times in 40 seconds. The address line was printed once, the free-frame count did not move, and the processor rested through 3,996 of 3,999 ticks.
+- The network stack's task used 8,696 bytes of its 64 KB stack. Its start number differed between two boots.
+- With the stack running: two tasks hammering the heap found no wrong value, two tasks printing 11,574 lines at once tore none, 60 short tasks ended cleanly, and a failure inside a task and a page fault print their reports. Keys are echoed while tasks wait. It boots with 64 MB and 512 MB, and with the newer-only card. Fifteen boots in a row each showed the address line.
+- QEMU used 0.23 s of processor time while the tasks were at work and 0.02 s in five idle seconds, so looking at the stack once per tick costs next to nothing.
+- The build: no program compiled along the way is run, Windows recorded no block, and `Cargo.lock` names eight crates besides the kernel, two of them the copies.
+- Each file of the two copies was compared with the crate as downloaded: 131 of 135 are identical, three were edited, and one was added. `vendor/README.md` lists the edits.
+- A person ran `run.bat`, which built the kernel with the copies, and saw the line with the given address.
+- Not verified: an address being lost, more than one address source, a network that answers slowly or wrongly, anything that uses the address (connections, names), and any real hardware.
 
 **The split into files**
 

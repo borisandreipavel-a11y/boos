@@ -1,8 +1,8 @@
 # The network: the PCI list and the network card
 
-Code: `src/pci.rs`, `src/network_card.rs`, `src/network.rs`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
+Code: `src/pci.rs`, `src/network_card.rs`, `src/network.rs`, and the network stack in `vendor/`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
 
-So far the kernel finds the network card, sets it up, and can send and receive single packets through it. On top of that it asks one question by hand at startup: who is the gateway. It has no network address of its own and no network stack yet.
+So far the kernel finds the network card, sets it up, and sends and receives packets through it. At startup it asks one question by hand: who is the gateway. After that a network stack, smoltcp, takes over in a task of its own and gets the kernel a network address. Nothing uses that address yet: there are no connections and no name lookups.
 
 ## The PCI list
 
@@ -108,7 +108,38 @@ How the three areas are laid out, as the driver uses them:
 - It runs at startup with device signals off, so the tick count stands still and cannot time the wait. The wait is bounded by looks instead: 2,000,000 (`LOOKS`), about a second in QEMU. The real answer needed 32 looks on average and 283 at most.
 - `efi_main` prints the gateway's hardware address, `52:55:0a:00:02:02` in QEMU, or that the gateway did not answer.
 
-This by-hand code is a demonstration. A network stack will ask such questions itself.
+This by-hand code is a demonstration from before the network stack. The stack asks such questions itself, for whatever address it needs, and does not use this code. On a network that is not `10.0.2.0` the by-hand question gets no answer and prints so, while the stack carries on unharmed.
+
+## The network stack
+
+The rules of the network (getting an address, finding other machines, keeping connections going) are not written in this kernel. They come from smoltcp, version 0.14.0, a network stack made for systems without an operating system underneath. It is the only code here that was not written for this kernel. It is kept as a copy in `vendor/`, and [vendor/README.md](../vendor/README.md) says why and what was changed in the copy.
+
+`Cargo.toml` switches smoltcp's default features off, because they need an operating system. Four are switched on: `alloc` (it may use the kernel's heap), `medium-ethernet`, `proto-ipv4` and `socket-dhcpv4` (asking the network for an address). The feature `socket-tcp-cubic` must stay off: it uses floating point.
+
+smoltcp needs three things from the kernel, all in `network.rs`:
+
+- **A way to send and receive packets.** `Card` is the adapter over the driver. smoltcp describes what it needs as a trait called `Device`, and `impl Device for Card` provides it.
+  - `receive` looks once with `network_card_receive`. If a packet has arrived, it hands smoltcp an `ArrivedPacket` holding it, together with a `PacketToSend`.
+  - `transmit` always hands out a `PacketToSend`. When smoltcp uses it, it says how long the packet is and writes it, and `network_card_send` sends it.
+  - `capabilities` says: Ethernet, at most 1514 bytes per packet, one packet at a time. smoltcp counts the 14 bytes that start every Ethernet packet as part of that length.
+  - Both kinds of packet live on the heap, so they take almost no room on the task's stack.
+- **The time.** `now()` gives milliseconds since the kernel started, from the tick count. It moves in steps of 10.
+- **Somebody who calls it regularly.** `network_task` calls `Interface::poll` once per tick and then waits one tick. The card sends no signals, so looking again is the only way to notice a packet.
+
+Also:
+
+- **The start number.** smoltcp wants a number that differs at every start of the kernel, for picking port numbers and the like. `time_stamp()` in `processor.rs` gives the processor's count of its own steps, which did differ between boots. smoltcp's documentation says the number need not be secret. It is not, and it would not do for encryption.
+- **`network_start(card_address)`** is called from `efi_main` once the card is set up. It keeps the card's address and adds the task. With no card, or a card that could not be set up, the stack is not started.
+- The task uses about 8.7 KB of its 64 KB stack. smoltcp's own objects are small: the interface is 392 bytes.
+
+## Getting an address
+
+- The stack asks the network for an address by itself (the address request, DHCP). `network_task` adds one "socket" for that, `dhcpv4::Socket`, and after each `poll` asks it for news.
+- The exchange is four packets: the kernel asks everybody, a server offers an address, the kernel requests that address, the server confirms.
+- On "given an address": the task tells smoltcp to use that address, sets the gateway as the place to send packets for the outside, and prints `Network: this machine was given the address 10.0.2.15 by 10.0.2.2`.
+- The first news is always "no address", before anything was asked. Nothing is printed for it. A line is printed only when an address arrives, and one more if an address the kernel had is lost.
+- An address is lent for a time. smoltcp renews it by itself, half-way through, and reports nothing as long as the address stays the same.
+- If nobody answers, smoltcp keeps asking quietly. Nothing is printed and the kernel carries on.
 
 The monitor shows the card's side of all this: `info virtio` lists the card's path, `info virtio-status <path>` shows the handshake's marks and the features in use, and `info virtio-queue-status <path> <line>` shows a line's length and the addresses of its three areas.
 
@@ -117,9 +148,10 @@ The monitor shows the card's side of all this: `info virtio` lists the card's pa
 `run.bat` attaches the card to QEMU's built-in network (`-netdev user`). QEMU plays a small network of its own and passes traffic on through the host computer:
 
 - the network is `10.0.2.0` and the card's own address is `52:54:00:12:34:56`, as the monitor's `info network` shows;
-- the gateway is at `10.0.2.2`, with the hardware address `52:55:0a:00:02:02`; it answered the kernel's question. By QEMU's documentation a name server is at `10.0.2.3`; the kernel has not talked to it;
+- the gateway is at `10.0.2.2`, with the hardware address `52:55:0a:00:02:02`; it answered the kernel's question. It also answers the address request, and hands out `10.0.2.15` first. By QEMU's documentation a name server is at `10.0.2.3`; the kernel has not talked to it;
+- the network can be changed for a test: `-netdev user,id=net0,net=192.168.76.0/24,dhcpstart=192.168.76.9` made the kernel print `192.168.76.9`, given by `192.168.76.2`;
 - nothing outside can reach the kernel; only what the kernel sends out gets answers.
 
 With the card attached, the firmware uses a little more memory during startup, and "Free memory" reads 205 MB instead of 206.
 
-A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records exactly two: the kernel's question and the gateway's answer. The option for that is in [testing.md](testing.md). The recording shows what passes between the card and QEMU's network. The gateway is QEMU itself, which answers the question on its own; the recording cannot show what QEMU passes on to the host's real network.
+A boot with QEMU recording every packet on that network, from the firmware's start to three seconds after the kernel's prompt, records exactly six: the kernel's by-hand question and its answer, then the four packets of the address request. The option for that is in [testing.md](testing.md). The recording shows what passes between the card and QEMU's network. The gateway is QEMU itself, which answers the question on its own; the recording cannot show what QEMU passes on to the host's real network.

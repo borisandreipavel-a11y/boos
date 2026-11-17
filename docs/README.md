@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. It can send and receive single packets, and at startup it asks the network one question by hand. It has no network address and no network stack yet.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. Nothing uses that address yet.
 
 ## Read in this order
 
@@ -43,7 +43,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `tasks.rs` | Tasks: `switch_entry!` (the switch, for the timer and for a task stepping aside), the list of tasks, `task_add`, `task_wait`, `task_rest` | [tasks.md](tasks.md) |
 | `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_memory_address` | [network.md](network.md) |
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
-| `network.rs` | The first words on the network, by hand: `gateway_ask` | [network.md](network.md) |
+| `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, `network_task` | [network.md](network.md) |
 
 Which file uses which:
 
@@ -55,9 +55,12 @@ Which file uses which:
 - `interrupts.rs` uses `faults.rs`, `controller.rs`, `tasks.rs`, `keyboard.rs`, `segments.rs`, `processor.rs`.
 - `frames.rs` uses `firmware.rs`. `page_tables.rs` uses `frames.rs` and `processor.rs`. `heap.rs` uses `frames.rs`, `page_tables.rs` and `processor.rs`.
 - `tasks.rs` uses `heap.rs`, `timer.rs`, `segments.rs` and `processor.rs`.
-- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`.
+- `pci.rs` uses `processor.rs`. `network_card.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs` and `processor.rs`. `network.rs` uses `network_card.rs`, `tasks.rs`, `timer.rs`, `serial.rs`, `processor.rs` and the crate smoltcp.
 
 Outside `src/`:
+
+- `vendor/` holds copies of the two crates that were not written for this kernel: smoltcp, the network stack, and heapless, which it needs. `vendor/README.md` says where they came from and what was changed. Their text is other people's and does not follow the conventions below.
+- `Cargo.toml` names smoltcp as the one dependency and points cargo at the copies. `Cargo.lock` lists eight crates besides the kernel.
 
 - `.cargo/config.toml` sets the build target to `x86_64-unknown-uefi`.
 - `run.bat` builds, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a virtio network card on QEMU's built-in network.
@@ -70,7 +73,8 @@ The code is written to be readable without a background in kernels: plain words,
 **Rust and dependencies**
 
 - Stable Rust, edition 2024 (hence `#[unsafe(no_mangle)]` and `#[unsafe(naked)]`), `#![no_std]`, `#![no_main]`.
-- No external crates: `Cargo.toml` has no dependencies. `core` and `alloc` are used; both ship with Rust, so nothing is downloaded. Ask the owner before adding any dependency or tool.
+- One outside crate, smoltcp, the network stack, and the seven crates it needs. Two of the eight are kept as copies in `vendor/`; six small ones are fetched from crates.io the first time the kernel is built. Everything else is written for this kernel. `core` and `alloc` ship with Rust. Ask the owner before adding any dependency or tool.
+- No crate may run a build script. The building computer refuses to run programs that were compiled a moment ago (see `vendor/README.md`), so a crate that has one can only come in as a copy with the script taken out.
 - The `x86_64-unknown-uefi` target has no SSE (it uses soft-float), so code never touches the SSE registers. Several pieces rely on that; see [interrupts.md](interrupts.md).
 
 **Words**

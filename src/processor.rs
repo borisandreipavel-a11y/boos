@@ -54,6 +54,14 @@ pub fn device_write_32(address: u64, value: u32) {
     unsafe { core::ptr::write_volatile(address as *mut u32, value) };
 }
 
+// The processor counts its own steps from the moment it is switched on. The
+// count is different at every start of the kernel.
+pub fn time_stamp() -> u64 {
+    let (low_half, high_half): (u32, u32);
+    unsafe { asm!("rdtsc", out("eax") low_half, out("edx") high_half) };
+    (high_half as u64) << 32 | low_half as u64
+}
+
 // Switches device signals off and says whether they were on. While they are
 // off nothing can interrupt the running code, so no other task gets a turn.
 pub fn signals_off() -> bool {

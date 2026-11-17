@@ -41,7 +41,7 @@ use firmware::{SystemTable, print, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
-use network::gateway_ask;
+use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
 use page_tables::{GIGABYTE, page_tables_setup};
 use processor::stop;
@@ -135,6 +135,9 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                         write!(serial, "Network: the gateway 10.0.2.2 did not answer\r\n").ok();
                     }
                 }
+
+                // From here on the network stack does the talking, in a task of its own.
+                network_start(address);
             }
             Err(reason) => {
                 write!(serial, "Network card: not set up, because {}\r\n", reason).ok();

@@ -4,3 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# The network stack: the only code in this kernel that was not written for it.
+# Its default features are switched off because they need an operating system
+# underneath. The ones switched on: it may use the kernel's heap, it speaks to
+# an Ethernet card, it speaks the internet's protocol, and it can ask the
+# network for an address. See docs/network.md.
+smoltcp = { version = "0.14.0", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-dhcpv4"] }
+
+# Two crates are not fetched from the internet. Cargo is told to use the copies
+# kept in vendor/ instead, which need no helper program at build time. See
+# vendor/README.md.
+[patch.crates-io]
+smoltcp = { path = "vendor/smoltcp" }
+heapless = { path = "vendor/heapless" }

@@ -25,10 +25,16 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Network
 
-- The kernel can send and receive single packets, and asks one question by hand. It has no network address of its own and no network stack: no connections, no names, no encryption.
-- The gateway question assumes the kernel's network address (`10.0.2.15`) instead of being given one.
+- The kernel has a network stack and is given an address, but nothing uses them yet: no connections, no name lookups, no encryption. The stack's features for those are switched off in `Cargo.toml`.
+- The by-hand gateway question is still asked at startup, with an assumed address (`10.0.2.15`) and gateway (`10.0.2.2`). The stack does not need it. It could go.
+- The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption.
+- The stack's clock is the tick count, in steps of 10 ms, and runs slow when timer signals come late.
+- The stack is looked at once per tick whether or not anything happened, because the card sends no signals. smoltcp can say how long it may be left alone (`poll_delay`); that is not used.
+- Only the stack's own task may touch it. There is no way yet for another task to ask it for something.
+- The copies in `vendor/` do not update by themselves, and smoltcp's limits are fixed in a file; see `vendor/README.md`.
 - Waiting for the gateway's answer is counted in looks, not in time, because it happens at startup with signals off. Tasks can wait for a time now, so network code that runs in a task should use that instead.
-- There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. At startup that harms nothing, but once a task sends packets it breaks the rule to keep such stretches short: ticks and keys would wait too.
+- There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. The network stack's task sends packets now, so this breaks the rule to keep such stretches short: if the card ever were slow to take a packet, ticks and keys would wait too. In QEMU the card has always taken each packet at once, and the wait was never seen to be long.
+- If the driver refuses to send a packet, the network stack is not told: its adapter ignores the driver's answer. The stack only finds out because no reply comes, and asks again.
 - Sixteen frames are lent for arriving packets. If more arrive before the kernel looks, the card has nowhere to put them and they are lost.
 - Only virtio cards are recognised, and only through the newer way of working. Real PCs have cards of other makes, each needing its own driver.
 - The card is told not to send signals, so nothing announces an arriving packet; code has to keep looking. The card's signal line (11 in QEMU) is on the second chip of the interrupt controller; the kernel holds that chip back entirely, and `signal_done` tells only the first chip. Listening to the card by signal needs all three changed.

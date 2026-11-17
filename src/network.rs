@@ -1,7 +1,24 @@
-//! The kernel's first words on the network, put together by hand: asking who
-//! the gateway is. Notes: `docs/network.md`.
+//! The network: one question put together by hand, and then the network
+//! stack that does everything else. Notes: `docs/network.md`.
+
+use alloc::format;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
+
+use smoltcp::iface::{Config, Interface, SocketSet};
+use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
+use smoltcp::socket::dhcpv4;
+use smoltcp::time::Instant;
+use smoltcp::wire::{EthernetAddress, IpCidr};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
+use crate::processor::time_stamp;
+use crate::serial::serial_print;
+use crate::tasks::{task_add, task_wait};
+use crate::timer::{TICKS, TICKS_PER_SECOND};
+
+// ---------- The first question, by hand ----------
 
 // Every machine on a network has two addresses. Its hardware address (6
 // bytes) belongs to its network card. Its network address (4 bytes, written
@@ -59,4 +76,164 @@ pub fn gateway_ask(card_address: [u8; 6]) -> Option<[u8; 6]> {
         }
     }
     None
+}
+
+// ---------- The network stack ----------
+
+// From here on the work is done by smoltcp, a network stack that was not
+// written for this kernel (see `vendor/README.md`). It knows the rules of the
+// network: how to get an address, how to find other machines, how to keep a
+// connection going. It needs three things from the kernel: a way to send and
+// receive packets, the time, and somebody who calls it regularly.
+
+// The way to send and receive packets: an adapter over the network card's
+// driver. smoltcp describes what it needs as a "trait", a list of functions
+// that a type has to offer, and `impl Device for Card` offers them.
+struct Card;
+
+// smoltcp hands packets over as "tokens": a token for an arrived packet holds
+// that packet, and a token for sending is the permission to send one.
+struct ArrivedPacket {
+    bytes: Vec<u8>,
+}
+
+struct PacketToSend;
+
+impl Device for Card {
+    // The `'a` is a lifetime: a label for how long a borrowed thing stays
+    // valid. smoltcp's trait asks for it. These tokens borrow nothing, so it
+    // plays no part here.
+    type RxToken<'a>
+        = ArrivedPacket
+    where
+        Self: 'a;
+    type TxToken<'a>
+        = PacketToSend
+    where
+        Self: 'a;
+
+    // Asked on every call whether a packet has arrived. If one has, smoltcp
+    // gets it, together with the permission to send an answer.
+    fn receive(&mut self, _now: Instant) -> Option<(ArrivedPacket, PacketToSend)> {
+        let mut room = [0u8; LONGEST_PACKET];
+        // The `?` means: if nothing has arrived, answer "nothing" right away.
+        let length = network_card_receive(&mut room)?;
+        Some((ArrivedPacket { bytes: room[..length].to_vec() }, PacketToSend))
+    }
+
+    // Asked whenever smoltcp wants to send. The card always takes a packet.
+    fn transmit(&mut self, _now: Instant) -> Option<PacketToSend> {
+        Some(PacketToSend)
+    }
+
+    // What the card can do: it is an Ethernet card, a packet is at most 1514
+    // bytes long, and packets go out one at a time.
+    fn capabilities(&self) -> DeviceCapabilities {
+        let mut capabilities = DeviceCapabilities::default();
+        capabilities.medium = Medium::Ethernet;
+        capabilities.max_transmission_unit = LONGEST_PACKET;
+        capabilities.max_burst_size = Some(1);
+        capabilities
+    }
+}
+
+impl RxToken for ArrivedPacket {
+    // smoltcp passes in a piece of its own code (a "closure", a function
+    // handed over as a value) that reads the packet.
+    fn consume<R, F>(self, read_it: F) -> R
+    where
+        F: FnOnce(&[u8]) -> R,
+    {
+        read_it(&self.bytes)
+    }
+}
+
+impl TxToken for PacketToSend {
+    // smoltcp says how long the packet will be and passes in a piece of its
+    // own code that writes it. Then the driver sends it.
+    fn consume<R, F>(self, length: usize, write_it: F) -> R
+    where
+        F: FnOnce(&mut [u8]) -> R,
+    {
+        let mut bytes = vec![0u8; length];
+        let result = write_it(&mut bytes);
+        network_card_send(&bytes);
+        result
+    }
+}
+
+// The time as smoltcp wants it: milliseconds since the kernel started. It
+// comes from the tick count, so it moves in steps of 10.
+fn now() -> Instant {
+    Instant::from_millis((TICKS.load(Ordering::Relaxed) * 1000 / TICKS_PER_SECOND) as i64)
+}
+
+// The card's own address, kept for the task below.
+static mut CARD_ADDRESS: [u8; 6] = [0; 6];
+
+// Starts the network stack as a task of its own.
+pub fn network_start(card_address: [u8; 6]) {
+    unsafe { CARD_ADDRESS = card_address };
+    task_add(network_task);
+}
+
+// The somebody who calls smoltcp regularly. Each call lets it take in the
+// packets that have arrived and send the ones it has to send.
+fn network_task() {
+    let mut card = Card;
+    let mut settings = Config::new(EthernetAddress(unsafe { CARD_ADDRESS }).into());
+    // smoltcp wants a start number that differs at every start of the kernel.
+    // The processor's count of its own steps does; it need not be a secret.
+    settings.random_seed = time_stamp();
+    let mut interface = Interface::new(settings, &mut card, now());
+    let mut sockets = SocketSet::new(Vec::new());
+
+    // Ask the network for an address. smoltcp does the asking, and repeats it
+    // when the address is about to run out; this only has to listen for news.
+    let address_request = sockets.add(dhcpv4::Socket::new());
+    let mut has_address = false;
+
+    loop {
+        interface.poll(now(), &mut card, &mut sockets);
+
+        // Any news about the address?
+        match sockets.get_mut::<dhcpv4::Socket>(address_request).poll() {
+            // The network has given this machine an address, or a new one.
+            Some(dhcpv4::Event::Configured(given)) => {
+                interface.update_ip_addrs(|addresses| {
+                    addresses.clear();
+                    addresses.push(IpCidr::Ipv4(given.address)).ok();
+                });
+                // The gateway is where packets for the outside go.
+                match given.router {
+                    Some(gateway) => {
+                        interface.routes_mut().add_default_ipv4_route(gateway).ok();
+                    }
+                    None => {
+                        interface.routes_mut().remove_default_ipv4_route();
+                    }
+                }
+                has_address = true;
+                serial_print(&format!(
+                    "Network: this machine was given the address {} by {}\r\n",
+                    given.address.address(),
+                    given.server.address
+                ));
+            }
+            // There is no address: not yet, or not any more.
+            Some(dhcpv4::Event::Deconfigured) => {
+                interface.update_ip_addrs(|addresses| addresses.clear());
+                interface.routes_mut().remove_default_ipv4_route();
+                if has_address {
+                    has_address = false;
+                    serial_print("Network: this machine's address has run out\r\n");
+                }
+            }
+            None => {}
+        }
+
+        // The card sends no signals, so the only way to notice a packet is to
+        // look again. Looking once per tick costs next to nothing.
+        task_wait(1);
+    }
 }
