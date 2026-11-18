@@ -12,7 +12,7 @@ There are no automated tests. The kernel is verified by booting it in QEMU, read
 - The very first build on a computer fetches 64 crates from crates.io for the kernel, about 3.4 MB, and 8 for the interpreter, about 0.8 MB, so it needs the internet once. After that, building works without it. Seven crates are not fetched; they are copies in `vendor/`. A build of both from nothing takes about 50 seconds, about 20 of them for the interpreter; with nothing changed it takes about a second.
 - `run.bat`, run from the project root, builds both, copies the kernel's file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, a disk controller with the file `disk.img` as its disk, the UEFI firmware file, the `esp` folder as a second disk to boot from, and the serial port connected to the terminal. It makes `disk.img` the first time, 16 MB, with `qemu-img`, which comes with QEMU, and has the script `make-disk.ps1` divide it into parts.
 - **A test boot never uses the project's `disk.img`.** That file holds what was stored on the machine, and every boot with a divided disk file writes to it: the kernel counts its starts there. Make a disk file for the test in a temporary folder (`qemu-img create -f raw <path> 16M`) and name that one in the `-drive` option.
-- The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with one sentence in white, in the middle a light box with an app's text, and along the bottom the chat box. Keys are typed in the QEMU window, not in the terminal, and appear in the chat box; a line sent with Enter is repeated in the terminal with the kernel's answer.
+- The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with one sentence in white, in the middle a light box with a text that a script asked to have shown, and along the bottom the chat box. Keys are typed in the QEMU window, not in the terminal, and appear in the chat box; a line sent with Enter is repeated in the terminal with the kernel's answer.
 - What a normal boot prints is listed in [startup.md](startup.md).
 - A normal boot reaches the internet: the kernel looks up one name and fetches one page over an encrypted link. Test boots that are not about the page should stay off it; see `restrict=on` under "Booting without a window" and "A server on the test computer".
 
@@ -724,6 +724,33 @@ Every check below used a test disk file of its own. The disk file was judged fro
 - The chat box test and the Shift test still pass.
 - Not verified: a script that comes from outside the kernel; a script run from a task, or after startup at all; scripts longer than about 40 lines of real code (the long one was comments); what a script costs with the outside crates built optimized, beyond a trial; a boot that fetches the real page with this kernel.
 - A person ran `run.bat` and saw the script's line in the terminal after the interpreter's line.
+- Checked after the change that brought the first script in: a clean export of it differed from the working files in line ends only and held no disk file and no built file. Both builds ran in the export from nothing, the interpreter in 14 seconds and the kernel in 18, with no warning and no program made along the way, and Windows recorded no block. The exported interpreter was byte for byte the project's and lay inside the exported kernel, which booted to the prompt with the interpreter's line and then the script's, and passed the chat box test.
+
+**A script that shows its text**
+
+- **What the built file is,** read without running it: it asks its host for `kernel.print` and `kernel.show` and nothing else; shows `memory`, `room` and `run`; asks for 5 pages of memory at its start, as before. 764,429 bytes.
+- **The picture.** A picture saved after the whole boot is right in every dot, with "Hello from a Lua script!!!" in the box in the middle: on the machine `run.bat` starts, on screens of 800 by 600 and 1024 by 768, with `-cpu max` and with 96 MB. As a control the same pictures were compared with the text the hand-made app shows: 744 dots differ each time, so the comparison can tell the two texts apart.
+- **The lines.** `Interpreter: a program of 764429 bytes ...`, then `App: Hello from a Lua script!!!`, on those machines and on five more: no display card (the script prints its line and carries on, nothing is shown), no network card, no disk, 128 MB, 512 MB, 2 GB. Every line ends in bytes 13 and 10 and no byte is anything but plain text.
+- **Time.** Three boots each of the kernel from before this change and the new one, turn about: from the greeting app's line to the line after the script's, 6.6 to 9.4 seconds before and 7.0 to 7.7 seconds now. The showing itself, with its painting, is a few hundredths of a second, and the difference between the two kernels is smaller than what the test computer varies by from boot to boot.
+- **Nineteen scripts that show in odd ways,** through `script_run` by a temporary file, each judged by how it ended and what it printed:
+  - a text of exactly 40 signs is shown, and the script goes on;
+  - a text of 41 signs: `it asked to show a text that is too long`. What the script showed and printed before stays; nothing after it runs;
+  - the same inside `pcall`: stopped all the same, and the line the script would have printed after "rescuing" itself did not appear;
+  - twenty showings in a row run; the twenty-first is stopped with `it showed too many texts`;
+  - a whole number, a number with a point, `nil`, `true`, a table, nothing at all, and two texts at once: each runs. Three of them were booted once more as the last showing, and the picture looked at: a whole number shows as `42`, a number with a point as `4.5`, and nothing at all as `nil`, every dot right. What stood in the box for `true`, a table and two texts was not looked at;
+  - an empty text runs;
+  - twenty letters with an accent, 40 bytes, are shown; twenty-one, 42 bytes, stop the script as too long;
+  - a showing followed by a mistake: the kernel reports the mistake, and what was shown stays;
+  - a script that takes `show` away from itself runs;
+  - three showings one after another: a picture saved afterwards is right in every dot with the third text, `the last one shown, by number 42`, in the box.
+- Before `show` turned what it is given into text, the same cases with a number, `nil`, `true` and a table stopped the script with `Lua stopped: string expected, got number` and the like; that was changed.
+- **The well-behaved scripts again:** the 28 scripts of the change before were run through the new file and printed the same 70 lines.
+- **Stack:** 54,824 bytes at the startup place for the greeting, which now paints the box from inside the script's run, and the same for six other scripts. The deepest point of a script's run did not move when the script began to paint.
+- A break made on purpose: the kernel with the new script, built in a copy of the project with the interpreter from one change earlier, which knows no `show`. The check passed with that file's byte count; the script printed its line and was then stopped (`App: Lua stopped: [string "app"]:6: attempt to call a nil value (global 'show')`, then `Interpreter: the script was stopped, because the script made a mistake, which is told in the line before`); the kernel carried on; and the picture held the hand-made app's text in every dot and differed from the script's in 744.
+- The chat box test and the Shift test still pass; the pictures they compare with now hold the script's text in the box.
+- The temporary file was taken out again, and `main.rs` compared with its state before by a check value.
+- Not verified: what a script shows on a screen smaller than 800 by 600; a script that shows from a task or after startup; a boot that fetches the real page.
+- A person ran `run.bat` and saw the script's text in the box in the middle of the QEMU window.
 
 **The split into files**
 

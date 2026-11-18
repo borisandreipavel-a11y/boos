@@ -65,7 +65,7 @@ An app can ask the kernel to show a text on the screen (`kernel.show`, see [box.
 
 `efi_main` tries the screen right after printing the screen line: it fills the screen with dark blue (red 0, green 40, blue 90) and writes one sentence in white, at size 2, with its top left corner 40 dots from the left and 40 from the top: "Hello from my kernel! I draw my own letters now." The firmware's own text, "Hello from my kernel!" among it, is painted over by the fill. Right after the sentence, `chat_setup` paints the chat box along the bottom; [chat.md](chat.md) says where it sits and how it looks.
 
-A little later, after the encryption line, an app in the box asks for its text to be shown, and the panel appears in the middle of the screen with "Hello from an app in the box" in it. On QEMU's usual screen of 1280 by 800 dots the panel covers columns 380 to 899 and rows 370 to 429, and its text begins at column 400, row 391.
+A little later, after the encryption line, an app in the box asks for its text to be shown, and the panel appears in the middle of the screen with "Hello from an app in the box" in it. On QEMU's usual screen of 1280 by 800 dots the panel covers columns 380 to 899 and rows 370 to 429, and its text begins at column 400, row 391. Some seconds after that a script, run by the interpreter in the box, asks for its own text to be shown, and the panel is painted again with "Hello from a Lua script!!!" in it; that is the text that stays. See [interpreter.md](interpreter.md).
 
 The sentence is a demonstration and can go when something better shows that drawing works. An orange rectangle that used to be painted in the middle was such a demonstration and went when the panel came.
 

@@ -4,14 +4,14 @@ Code: the folder `interpreter/` (a program of its own, not part of the kernel), 
 
 Apps are going to be written as text in the language Lua. The kernel does not understand Lua, and it should not: a program that reads text written by somebody else is a large piece with many places for a mistake. So the understanding is done by a program that itself runs inside the locked box (see [box.md](box.md)), where a mistake in it can harm only the one app it is running. That program is the interpreter.
 
-**Today the kernel carries the interpreter, sees at startup that the box would take it, and has it run one script that is written by hand and kept in the kernel.** A script can ask for one thing: to print a line. Nothing can hand the kernel a script from outside yet.
+**Today the kernel carries the interpreter, sees at startup that the box would take it, and has it run one script that is written by hand and kept in the kernel.** A script can ask for two things: to print a line, and to show a text on the screen. Nothing can hand the kernel a script from outside yet.
 
 ## The words
 
 - A **script** is a program kept as text, as a person would write it: `count = count + 1`.
 - An **interpreter** is a program that reads such text and carries it out.
 - **Lua** is a small language made to be put inside other programs. Its makers are at PUC-Rio, a university in Rio de Janeiro; their own interpreter is written in C.
-- **WebAssembly** is the form of program the box runs; see [box.md](box.md). The interpreter is one such program, 761,902 bytes long.
+- **WebAssembly** is the form of program the box runs; see [box.md](box.md). The interpreter is one such program, 764,429 bytes long.
 
 So three things are stacked: the kernel runs the box, the box runs the interpreter, and the interpreter runs an app's script.
 
@@ -35,13 +35,14 @@ Why this one, from a comparison and a trial made on 2026-11-18:
 
 ## The program
 
-`interpreter/src/lib.rs` is the small piece between omnilua and the kernel, about 100 lines.
+`interpreter/src/lib.rs` is the small piece between omnilua and the kernel, about 140 lines.
 
-- **It asks the kernel for one thing:** `print` of `kernel`, the system API's call for printing a text.
+- **It asks the kernel for two things,** the whole of the system API: `print` of `kernel`, which prints a text as a line, and `show` of `kernel`, which shows a text on the screen.
 - **It shows the outside three things:** its `memory`, and two functions.
   - **`room(length)`** makes room for a script of `length` bytes and gives back where in the program's memory the kernel should write it.
   - **`run(length)`** carries out the script that was written there and gives back a number: 0 if the script ran to its end, 1 if not. A script that cannot be carried out to its end, because of a mistake in how it is written or one that turns up while it runs, is reported as a printed line that begins `Lua stopped:`. Either way `run` itself ends in the ordinary way.
 - **Lua's own `print` is replaced.** The original writes to a screen that a program in the box does not have. The replacement is seven lines of Lua kept in the program: it joins what it is given and hands the line to the kernel's print. The original puts a tab between two values; this one puts a space, because the kernel prints plain signs only and would show a tab as a dot. So `print(1, 2)` gives `1 2`.
+- **`show(value)` is offered to a script,** for the kernel's call that shows a text in the box on the screen (see [box.md](box.md) and [screen.md](screen.md)). The script says only which text; how the box looks is the kernel's business. Like `print`, it turns whatever it is given into text first, so `show(42)` shows `42`; that is four lines of Lua kept in the program, around a function that takes a text and nothing else. The text is handed to the kernel whole. Nothing is cut here: the kernel's rule for a text that is too long is to stop the app, and that rule stays the kernel's.
 - A printed line is cut at 200 bytes, the longest the kernel takes; a longer one would get the whole program stopped.
 
 ## How it is built
@@ -61,7 +62,7 @@ That makes `interpreter/target/wasm32-unknown-unknown/release/interpreter.wasm`.
 - **It is built small rather than fast** (`opt-level = "s"`, one unit, `lto`, no unwinding), because the box checks the whole file each time it gets the interpreter ready.
 - **No program made along the way is run**, and the linker for WebAssembly, `wasm-ld`, comes with Rust.
 - **The built file is not in the repository.** It is build output, like the kernel's own file. Two builds of the same source in two different folders gave the same bytes, and so did the source with the other kind of line end; the piece of Lua in the source is written line by line with its line ends spelt out for that reason.
-- **The built file holds folder paths of the computer it was built on:** 22 of them, the places of omnilua's source files in cargo's own folder, which the compiler puts into the messages for mistakes that end a program. So the file's bytes, and its length, can differ from one computer to the next, and the 761,902 in these notes is one computer's figure. It is one more reason to keep the built file out of the repository. The kernel's own file holds such paths in the same way.
+- **The built file holds folder paths of the computer it was built on:** 22 of them, the places of omnilua's source files in cargo's own folder, which the compiler puts into the messages for mistakes that end a program. So the file's bytes, and its length, can differ from one computer to the next, and the 764,429 in these notes is one computer's figure. It is one more reason to keep the built file out of the repository. The kernel's own file holds such paths in the same way.
 
 ## How the kernel carries it
 
@@ -74,7 +75,7 @@ That makes `interpreter/target/wasm32-unknown-unknown/release/interpreter.wasm`.
 
 `efi_main` calls `interpreter_check()` after the three small apps:
 
-- `Interpreter: a program of 761902 bytes that understands Lua is on board, and the box accepts it`
+- `Interpreter: a program of 764429 bytes that understands Lua is on board, and the box accepts it`
 - otherwise: `Interpreter: not usable, because ...` with the reason; no script is run then, and the kernel carries on.
 
 `interpreter_check` hands the program to `box_accepts` (see [box.md](box.md)), which gets it ready exactly as an app is got ready for a run, with the same check against WebAssembly's rules, the same limits and the same system API, and then looks for a memory called `memory` and for the functions `room` and `run`. Neither function is called.
@@ -91,6 +92,7 @@ What comes back:
 - **`the script made a mistake, which is told in the line before`** when the interpreter gave back 1. The line before is the interpreter's own, such as `App: Lua stopped: [string "app"]:2: attempt to index a nil value (local 't')`. The number after the name is the script's line. What the script printed before the mistake stays printed.
 - **`all fuel consumed by WebAssembly`** when the script used up its budget.
 - **`it printed too many texts`** after 100 printed lines.
+- **`it asked to show a text that is too long`** for a shown text of more than 40 bytes, and **`it showed too many texts`** at the 21st showing. These are the kernel's own rules for `show`, and a script cannot get round them: `pcall(show, ...)` does not catch them, because it is the whole interpreter that is stopped, not the script inside it.
 - **`wasm `unreachable` instruction executed`** when the interpreter itself gave up, which is what happens when it runs out of memory.
 - **`the script is too long`** for a script of more than 32 KB; nothing is started then.
 
@@ -99,12 +101,13 @@ What a script can count on:
 - **Lua 5.4,** with `string`, `table` and `math`. `io`, `os`, `require`, `debug`, coroutines and `utf8` are not there (their names are `nil`); `load` is.
 - **`print`,** with any number of values, joined by a space. A line longer than 200 bytes is cut at 200 by the interpreter. Every byte that is not a plain sign comes out as a dot: a tab inside a text, a letter with an accent (two dots, because it is two bytes).
 - **`say(text)`,** the function `print` is built on, which hands one text to the kernel.
+- **`show(value)`,** which puts one line of at most 40 bytes into the box on the screen. Each showing wipes out the one before; the last one stays after the script has ended. Bytes are counted, not letters: twenty letters with an accent fill the 40, and each comes out as two dots. On a machine without a usable screen nothing is shown and the script carries on.
 - **Both kinds of line end** in the script's text.
 - **A text with bytes that are no letters at all cannot be printed.** The piece between omnilua and this program wants proper text, and the script is stopped with `Lua stopped: string is not valid UTF-8`.
 
 ## The script at startup
 
-`GREETING_SCRIPT` in `interpreter.rs` is a whole app as a script, five lines written by hand:
+`GREETING_SCRIPT` in `interpreter.rs` is a whole app as a script, six lines written by hand:
 
 ```lua
 local greeting = "Hello from a Lua script"
@@ -112,14 +115,16 @@ for count = 1, 3 do
   greeting = greeting .. "!"
 end
 print(greeting)
+show(greeting)
 ```
 
 `efi_main` runs it right after the check, if the check passed:
 
-- `App: Hello from a Lua script!!!`
+- in the terminal: `App: Hello from a Lua script!!!`
+- on the screen, in the box in the middle: `Hello from a Lua script!!!`, painted over the text the hand-made showing app put there a few seconds earlier
 - when the run fails: `Interpreter: the script was stopped, because ...` with the reason.
 
-It is a demonstration, like the three small apps before it. Nothing depends on it.
+It is a demonstration, like the three small apps before it. Nothing depends on it. If the script is stopped before its last line, the box keeps the hand-made app's text.
 
 ## The budget for a script
 
@@ -145,8 +150,8 @@ A script is held to the box's limits like any app (1 MB of memory, 100 printed l
 
 In QEMU, in the plain debug build. The times vary with how busy the test computer is; the same kernel took 1.3 seconds for the check at one hour and 2.1 at another.
 
-- **Time:** the check adds 1.1 to 2.9 seconds to a start and the script 2.6 to 5.2 more, both with device signals off. Most of the script's time is getting the interpreter ready again.
-- **Stack:** 44,920 bytes deep for the check and 54,824 while a script runs, at their place in the startup, of the 124 KB free on the firmware's stack. The second figure was the same for seven scripts, among them calls without end, a loop without end and a flood of prints.
+- **Time:** the check adds 1.1 to 2.9 seconds to a start and the script 2.6 to 6.5 more, both with device signals off. Showing a text adds a few hundredths of a second to that. Most of the script's time is getting the interpreter ready again.
+- **Stack:** 44,920 bytes deep for the check and 54,824 while a script runs, at their place in the startup, of the 124 KB free on the firmware's stack. The second figure was the same for seven scripts, among them calls without end, a loop without end, a flood of prints, and the greeting, which paints the box on the screen from inside the script's run.
 - **Memory:** the first check took 556 frames (2.2 MB) for the kernel's heap, a second and a third none. Twenty-eight well-behaved scripts in a row took 25 frames more. Fourteen that should be stopped took 514, 513 of them at the script with calls without end, the only one that made the interpreter's memory grow far. The heap keeps them for later use and never hands frames back (see [memory.md](memory.md)).
 - **A script's own memory:** every small script ended with 384 KB of the app's 1 MB in use (measured in a trial's copy).
 - **Size:** the kernel's file is 7.1 MB, 6.3 before the interpreter came. "Free memory" reads the same as before on the usual machine.
@@ -174,4 +179,4 @@ None of this is in the kernel. It was measured in a copy of the kernel:
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: one script runs, at startup, and it can only print; fuel is all that ends a bad script, and it does not bound time; the interpreter is got ready anew for every script, which is most of what a small script costs; the kernel learns that a script made a mistake but not which; the outside code is young and unaudited.
+See [open-points.md](open-points.md). In short: one script runs, at startup, and it can only print lines and show one line of text; fuel is all that ends a bad script, and it does not bound time; the interpreter is got ready anew for every script, which is most of what a small script costs; the kernel learns that a script made a mistake but not which; the outside code is young and unaudited.

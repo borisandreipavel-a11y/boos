@@ -235,7 +235,8 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     // Apps will be written as text in the language Lua, and a program that
     // understands Lua, the interpreter, runs them inside the box. It is a
     // far bigger program than the apps above. See that the box takes it,
-    // and then have it run a script written by hand, which prints one line.
+    // and then have it run a script written by hand, which prints one line
+    // and shows the same text in the box on the screen.
     match interpreter_check() {
         Ok(size) => {
             write!(serial, "Interpreter: a program of {} bytes that understands Lua is on board, and the box accepts it\r\n", size).ok();

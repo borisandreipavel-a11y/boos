@@ -18,13 +18,15 @@ static INTERPRETER: &[u8] = include_bytes!("../interpreter/target/wasm32-unknown
 
 // A whole app as a script, written by hand: it makes a greeting, adds three
 // exclamation marks to it one at a time, and asks for the result to be
-// printed. Each line of the script is written out with its line end (`\n`).
+// printed and to be shown on the screen. Each line of the script is written
+// out with its line end (`\n`).
 pub const GREETING_SCRIPT: &str = concat!(
     "local greeting = \"Hello from a Lua script\"\n",
     "for count = 1, 3 do\n",
     "  greeting = greeting .. \"!\"\n",
     "end\n",
     "print(greeting)\n",
+    "show(greeting)\n",
 );
 
 // The check at startup: would the box take the interpreter? The box checks

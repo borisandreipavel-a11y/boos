@@ -148,7 +148,7 @@ All are whole WebAssembly programs written out by hand in `app_box.rs`, with a c
 
 `box_run(&SHOWING_APP)` comes last. It brings no line. Its text appears on the screen, in the box in the middle:
 
-- on the screen: `Hello from an app in the box`
+- on the screen: `Hello from an app in the box`, for a few seconds, until the script that runs after the three apps shows its own text there (see [interpreter.md](interpreter.md))
 - when the run fails: `Box: the app that shows a text was stopped, because ...` with the reason, and no box is painted.
 
 The kernel carries on whatever the outcome. Nothing depends on these runs yet.
