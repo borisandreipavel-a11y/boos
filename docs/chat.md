@@ -2,7 +2,7 @@
 
 Code: `src/chat.rs`, `src/secret.rs`, the call of `chat_setup` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
 
-The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but one by giving it back. The one is `key`, which makes it ask for a secret; see "A secret" below.
+The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but two by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. The other is `fetch`, which makes it fetch a page from the web; see "Asking the network" below.
 
 ## What it does
 
@@ -36,6 +36,18 @@ A secret is a text that the person at the machine types and that nobody else sho
 - **On a machine without a usable screen** a secret can be typed all the same, blind: no stars show, and the terminal says how many signs were taken.
 
 Nothing uses the secret yet.
+
+## Asking the network
+
+- **The line `fetch`, sent by itself, asks for the example page** (`FETCH_WORD`). The chat box cannot use the network itself: only the network's task may. So it leaves an errand for that task (see "Errands" in [tasks.md](tasks.md)) and answers at once, `Kernel: I am asking the network for the page of example.com.`
+- **The answer comes later, as a row of its own,** when the network's task has it: `Kernel: example.com answered "HTTP/1.1 200 OK". Its page is 577 bytes long.`, or `Kernel: no page came, because ...` with the reason. With a site that answers it takes about a second; with one that goes silent, as long as the fetch waits, a quarter of a minute and more.
+- **Typing goes on meanwhile.** Lines are given back, and a secret can be typed, while the answer is awaited.
+- **One asking at a time.** A second `fetch` before the answer to the first has come is turned away: `Kernel: I cannot ask the network, because the answer to what I asked before has not come yet`.
+- **On a machine without a network card, or without an address,** it is turned away at once: `Kernel: I cannot ask the network, because this machine has no address on the network`.
+- **`chat_say(text)`** is how such a row gets in: it adds a row of the kernel's and repeats it in the terminal. The main loop calls it when an errand's answer has come. Like every function of `chat.rs` it may be called by the main loop only.
+- **Each asking reaches the internet:** one question to the name server and one exchange with the site, as at startup.
+
+The word and the page are a demonstration of the road an answer from the network takes into the chat box.
 
 ## The look
 
@@ -74,7 +86,7 @@ Keys wait in the keyboard's line of 16 key numbers while the main loop paints, a
 ## Who may use it
 
 - `CHAT_ROWS` and `CHAT_LINE` are plain `static mut` lists, and so are the secret's rooms in `chat.rs` and `secret.rs`. Nothing protects them. **Only the main loop may call the functions of `chat.rs`.** A second task that added a row, or painted, while the main loop was at work in the same list would break it.
-- A task that has something to say in the chat box needs a way to hand its text to the main loop. There is none yet.
+- A task that has something to say in the chat box cannot say it itself. The one way in is an errand's answer, which the main loop picks up and hands to `chat_say`; see "Errands" in [tasks.md](tasks.md).
 - The two lists grow, so they cannot be copied in and out by value like the kernel's other `static mut` values. `chat_rows()` and `chat_line()` hand them out through their addresses instead, and `secret_typed()` does the same for the room a secret is typed into, which must not be copied; and Rust cannot check what happens to a list handed out that way. The rule to keep by hand: after calling another function of `chat.rs`, do not go on using a list that was fetched before the call. Today `chat_key` fetches the typed line, changes it, and only then calls the painting functions, which fetch it again for themselves.
 - The heap, which the lists use, is protected against task switches by itself; see [tasks.md](tasks.md).
 
@@ -93,4 +105,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back or takes a secret that nothing uses yet, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret that nothing uses yet, or fetches one fixed page, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

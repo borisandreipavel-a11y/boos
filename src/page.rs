@@ -21,7 +21,7 @@ use crate::timer::{TICKS, TICKS_PER_SECOND};
 use crate::tls::{Wire, secure_exchange, secure_ready};
 
 // The site whose page is fetched. Its owners keep it for examples like this.
-const SITE: &str = "example.com";
+pub const SITE: &str = "example.com";
 
 // A machine can hold many conversations at once. A port is the number that
 // says which conversation a packet belongs to. Sites wait for requests over
@@ -43,33 +43,43 @@ const GOODBYE_WAIT: u64 = 1;
 const ARRIVAL_ROOM: usize = 4096;
 const SENDING_ROOM: usize = 512;
 
-// Fetches the site's page and prints how it begins. Called once by the
-// network's task, as soon as this machine has an address.
-pub fn page_fetch(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) {
+// Gets the site's page: looks its name up, connects, and has the
+// conversation over an encrypted link. Whatever goes wrong comes back as a
+// reason in words. On the way it prints which address the name belongs to.
+fn page_get(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) -> Result<Answer, String> {
     // `let Some(..) = .. else` means: if there is one, go on with it;
     // if there is none, do what stands in the braces.
     let Some(name_server) = name_server else {
-        serial_print("Network: no page fetched, because the network named no name server\r\n");
-        return;
+        return Err("the network named no name server".into());
     };
 
     // The page is fetched over an encrypted link or not at all. If this
     // machine cannot encrypt, nothing is sent, not even the site's name.
-    if let Err(reason) = secure_ready() {
-        serial_print(&format!("Network: no page fetched, because {}\r\n", reason));
-        return;
-    }
+    secure_ready()?;
 
-    let address = match name_lookup(interface, card, sockets, name_server) {
-        Ok(address) => address,
-        Err(reason) => {
-            serial_print(&format!("Network: no page fetched, because {}\r\n", reason));
-            return;
-        }
-    };
+    let address = name_lookup(interface, card, sockets, name_server)?;
     serial_print(&format!("Network: the name {} belongs to the address {}\r\n", SITE, address));
 
-    let answer = match page_ask(interface, card, sockets, address) {
+    page_ask(interface, card, sockets, address)
+}
+
+// Fetches the site's page for somebody who asked for it, and says in one
+// sentence how that went: how the site answered and how long its page is, or
+// why no page came. Called by the network's task when it runs an errand; the
+// sentence is the errand's answer. The site's own words in it were cleaned
+// when they were read.
+pub fn page_tell(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) -> String {
+    match page_get(interface, card, sockets, name_server) {
+        Ok(answer) if answer.complete => format!("{} answered \"{}\". Its page is {} bytes long.", SITE, answer.first_line, answer.page_length),
+        Ok(answer) => format!("{} answered \"{}\", but its page did not come whole: {} bytes of it came.", SITE, answer.first_line, answer.page_length),
+        Err(reason) => format!("no page came, because {}", reason),
+    }
+}
+
+// Fetches the site's page and prints how it begins. Called once by the
+// network's task, as soon as this machine has an address.
+pub fn page_fetch(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) {
+    let answer = match page_get(interface, card, sockets, name_server) {
         Ok(answer) => answer,
         Err(reason) => {
             serial_print(&format!("Network: no page fetched, because {}\r\n", reason));

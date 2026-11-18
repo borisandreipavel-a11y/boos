@@ -13,7 +13,8 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
-use crate::page::page_fetch;
+use crate::errand::{Errand, errand_answer, errand_network_ready, errand_take};
+use crate::page::{page_fetch, page_tell};
 use crate::processor::time_stamp;
 use crate::serial::serial_print;
 use crate::tasks::{task_add, task_wait};
@@ -240,10 +241,27 @@ fn network_task() {
             None => {}
         }
 
+        // Say whether errands can be run. This comes before this task's own
+        // fetch below, which can take a while: an errand asked for in the
+        // meantime then waits its turn instead of being turned away.
+        errand_network_ready(has_address);
+
         // The first use of the address: fetch one page from the web.
         if has_address && !page_fetched {
             page_fetched = true;
             page_fetch(&mut interface, &mut card, &mut sockets, name_server);
+        }
+
+        // Errands: work that the main loop asks this task to do, because only
+        // this task may use the network. Run the one that waits, and leave
+        // the answer for the main loop to pick up. While an errand runs, this
+        // task does nothing else.
+        if let Some(errand) = errand_take() {
+            let answer = match errand {
+                Errand::ExamplePage if has_address => page_tell(&mut interface, &mut card, &mut sockets, name_server),
+                Errand::ExamplePage => "no page came, because this machine has lost its address on the network".into(),
+            };
+            errand_answer(answer);
         }
 
         // The card sends no signals, so the only way to notice a packet is to

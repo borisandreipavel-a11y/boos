@@ -6,9 +6,11 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::errand::{Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
+use crate::page::SITE;
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
 use crate::serial::serial_print;
@@ -24,6 +26,10 @@ const LAST_LINE: &str = "last line";
 // The line that, sent by itself, makes the kernel ask for a secret: a text
 // such as the key of a paid service, which must not be seen by anybody else.
 const SECRET_WORD: &str = "key";
+
+// The line that, sent by itself, makes the kernel fetch the example page from
+// the web again and say in the chat box how the site answered.
+const FETCH_WORD: &str = "fetch";
 
 // While a secret is typed, each sign shows as a star. At most this many stars
 // are shown; behind them the row says how many more signs there are.
@@ -322,6 +328,18 @@ pub fn chat_recall() {
     chat_paint_rows();
 }
 
+// Says something in the chat box that is not an answer to the line just
+// sent: adds it to what was said as a row of the kernel's and repeats it in
+// the terminal. The main loop calls this when the answer to an errand has
+// come in. A text that comes from outside the kernel must be cleaned before
+// it is handed over.
+pub fn chat_say(text: &str) {
+    let row = format!("Kernel: {}", text);
+    serial_print(&format!("{}\r\n", row));
+    chat_add(Speaker::Kernel, &row);
+    chat_paint_rows();
+}
+
 // Takes one typed key, given as its letter. A letter is added to the line
 // being typed, Backspace takes the last one away, and Enter sends the line:
 // it moves up into what was said, and the kernel answers by giving it back.
@@ -355,6 +373,15 @@ pub fn chat_key(letter: u8) {
             let asks_for_secret = said == SECRET_WORD;
             let answer = if asks_for_secret {
                 String::from("Kernel: type the secret and press Enter. It shows as stars.")
+            } else if said == FETCH_WORD {
+                // Another line that is not given back: it asks for the example
+                // page. The chat box cannot use the network itself. It leaves
+                // an errand for the network's task and says so; the answer
+                // comes later, as a row of its own (see `chat_say`).
+                match errand_ask(Errand::ExamplePage) {
+                    Ok(()) => format!("Kernel: I am asking the network for the page of {}.", SITE),
+                    Err(reason) => format!("Kernel: I cannot ask the network, because {}", reason),
+                }
             } else {
                 format!("Kernel: you said \"{}\"", said)
             };

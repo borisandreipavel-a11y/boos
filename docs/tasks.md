@@ -109,6 +109,26 @@ Not protected, and fine as long as it stays that way:
 - **The chat box** is used by one task only, the main loop, and nothing protects its lists. A second task must not call its functions; see [chat.md](chat.md).
 - The screen. Two tasks drawing at once would give a mixed picture and nothing worse; see [screen.md](screen.md). Today only startup draws.
 
+## Errands: one task asking another
+
+Code: `src/errand.rs`, the main loop in `main.rs`, the loop of `network_task` in `network.rs`.
+
+Two rules stand against each other: only the network's task may use the network, and only the main loop may use the chat box. A line typed in the chat box that needs the network therefore has to travel from the main loop to the network's task, and the answer has to travel back. An **errand** is that piece of work, and `errand.rs` is the place where it and its answer are left for the other side to pick up. It is a letter box with room for one letter each way.
+
+- **`errand_ask(errand)`**, called by the main loop, leaves an errand. It is turned away, with the reason in words, if nobody could run it (`this machine has no address on the network`) or if the one before is not finished (`the answer to what I asked before has not come yet`).
+- **`errand_take()`**, called by the network's task once in every turn of its loop, picks up the errand that waits, if there is one. The task then does the work, which can take many seconds, and does nothing else meanwhile.
+- **`errand_answer(text)`**, called by the network's task, leaves the answer.
+- **`errand_answer_take()`**, called by the main loop once in every turn, picks the answer up, if one lies ready, and hands it to the chat box. After that the next errand can be asked for.
+- **`errand_network_ready(ready)`**, called by the network's task in every turn of its loop, says whether errands can be run at all: whether the task is there and the machine has an address. It says so before the task's own fetch at startup, so that an errand asked for during that fetch waits its turn. On a machine without a network card there is no such task, nothing ever says yes, and every errand is turned away at once.
+
+How far the one errand has got is kept in one number (`STATE`): nothing asked for, waiting, under way, answered. The errand and the answer themselves are plain `static mut` values that two tasks reach, so each is touched only with device signals off; see the rules above.
+
+**The main loop is not held up.** It leaves the errand and goes on taking keys; the answer arrives as a row of its own when it is ready. While an errand waits or is under way, lines can be typed and are given back as ever, and a secret can be typed.
+
+**What can be asked for** is one thing so far, `Errand::ExamplePage`: fetch the example page from the web and say how the site answered. A new kind of errand is a new line in the `Errand` list and a new branch where `network_task` runs it.
+
+An answer is a text that goes into the chat box. Whatever in it comes from outside the kernel has to be cleaned before it is left as the answer.
+
 ## The demonstration
 
 Besides the two demonstration tasks there is one task that never ends: `network_task`, which runs the network stack and waits one tick between its looks; see [network.md](network.md).

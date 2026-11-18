@@ -43,6 +43,7 @@ mod starts; // A count of the kernel's starts, kept on the disk.
 mod notebook; // The notebook: named things kept on the disk.
 mod interpreter; // The interpreter for apps written as Lua text.
 mod secret; // A secret typed by the person at the machine, kept in memory only.
+mod errand; // Errands: work the main loop hands to the network's task.
 mod json; // JSON: writing a text that way, and finding a text in it.
 mod json_values; // The values the check of JSON is made against.
 
@@ -56,11 +57,12 @@ use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
 use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
-use chat::{chat_key, chat_recall, chat_setup};
+use chat::{chat_key, chat_recall, chat_say, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
 use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
 use encryption::{encryption_check, trusted_roots};
+use errand::errand_answer_take;
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interpreter::{GREETING_SCRIPT, interpreter_check, script_run};
@@ -402,6 +404,12 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             if let Some(letter) = key_letter(key) {
                 chat_key(letter);
             }
+        }
+
+        // If the network's task has left the answer to an errand, say it in
+        // the chat box.
+        if let Some(answer) = errand_answer_take() {
+            chat_say(&answer);
         }
     }
 }

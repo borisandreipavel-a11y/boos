@@ -195,6 +195,10 @@ How it goes in QEMU:
 
 Every start of the kernel fetches the page, so every start sends one name question and makes one encrypted exchange with the site. The site's name can be read on the way; the request and the page cannot. For test boots that should stay off the internet, see [testing.md](testing.md).
 
+### Fetching it again when asked
+
+The same fetch can be asked for from the chat box, with the line `fetch` (see [chat.md](chat.md)). The chat box leaves an errand, and `network_task` picks it up in its loop and calls `page_tell`, which does the fetch through the same `page_get` as `page_fetch` and gives back one sentence instead of printing a report: how the site answered and how long its page is, or why no page came. The lines about the name and about the site proving who it is are printed in the terminal as at startup. The sockets a fetch uses are taken out of the stack's set when it ends, so fetches can follow each other without end: twelve in a row took no frame.
+
 ## QEMU's built-in network
 
 `run.bat` attaches the card to QEMU's built-in network (`-netdev user`). QEMU plays a small network of its own and passes traffic on through the host computer:

@@ -19,7 +19,7 @@ Code: `src/main.rs`, `src/firmware.rs`, `src/serial.rs`, `src/processor.rs`.
 11. **`task_add(...)`** adds the two demonstration tasks. Tasks need the heap for their stacks, so this follows step 8. They get their first turn only after step 13.
 12. **`controller_setup()`, `timer_setup()`, `keyboard_setup()`**, in that order. The controller is set up first and the keyboard's waiting byte is emptied last. The other way round, a key arriving in between would send its signal before the controller was listening, and the keyboard would stay silent.
 13. **`sti`** lets device signals through. It comes last, after the interrupt table is loaded and every device is ready. From the first tick on, the timer switches between the tasks.
-14. **The main loop** is task 0. It prints the rest count and the typing prompt once four seconds have gone by, hands the keys that arrived to the chat box, and then calls `task_rest()`: the other tasks run if they have something to do, and otherwise the processor sleeps until the next device signal.
+14. **The main loop** is task 0. It prints the rest count and the typing prompt once four seconds have gone by, hands the keys that arrived to the chat box, picks up the answer to an errand if the network's task has left one and says it in the chat box (see [tasks.md](tasks.md)), and then calls `task_rest()`: the other tasks run if they have something to do, and otherwise the processor sleeps until the next device signal.
 
 ## What the firmware hands over
 

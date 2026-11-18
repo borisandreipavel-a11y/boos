@@ -36,7 +36,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch. The kernel has random numbers now, and neither place uses them yet.
 - The stack's clock is the tick count, in steps of 10 ms, and runs slow when timer signals come late.
 - The stack is looked at once per tick whether or not anything happened, because the card sends no signals. smoltcp can say how long it may be left alone (`poll_delay`); that is not used.
-- Only the stack's own task may touch it. There is no way yet for another task to ask it for something.
+- Only the stack's own task may touch it. The main loop can ask it for one thing, the example page, through an errand (see [tasks.md](tasks.md)); no other task can ask, and nothing else can be asked for.
 - The copies in `vendor/` do not update by themselves, and smoltcp's limits are fixed in a file; see `vendor/README.md`.
 - Waiting for the gateway's answer is counted in looks, not in time, because it happens at startup with signals off. Tasks can wait for a time now, so network code that runs in a task should use that instead.
 - There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. The network stack's task sends packets now, so this breaks the rule to keep such stretches short: if the card ever were slow to take a packet, ticks and keys would wait too. In QEMU the card has always taken each packet at once, and the wait was never seen to be long.
@@ -180,8 +180,12 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The chat box
 
-- **The kernel only gives the typed line back.** Nothing reads the line, and nothing else can answer in the chat box.
-- **Only the main loop may use the chat box.** Its lists are not protected, and there is no way yet for another task to hand it a text. A task that gets an answer from somewhere, such as the network task, cannot show it there.
+- **The kernel gives the typed line back, with two lines set apart.** `key` takes a secret that nothing uses yet, and `fetch` fetches the example page and says how the site answered. Nothing else reads a line, and no model answers yet.
+- **Only the main loop may use the chat box.** Its lists are not protected. Another task can get a text into it in one way only, as the answer to an errand (see [tasks.md](tasks.md)).
+- **There is room for one errand at a time,** and only the main loop may ask. A second asking is turned away until the answer to the first was picked up. Nothing can call an errand off once it is asked for.
+- **While an errand runs, the network's task does nothing else.** It is the same for its own fetch at startup: no other use of the network gets a turn until the work is done or gives up, which can take a quarter of a minute and more.
+- **An errand's answer is one text.** It cannot say anything but that sentence: not whether the work went well as a yes or no, and not a second piece of data.
+- **Nothing says in the chat box that an answer is still awaited,** except the row that the asking was made. The row of the answer simply appears.
 - **A secret can be typed, and nothing uses it yet.** It is kept in memory only, so it has to be typed again after every start.
 - **A secret is typed blind.** The stars and the count are all the person sees; a wrong sign cannot be found except by typing the whole again. There is no way to leave the asking but Enter on nothing.
 - **A secret's signs pass through places that are not wiped:** the processor's registers and the stack of the main loop while a key is handled, a byte at a time. The dump of a test machine's memory held a typed secret exactly once and no further run of six of its signs, which is as far as that was looked into; where in memory the one copy lay was not looked at, and it is the breaks made on purpose that tie the count to the two rooms made for it.

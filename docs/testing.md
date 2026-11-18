@@ -845,6 +845,29 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 - The temporary piece was taken out again, and `main.rs` and `json.rs` compared with their state before by a check value. The chat box test still passes, and the picture after a boot is right in every dot.
 - Not verified: a real answer from a service, of which the documentation shows none; pieces of JSON made by any other writer than Python's; a piece larger than about 1 MB.
 - A person ran `run.bat` and saw the JSON line in the terminal after the script's line.
+- Checked after the change that brought the JSON code in: a clean export of it differed from the working files in line ends only and held no disk file and no built file. Both builds ran in the export from nothing with no warning and no program made along the way, and Windows recorded no block. Its kernel booted to the prompt with the JSON line reading 13 of 13 and passed the chat box test. With the two JSON source files changed to the other kind of line end and built again, the line read 13 of 13 too; the pieces of JSON in the values file run across several lines.
+
+**Asking the network from the chat box**
+
+- **On a network with no way out,** the usual test network, where a fetch ends at once for want of a name server: `fetch` is answered with `Kernel: I am asking the network for the page of example.com.` and then, as a row of its own, `Kernel: no page came, because the network named no name server`. Asked five times in one boot, with a normal line, a typed secret and the line `fetching` in between. Four pictures, each right in every dot, and the terminal's lines as meant.
+- **A machine without a network card:** turned away at once, twice, `Kernel: I cannot ask the network, because this machine has no address on the network`. Picture right, and a normal line after it given back.
+- **Against the TLS test server** on the test computer, with the edits in a copy of the project (see "A server on the test computer"):
+  - asked twelve times in a row, each answered `Kernel: example.com answered "HTTP/1.0 200 OK". Its page is 109 bytes long.`; the server saw thirteen connections, one for the fetch at startup and twelve asked for, each with the request and an answered goodbye; the count of free frames, printed by the copy after each errand, was the same all twelve times;
+  - a server that greets and then says nothing, with `fetch` typed while the fetch at startup was still waiting for it: the errand waited its turn; a second `fetch` was turned away, `... the answer to what I asked before has not come yet`; a normal line typed meanwhile was given back within two seconds, so the main loop is not held up; a secret was being typed when the answer came, 29 seconds after the asking: `Kernel: no page came, because the site took too long`. Picture right in every dot, the stars of the half-typed secret among it.
+- **Text from outside in the chat box,** against the same server: a site whose first line holds terminal commands is said as `Kernel: example.com answered "HTTP/1.0 200 .[31mOK.". Its page is 10047 bytes long.`, with no byte in the terminal that is not plain text and the row right in every dot; a site whose page is cut off without the goodbye is said as `..., but its page did not come whole: 49 bytes of it came.`
+- **The lines at startup are as before** the fetch was taken apart into `page_get`, `page_fetch` and `page_tell`: the report about the real site's page, and the one line on a network with no way out, were read again.
+- **The case of the silent server found a mistake.** At first the network's task said that errands could be run only after its own fetch at startup, so `fetch` typed during that fetch was answered with `this machine has no address on the network`, which was untrue. It now says so before that fetch.
+- **The real site, once,** with the network open: the row `Kernel: example.com answered "HTTP/1.1 200 OK". Its page is 577 bytes long.` came 0.8 seconds after the asking, and the lines about the name and about the site proving who it is were printed in the terminal as at startup. Picture right in every dot.
+- **A screen of 800 by 600,** where the rows about the asking and the answer do not fit on one row: picture right in every dot.
+- Breaks made on purpose, each alone, each caught:
+  - the main loop never looking for an answer: no row for the answer came;
+  - the place not marked free after an answer was picked up: the second asking was turned away;
+  - the network's task picking an errand up and leaving no answer: no row came, and every later asking was turned away;
+  - an errand taken on although nobody could run it, on the machine without a card: `I am asking the network`, and nothing after it, ever;
+  - the network's task saying only after its first fetch that errands can be run: the mistake above came back.
+- The chat box test, the Shift test and the test of the secret line still pass. The edits that point the kernel at the test server were made in a copy. The five breaks were made in the project and mended again, and the project's source files were compared with their state before the breaks by a check value.
+- Not verified: an errand asked for at the very moment the address runs out; an answer longer than a few rows; two errands of different kinds.
+- A person ran `run.bat`, typed `fetch` in the chat box of the window, and saw the row about the asking and, about a second later, the row with the site's answer.
 
 **The split into files**
 
