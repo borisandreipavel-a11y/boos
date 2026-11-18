@@ -42,6 +42,7 @@ mod parts; // The parts of the disk, and the one that is this kernel's own.
 mod starts; // A count of the kernel's starts, kept on the disk.
 mod notebook; // The notebook: named things kept on the disk.
 mod interpreter; // The interpreter for apps written as Lua text.
+mod secret; // A secret typed by the person at the machine, kept in memory only.
 
 use alloc::format;
 use alloc::string::String;

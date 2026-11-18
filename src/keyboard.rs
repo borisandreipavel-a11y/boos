@@ -70,7 +70,10 @@ pub fn next_key() -> Option<u8> {
     if taken == KEYS_ARRIVED.load(Ordering::Relaxed) {
         return None;
     }
-    let key = KEY_QUEUE[taken % KEY_QUEUE.len()].load(Ordering::Relaxed);
+    // The place is emptied as the key is taken out of it (`swap` gives back
+    // what was there and puts 0 in). Otherwise the last keys that were
+    // pressed would stay readable here, the keys of a typed secret too.
+    let key = KEY_QUEUE[taken % KEY_QUEUE.len()].swap(0, Ordering::Relaxed);
     KEYS_TAKEN.store(taken + 1, Ordering::Relaxed);
     Some(key)
 }

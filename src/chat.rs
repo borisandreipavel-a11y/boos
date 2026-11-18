@@ -10,6 +10,7 @@ use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
+use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
 use crate::serial::serial_print;
 
 // The longest line that can be typed, in signs. A key pressed after that is
@@ -19,6 +20,14 @@ const CHAT_LINE_LIMIT: usize = 50;
 // The name under which the last line that was sent is kept in the notebook
 // on the disk, so that it is still known after the machine was switched off.
 const LAST_LINE: &str = "last line";
+
+// The line that, sent by itself, makes the kernel ask for a secret: a text
+// such as the key of a paid service, which must not be seen by anybody else.
+const SECRET_WORD: &str = "key";
+
+// While a secret is typed, each sign shows as a star. At most this many stars
+// are shown; behind them the row says how many more signs there are.
+const STARS_SHOWN: usize = 30;
 
 // How the chat box looks. Everything about its look is decided here, in this
 // one place: changing the look means changing these values and nothing else.
@@ -92,6 +101,19 @@ fn chat_rows() -> &'static mut Vec<(Speaker, String)> {
 
 fn chat_line() -> &'static mut String {
     unsafe { &mut *(&raw mut CHAT_LINE) }
+}
+
+// A secret being typed: whether the kernel has asked for one, the signs typed
+// so far, and how many they are. The signs are not kept in the line above. A
+// text that grows moves in memory as it grows and leaves copies of itself
+// behind; this room has a fixed size and a fixed place, and is wiped as soon
+// as the secret is handed over.
+static mut SECRET_ASKED: bool = false;
+static mut SECRET_TYPED: [u8; SECRET_LIMIT] = [0; SECRET_LIMIT];
+static mut SECRET_SIGNS: usize = 0;
+
+fn secret_typed() -> &'static mut [u8; SECRET_LIMIT] {
+    unsafe { &mut *(&raw mut SECRET_TYPED) }
 }
 
 // Where the chat box sits on this screen and how much fits in it. All of it
@@ -222,7 +244,24 @@ fn chat_paint_typing() {
     // The text goes in the middle between the area's top and bottom.
     let letter_height = style.text_size.saturating_mul(LETTER_HEIGHT);
     let top = place.typing_top.saturating_add(area_height.saturating_sub(letter_height) / 2);
-    chat_write(&place, top, &format!("> {}_", chat_line()), style.person_colour);
+    let text = if unsafe { SECRET_ASKED } { secret_row() } else { format!("> {}_", chat_line()) };
+    chat_write(&place, top, &text, style.person_colour);
+}
+
+// What the row being typed shows while a secret is typed: a star for each
+// sign, never the sign itself. Past `STARS_SHOWN` stars it says how many more
+// signs there are, so that a long secret can be counted without being seen.
+fn secret_row() -> String {
+    let signs = unsafe { SECRET_SIGNS };
+    let mut row = String::from("> ");
+    for _ in 0..signs.min(STARS_SHOWN) {
+        row.push('*');
+    }
+    if signs > STARS_SHOWN {
+        row.push_str(&format!(" and {} more", signs - STARS_SHOWN));
+    }
+    row.push('_');
+    row
 }
 
 // Adds a text to what was said. A text longer than a row goes on in the next
@@ -287,6 +326,11 @@ pub fn chat_recall() {
 // being typed, Backspace takes the last one away, and Enter sends the line:
 // it moves up into what was said, and the kernel answers by giving it back.
 pub fn chat_key(letter: u8) {
+    // While the kernel waits for a secret, the keys go there and nowhere else.
+    if unsafe { SECRET_ASKED } {
+        secret_key(letter);
+        return;
+    }
     let line = chat_line();
     match letter {
         BACKSPACE => {
@@ -304,7 +348,19 @@ pub fn chat_key(letter: u8) {
             // Take the typed line out, which leaves an empty one behind.
             let said = core::mem::take(line);
             let mine = format!("You: {}", said);
-            let answer = format!("Kernel: you said \"{}\"", said);
+
+            // One line is not given back: the word that asks the kernel to
+            // take a secret. From the next key on, what is typed is the
+            // secret, until Enter.
+            let asks_for_secret = said == SECRET_WORD;
+            let answer = if asks_for_secret {
+                String::from("Kernel: type the secret and press Enter. It shows as stars.")
+            } else {
+                format!("Kernel: you said \"{}\"", said)
+            };
+            if asks_for_secret {
+                unsafe { SECRET_ASKED = true };
+            }
 
             // What is said in the chat box is repeated in the terminal, both
             // lines in one go so that no other task's line lands in between.
@@ -332,6 +388,60 @@ pub fn chat_key(letter: u8) {
                 return;
             }
             line.push(letter as char);
+            chat_paint_typing();
+        }
+    }
+}
+
+// Takes one typed key while the kernel waits for a secret. The signs are
+// counted and shown as stars. They are never printed, never put into a row of
+// what was said and never kept on the disk; Enter hands them to the place
+// where the secret is kept in memory, and the room they were typed into is
+// wiped. Enter with nothing typed takes no secret and leaves the one kept
+// before as it was.
+fn secret_key(letter: u8) {
+    let typed = secret_typed();
+    let signs = unsafe { SECRET_SIGNS };
+    match letter {
+        BACKSPACE => {
+            if signs == 0 {
+                return;
+            }
+            // The sign that is taken away is wiped too.
+            wipe(&mut typed[signs - 1..signs]);
+            unsafe { SECRET_SIGNS = signs - 1 };
+            chat_paint_typing();
+        }
+        b'\n' => {
+            let answer = if signs == 0 {
+                String::from("Kernel: no secret was taken.")
+            } else {
+                let replaced = secret_length() > 0;
+                let taken = secret_keep(&typed[..signs]);
+                wipe(typed);
+                format!(
+                    "Kernel: I took a secret of {} {}. It is kept in memory only.{}",
+                    taken,
+                    if taken == 1 { "sign" } else { "signs" },
+                    if replaced { " The one before is gone." } else { "" }
+                )
+            };
+            unsafe {
+                SECRET_SIGNS = 0;
+                SECRET_ASKED = false;
+            }
+            serial_print(&format!("{}\r\n", answer));
+            chat_add(Speaker::Kernel, &answer);
+            chat_paint_rows();
+            chat_paint_typing();
+        }
+        _ => {
+            // A secret of the longest size takes no more signs.
+            if signs >= SECRET_LIMIT {
+                return;
+            }
+            typed[signs] = letter;
+            unsafe { SECRET_SIGNS = signs + 1 };
             chat_paint_typing();
         }
     }

@@ -1,8 +1,8 @@
 # The chat box: typing on the screen
 
-Code: `src/chat.rs`, the call of `chat_setup` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
+Code: `src/chat.rs`, `src/secret.rs`, the call of `chat_setup` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
 
-The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line by giving it back.
+The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but one by giving it back. The one is `key`, which makes it ask for a secret; see "A secret" below.
 
 ## What it does
 
@@ -18,6 +18,24 @@ The chat box is the place on the screen where the person at the machine types. I
 - **On a machine without a usable screen** nothing is shown and no rows are kept, but typing works: the line is collected, held to 50 signs, and repeated with its answer in the terminal on Enter.
 
 Only the keys `key_letter` knows can be typed: the letters, small and with Shift capital, the digits, the signs of a US keyboard with and without Shift, the space bar, Enter and Backspace. That is every one of the 95 signs the screen has a picture for. Caps Lock does nothing. The arrow keys, Esc, Tab, Delete and the F keys give nothing. See [interrupts.md](interrupts.md) for how Shift is followed.
+
+## A secret
+
+A secret is a text that the person at the machine types and that nobody else should get to see, such as the key a paid service asks for. The chat box can take one, and `src/secret.rs` keeps it.
+
+- **The line `key`, sent by itself, asks for it** (`SECRET_WORD`). The kernel answers `Kernel: type the secret and press Enter. It shows as stars.`, and from the next key on what is typed is the secret. `keys` and `Key` are ordinary lines.
+- **Each sign shows as a star.** The row being typed reads `> `, a star for each sign, and the `_`. Past 30 stars (`STARS_SHOWN`) it goes on with ` and N more`, so that a long secret can be counted without being seen. The count is the only check the person has that no key was lost.
+- **Backspace** takes the last sign away, and that sign is wiped.
+- **Enter** hands the secret over. The kernel says how many signs it took and nothing else: `Kernel: I took a secret of 41 signs. It is kept in memory only.`, with ` The one before is gone.` behind it if one was kept already. Enter with nothing typed takes no secret, `Kernel: no secret was taken.`, and leaves the one kept before as it was.
+- **A secret is at most 200 signs long** (`SECRET_LIMIT`). A key pressed after that is ignored.
+- **Where a secret must never go, and does not:** into a row of what was said, to the terminal, into the notebook on the disk. The line `key` itself is an ordinary line and is kept like any other.
+- **Where it is while it is typed:** in `SECRET_TYPED` in `chat.rs`, a room of fixed size at a fixed place. It is not kept in the line being typed, because a text that grows moves in memory as it grows and leaves copies of itself behind that nothing wipes. On Enter the signs are copied to their place in `secret.rs` and the room is wiped.
+- **Where it is kept:** in `SECRET` in `secret.rs`, again a room of fixed size, in memory only. It is gone when the machine is switched off. `secret_keep` wipes the whole room before it puts a new secret in, so nothing of a longer one stays behind a shorter one. `secret_length` says how long the kept secret is. **There is no function that hands the secret out,** and none may be added that prints it, shows it or writes it to the disk; whatever uses the secret later has to be written with the same care.
+- **Wiping** is done by `wipe` in `secret.rs`, which writes zeros in a way the compiler may not leave out.
+- **The keyboard's waiting line** holds the numbers of the last keys pressed, a secret's among them. `next_key` now empties each place as it takes the key out; see [interrupts.md](interrupts.md).
+- **On a machine without a usable screen** a secret can be typed all the same, blind: no stars show, and the terminal says how many signs were taken.
+
+Nothing uses the secret yet.
 
 ## The look
 
@@ -55,9 +73,9 @@ Keys wait in the keyboard's line of 16 key numbers while the main loop paints, a
 
 ## Who may use it
 
-- `CHAT_ROWS` and `CHAT_LINE` are plain `static mut` lists, and nothing protects them. **Only the main loop may call the functions of `chat.rs`.** A second task that added a row, or painted, while the main loop was at work in the same list would break it.
+- `CHAT_ROWS` and `CHAT_LINE` are plain `static mut` lists, and so are the secret's rooms in `chat.rs` and `secret.rs`. Nothing protects them. **Only the main loop may call the functions of `chat.rs`.** A second task that added a row, or painted, while the main loop was at work in the same list would break it.
 - A task that has something to say in the chat box needs a way to hand its text to the main loop. There is none yet.
-- The two lists grow, so they cannot be copied in and out by value like the kernel's other `static mut` values. `chat_rows()` and `chat_line()` hand them out through their addresses instead, and Rust cannot check what happens to a list handed out that way. The rule to keep by hand: after calling another function of `chat.rs`, do not go on using a list that was fetched before the call. Today `chat_key` fetches the typed line, changes it, and only then calls the painting functions, which fetch it again for themselves.
+- The two lists grow, so they cannot be copied in and out by value like the kernel's other `static mut` values. `chat_rows()` and `chat_line()` hand them out through their addresses instead, and `secret_typed()` does the same for the room a secret is typed into, which must not be copied; and Rust cannot check what happens to a list handed out that way. The rule to keep by hand: after calling another function of `chat.rs`, do not go on using a list that was fetched before the call. Today `chat_key` fetches the typed line, changes it, and only then calls the painting functions, which fetch it again for themselves.
 - The heap, which the lists use, is protected against task switches by itself; see [tasks.md](tasks.md).
 
 ## Text from outside
@@ -75,4 +93,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back or takes a secret that nothing uses yet, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

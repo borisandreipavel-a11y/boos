@@ -45,6 +45,7 @@ Monitor commands that proved useful:
 | `mouse_move 20 20`, `mouse_button 1`, `mouse_button 0` | Mouse movement and clicks |
 | `info registers` | Where the processor is (`RIP`), whether it sleeps (`HLT=1`), `CR3` |
 | `info mem` | What the current page tables cover |
+| `pmemsave 0 0x10000000 <file>` | Saves the machine's memory as a file, here all 256 MB of it. Used to see whether a typed secret is left anywhere: search the file for the secret and for every run of six of its signs. Delete the file afterwards |
 | `info pic`, `info irq` | The interrupt controller's state and how many signals each line sent |
 | `info pci` | QEMU's own PCI list: each device's place, maker and model, signal line, ports and memory |
 | `info block` | The disks QEMU plays, the file behind each, and what each is attached to |
@@ -153,6 +154,7 @@ A panic line names the file the panic is in, so the file name changes when code 
 - **A rule that makes a test disk's writes fail goes on to fail its reads.** QEMU's `blkdebug` with `event = "write_aio"` and no more fires at the first write and from then on fails every request of any kind, reads too. A read after a failed write then fails, which looks like the kernel not getting the disk going again and is the test's disk. Add `iotype = "write"` to the rule.
 - **A test script that is imported runs.** A test file that does its work at the top level does all of it again when another test imports a helper from it. Keep helpers in a file of their own.
 - **Keys sent too fast through the monitor.** A key with Shift is four key numbers with pauses between them inside QEMU. A long row of them sent 90 thousandths of a second apart piled up there, and a picture saved right after showed the row not yet arrived: the same 7,720 dots wrong in every run, while the terminal's lines and the later pictures were right. Sent 200 apart, every picture was right. It looked like a fault in the kernel and was the test's pace.
+- **A made-up secret with common runs in it.** A search of a memory dump for pieces of a typed secret finds them by the thousand if the secret holds something like `0123456789` or `abcdef`: such runs stand in any machine's memory. Make the secret up from signs in no order, and search a dump taken before typing first; it must find nothing.
 - **A picture saved too soon after a key.** Painting takes time: the chat box needs about a twentieth of a second after Enter. A picture saved with `screendump` in the middle of that shows rows wiped and not yet written. Wait about half a second after the last key.
 - **Cutting a script's output short** (for example with `Select-Object -First 1`) can end the script before it sends `quit`. That leaves a QEMU running.
 - **Restoring a file by copying a backup** keeps the backup's old timestamp, and `cargo build` then skips the rebuild and the old kernel is booted. Set the file's time to now before building.
@@ -783,6 +785,39 @@ One setting in `Cargo.toml` changed how 67 crates are built, so the checks of th
 - **Not made again:** the 68 direct checks of the provider's signature pieces, the 20 dates as seconds since 1970, the chains with the kernel's clock set to another year, the recordings of packets, the heap and printing hammered from two tasks during a fetch, eight tasks at once, fifteen fetching boots in a row, the 128 and 126 runs of hand-made programs through the box and the changed copies of the larger test program. Their scripts were not kept, and what stands in for them is listed above.
 - Not verified: a link broken by somebody in the middle; lost or reordered packets; any real site but the one; real hardware.
 - A person ran `run.bat` and saw the same lines and the same picture, with the interpreter's line and the script's coming at once.
+- Checked after the change that made the outside crates run fast: a clean export of it differed from the working files in line ends only and held no disk file and no built file. Both builds ran in the export from nothing, the interpreter in 14 seconds and the kernel in 61, with no warning and no program made along the way, and Windows recorded no block. The exported kernel was the same size as the project's, held the exported interpreter, showed a picture right in every dot on two screens, printed the script's line on a machine without a display card, and passed the chat box test.
+
+**A secret in the chat box**
+
+A made-up secret of 41 signs was typed through QEMU's keys. It stands in the test script only, in no file that goes into the kernel, and it was chosen so that no run of six of its signs is found in a machine's memory before it is typed (a first one held `0123456789`, which is found thousands of times, and made the check useless).
+
+- **Eleven steps,** and after each one a picture of the screen compared dot by dot with the picture that is meant, the terminal's bytes and the whole disk file searched for every run of six signs of the secret, and at most steps a dump of the machine's whole memory (QEMU's `pmemsave`, 256 MB) searched the same way:
+  - the line `key`: the kernel asks, and the row being typed is empty;
+  - twenty signs typed: twenty stars. In memory no whole secret, and its first twenty signs once, in the room they are typed into;
+  - all 41 typed: thirty stars and ` and 11 more`. In memory the whole secret once;
+  - Backspace three times: in memory no whole secret any more, and the first 38 signs once. The signs taken away are gone;
+  - the three typed again and Enter: `Kernel: I took a secret of 41 signs. It is kept in memory only.` In memory the whole secret exactly once. (The counts do not say where the copy lies; that the copy in the room it was typed into is gone shows in the break below, where it is not wiped and the count is two);
+  - a normal line after it: given back as ever;
+  - `key` again and a second, shorter secret typed: both whole in memory, once each;
+  - Enter: `... of 11 signs. ... The one before is gone.` In memory the second once and of the first nothing, not a run of six signs;
+  - `key`, three signs, Backspace three times, Enter: `Kernel: no secret was taken.`, and the second secret still kept;
+  - a secret of one sign;
+  - the lines `keys` and `Key`: given back like any line.
+- At every step the picture was right in every dot, and the terminal and the disk file held nothing of either secret. The terminal's lines were as meant, each ending in bytes 13 and 10. The notebook, read from outside, held the lines `key`, `hello after`, `keys` and `Key` and nothing else.
+- **The longest secret:** 205 signs typed, `I took a secret of 200 signs`; in memory the first 200 once, and nothing of the five behind them.
+- **The keyboard's waiting line:** sixteen keys of a secret typed, and the memory searched for their key numbers in runs of four keys: none, before and after.
+- **A screen of 800 by 600:** the same eleven steps, every picture right in every dot (the kernel's answer takes two rows there), the terminal, the disk and the memory as on the usual screen. **A machine without a display card:** the secret is typed blind, and the terminal says how many signs were taken; the terminal, the disk and the memory as elsewhere.
+- Breaks made on purpose, each alone, each caught by the step named:
+  - the room the secret is typed into not wiped on Enter: after the handing over the whole secret stood in memory twice;
+  - the sign that Backspace takes away not wiped: after three Backspaces the whole secret still stood in memory;
+  - the place where the secret is kept not wiped before a new one goes in: after the shorter second secret, the tail of the first was still in memory;
+  - the signs shown instead of stars: the pictures were wrong, and pieces of the secret stood in memory in more places, left there by the text that was put together for the row;
+  - the secret said in the terminal: found in the terminal's bytes from the handing over on;
+  - the secret kept in the notebook as well: found in the disk file, and the outside reader showed it as an entry;
+  - a key's place in the keyboard's waiting line not emptied: the key numbers of the last keys were found in memory twice.
+- The chat box test and the Shift test still pass.
+- What the memory check cannot see: a single sign in one of the processor's registers or on the stack while its key is handled, and anything shorter than six signs. Not verified: a real keyboard, a secret typed while another task keeps the processor busy.
+- A person ran `run.bat`, typed `key` and then a made-up secret in the chat box of the window, and saw only stars and then the count of signs.
 
 **The split into files**
 

@@ -173,6 +173,10 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 - **The kernel only gives the typed line back.** Nothing reads the line, and nothing else can answer in the chat box.
 - **Only the main loop may use the chat box.** Its lists are not protected, and there is no way yet for another task to hand it a text. A task that gets an answer from somewhere, such as the network task, cannot show it there.
+- **A secret can be typed, and nothing uses it yet.** It is kept in memory only, so it has to be typed again after every start.
+- **A secret is typed blind.** The stars and the count are all the person sees; a wrong sign cannot be found except by typing the whole again. There is no way to leave the asking but Enter on nothing.
+- **A secret's signs pass through places that are not wiped:** the processor's registers and the stack of the main loop while a key is handled, a byte at a time. The dump of a test machine's memory held a typed secret exactly once and no further run of six of its signs, which is as far as that was looked into; where in memory the one copy lay was not looked at, and it is the breaks made on purpose that tie the count to the two rooms made for it.
+- **Anything in the kernel can read the secret's room.** The kernel has one memory for all its code; only apps in the box are shut out of it.
 - **Six rows of what was said are shown,** and there is no scrolling back. Of what was said before a switch-off, only the last line that was sent is said again at the next start.
 - **A long text is cut into rows where the row ends,** in the middle of a word if need be.
 - **A line is at most 50 signs,** and there is no way to move inside it; only its last sign can be taken away.
