@@ -4,7 +4,7 @@ Code: `src/json.rs`, `src/json_values.rs`, and the check in `efi_main`.
 
 JSON is the form in which many services on the internet send and expect their data. The kernel has to speak it to ask a model for anything. It is done with code written for this kernel, about 400 lines with their comments, and no outside crate. That code does two things and no more: it writes a text the JSON way, and it finds one text in a piece of JSON.
 
-**Nothing uses it yet.** A check at startup shows that it works.
+**One thing uses it:** the question to the model is written with it, and the provider's answer is read with it (see [model.md](model.md)). A check at startup shows that it works.
 
 ## The words
 
@@ -74,4 +74,4 @@ The answer of a model in that file is made up from the names of its parts as the
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: nothing uses it yet; only texts can be read; the parts that are passed over are not checked; a text is copied whole, however long.
+See [open-points.md](open-points.md). In short: only texts can be read; the parts that are passed over are not checked; a text is copied whole, however long.

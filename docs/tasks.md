@@ -125,7 +125,9 @@ How far the one errand has got is kept in one number (`STATE`): nothing asked fo
 
 **The main loop is not held up.** It leaves the errand and goes on taking keys; the answer arrives as a row of its own when it is ready. While an errand waits or is under way, lines can be typed and are given back as ever, and a secret can be typed.
 
-**What can be asked for** is one thing so far, `Errand::ExamplePage`: fetch the example page from the web and say how the site answered. A new kind of errand is a new line in the `Errand` list and a new branch where `network_task` runs it.
+**What can be asked for** is two things so far. `Errand::ExamplePage`: fetch the example page from the web and say how the site answered. `Errand::ModelQuestion`: ask the model the one fixed question and say what came back (see [model.md](model.md)). A new kind of errand is a new line in the `Errand` list and a new branch where `network_task` runs it. There is still room for one errand at a time, whatever its kind.
+
+**The secret is reached by two tasks too,** since the network's task borrows it for the question to the model: every function of `secret.rs` touches it with device signals off.
 
 An answer is a text that goes into the chat box. Whatever in it comes from outside the kernel has to be cleaned before it is left as the answer.
 

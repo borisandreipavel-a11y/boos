@@ -132,6 +132,8 @@ The page fetch is tested against a server on the test computer, not against the 
 - Three temporary edits point the kernel at the server: `WEB_PORT` becomes the server's port, the call of `name_lookup` is replaced by the fixed address `10.0.2.2` (no name question is sent then), and `root_list` in `encryption.rs` adds the test root to the list. Without the third edit the kernel must refuse the server, which is a test too.
 - The chains used: keys on the curves P-256 and P-384 with both fingerprints, RSA keys of 2048, 3072 and 4096 bits, a leaf made out to another name, a leaf that ran out in 2020, a leaf with an RSA key of 1024 bits, and a chain signed by a made-up authority that copies the name of a real root byte for byte.
 - The real site is for seeing, a few times, that the real thing works. Do not use it for rows of test boots: its own page asks not to be relied on for testing.
+- **A stand-in for the model's provider** is a second such script. It answers the kernel's page fetch with a small page and each question to the model with the next behaviour from a list: a refusal, a good answer, an answer that repeats the key, a web page that is no JSON, an answer in pieces, one cut off, silence, and so on. It checks every request with another JSON reader (Python's) and writes down the site name the link asked for, the request's first line, its notes and whether its body and length note are right. Because the copy's kernel reaches every name at `10.0.2.2`, its certificate is one leaf made out to both names, the example site's and the provider's.
+- **The key in these tests is made up,** typed through QEMU's keys, and stands in no file that goes into a kernel. A real key is never used in a test. The real provider was contacted once, with the made-up key.
 
 ## Deliberate bugs
 
@@ -868,6 +870,39 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 - The chat box test, the Shift test and the test of the secret line still pass. The edits that point the kernel at the test server were made in a copy. The five breaks were made in the project and mended again, and the project's source files were compared with their state before the breaks by a check value.
 - Not verified: an errand asked for at the very moment the address runs out; an answer longer than a few rows; two errands of different kinds.
 - A person ran `run.bat`, typed `fetch` in the chat box of the window, and saw the row about the asking and, about a second later, the row with the site's answer.
+
+- Checked after the change that let the chat box ask the network: a clean export of it differed from the working files in line ends only and held no disk file and no built file. Both builds ran in the export from nothing with no warning and no program made along the way, and Windows recorded no block. Its kernel booted to the prompt with the usual lines and passed the asking tests on the network with no way out and without a network card, and the chat box test.
+
+**Asking the model**
+
+- **Against the stand-in for the provider** on the test computer (see "A server on the test computer"), with the edits in a copy of the project and a made-up key typed through QEMU's keys. For every case the row the kernel said was compared with the row meant, the picture dot by dot, the terminal's bytes searched for pieces of the key, and the stand-in's notes read:
+  - a refusal of the key (401), used-up credit (402), too many requests with the reason as a plain text (429) and with no body at all;
+  - a good answer: `Kernel: the model answered "Hello there, how are you?".`; a good answer of 1,400 signs with signs that are not plain, cut at 300;
+  - a refusal that repeats the key whole, one that repeats its first 14 and last 7 signs, one that writes the key in JSON's roundabout way (every fifth sign as a backslash, a u and four digits), and one in which the key begins five signs before the place where the words are cut: stars in the row each time, and no piece of the key in the terminal;
+  - the first three of these again with three other made-up keys, `e`, `key` and `message`: stars only in the words that came from the stand-in (`"Missing or invalid API ***"`, `"H*llo th*r*, how ar* you?"`), none in the kernel's own words, and the answers still read;
+  - a refusal whose words hold terminal commands and 5,000 letters: cleaned and cut, no byte in the terminal that is not plain text;
+  - a web page that is no JSON (403), bytes that are no answer at all, an answer of more than 100 KB, an answer cut off without the goodbye, an answer in pieces, no answer and a goodbye, silence (given up after the minute), the whole answer and then an open connection (said after the minute, as not whole);
+  - in every request the stand-in saw the site name `api.orcarouter.ai` asked for, TLS 1.3, the first line `POST /v1/chat/completions HTTP/1.0`, five notes, a body that Python's JSON reader takes for exactly what is meant, a length note that fits, and the key whole.
+- **The real provider, once,** with the made-up key, by a copy of the kernel that also printed the raw answer: the name was looked up, the provider's certificate led back to one of the trusted roots, and 1.4 seconds after the asking the row read `Kernel: the provider turned the question down (401): "Invalid API key (request id: ...)".` The raw answer is in [model.md](model.md). Picture right in every dot.
+- **The reader of the answer, with 6,091 damaged answers** fed to `answer_sentence` at startup in a copy: the real refusal, a good answer and two other refusals, each cut at every byte and with every byte changed four ways, and 400 answers of random bytes. A model of the reader written in Python, with Python's own JSON reader, said what was meant. The kernel never stopped. In 3,416 cases it said exactly what the model said; in 2,167, where Python refuses the body, it said it could not read it; in 508, where Python refuses the body, it gave the text of the undamaged answer. No other outcome.
+- **The key in memory,** by a dump of the test machine's whole memory searched for the key and for every piece of six signs of it: after four requests, and before that after thirteen, none of whose answers repeated the key, it stood once, in the room where it is kept, and nowhere else. After answers that repeated the key it stood two or three times: there, and in leftovers of the answer as it arrived (see [open-points.md](open-points.md)).
+- **Where nothing can leave the computer,** with the project's own kernel: without a kept secret `ask` is turned away; with one, on the network with no way out, `Kernel: no answer came, because the network named no name server`; on a machine without a network card it is turned away for want of an address. Also on a screen of 800 by 600. Pictures right in every dot; a boot still prints 32 lines to its prompt (28 without a card).
+- **Both kinds of errand in one boot,** against the stand-in: a fetch, a question, then a question that the stand-in never answers, during which a fetch and a second question were turned away and a normal line was given back within about two seconds; then a fetch and a question again, both answered.
+- **The fetch after it was made general:** the seventeen cases of the encrypted fetch against the TLS test server (four kinds of key, a big page, both ways of scrambling, a cut-off page, a silent server, a plain server, harmful text, and the refusals), twelve fetches asked for in a row, and the tests of the chat box, of Shift and of the secret line with its memory search: all as before.
+- **The network task's stack** while it asks the model: 56,920 bytes of 256 KB, the same for seven kinds of answer and no deeper than a page fetch.
+- **Another file cannot borrow the key:** three tries in a copy, each of which the build refused: making a pass in `chat.rs`, calling `secret_lend` without one, and reaching for the room itself.
+- Breaks made on purpose, each alone, in a copy:
+  - the key not hidden: the key stood in the row and in the terminal, in both echo cases;
+  - the words cut before the key is hidden: the first five signs of the key stood at the end of the row;
+  - the length note one too small: the stand-in's note said so;
+  - the model's words looked for in the wrong place: the good answer was not found;
+  - the limit on the answer's size taken out: the 100 KB answer was read;
+  - the chat box not asking whether a secret is kept: the errand was left, and the sentence was `no answer came, because no key is kept`;
+  - the link told to expect another site's name: `no answer came, because the site's certificate is made out to another name`, and the stand-in never saw a request, so the key was not sent;
+  - **the request not wiped, and the copy of the key in `model_tell` not wiped: neither caught.** The memory search found the same as with the wiping in place; what was left behind had been written over by the time of the dump.
+- A trap: a memory dump taken while a request is under way holds the key a second time, in the request. Take it after the answer's row has come.
+- Not verified: a good answer from the real provider; a real key; an `ask` at the moment the address runs out; a provider that answers in pieces to this kernel's own request.
+- A person ran `run.bat`, typed `key` and a made-up key in the chat box of the window, then `ask`, and saw the provider's refusal of that key as a row in the chat box.
 
 **The split into files**
 

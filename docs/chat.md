@@ -2,7 +2,7 @@
 
 Code: `src/chat.rs`, `src/secret.rs`, the call of `chat_setup` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
 
-The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but two by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. The other is `fetch`, which makes it fetch a page from the web; see "Asking the network" below.
+The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but three by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below.
 
 ## What it does
 
@@ -30,12 +30,12 @@ A secret is a text that the person at the machine types and that nobody else sho
 - **A secret is at most 200 signs long** (`SECRET_LIMIT`). A key pressed after that is ignored.
 - **Where a secret must never go, and does not:** into a row of what was said, to the terminal, into the notebook on the disk. The line `key` itself is an ordinary line and is kept like any other.
 - **Where it is while it is typed:** in `SECRET_TYPED` in `chat.rs`, a room of fixed size at a fixed place. It is not kept in the line being typed, because a text that grows moves in memory as it grows and leaves copies of itself behind that nothing wipes. On Enter the signs are copied to their place in `secret.rs` and the room is wiped.
-- **Where it is kept:** in `SECRET` in `secret.rs`, again a room of fixed size, in memory only. It is gone when the machine is switched off. `secret_keep` wipes the whole room before it puts a new secret in, so nothing of a longer one stays behind a shorter one. `secret_length` says how long the kept secret is. **There is no function that hands the secret out,** and none may be added that prints it, shows it or writes it to the disk; whatever uses the secret later has to be written with the same care.
+- **Where it is kept:** in `SECRET` in `secret.rs`, again a room of fixed size, in memory only. It is gone when the machine is switched off. `secret_keep` wipes the whole room before it puts a new secret in, so nothing of a longer one stays behind a shorter one. `secret_length` says how long the kept secret is. **One function lends the secret out, `secret_lend`, and only to `model.rs`,** which sends it to the model's provider as the key (see [model.md](model.md)); the compiler refuses a call from any other file. No function may be added that prints the secret, shows it or writes it to the disk.
 - **Wiping** is done by `wipe` in `secret.rs`, which writes zeros in a way the compiler may not leave out.
 - **The keyboard's waiting line** holds the numbers of the last keys pressed, a secret's among them. `next_key` now empties each place as it takes the key out; see [interrupts.md](interrupts.md).
 - **On a machine without a usable screen** a secret can be typed all the same, blind: no stars show, and the terminal says how many signs were taken.
 
-Nothing uses the secret yet.
+The secret is used as the key when the model is asked; see "Asking the model" below and [model.md](model.md).
 
 ## Asking the network
 
@@ -44,6 +44,14 @@ Nothing uses the secret yet.
 - **Typing goes on meanwhile.** Lines are given back, and a secret can be typed, while the answer is awaited.
 - **One asking at a time.** A second `fetch` before the answer to the first has come is turned away: `Kernel: I cannot ask the network, because the answer to what I asked before has not come yet`.
 - **On a machine without a network card, or without an address,** it is turned away at once: `Kernel: I cannot ask the network, because this machine has no address on the network`.
+
+## Asking the model
+
+- **The line `ask`, sent by itself, asks the model one fixed question** (`ASK_WORD`; the question is `QUESTION` in `model.rs`). It needs a kept secret, which goes along as the key. Without one: `Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.`
+- It is an errand for the network's task, like `fetch`, and the chat box answers at once, `Kernel: I am asking the model "Say hello in five words."`
+- **The answer comes later, as a row of its own:** what the model answered, why the provider turned the question down, or why no answer came. The sentences are listed in [model.md](model.md). A provider that refuses answers within a second or two; one that stays silent is waited for a minute.
+- **The key that was sent does not show.** If the provider repeats it or a piece of it in its answer, stars stand in its place in the row and in the terminal.
+- **One asking at a time,** of either kind: while the answer to an `ask` or a `fetch` is awaited, both are turned away, `... because the answer to what I asked before has not come yet`. Typing goes on meanwhile.
 - **`chat_say(text)`** is how such a row gets in: it adds a row of the kernel's and repeats it in the terminal. The main loop calls it when an errand's answer has come. Like every function of `chat.rs` it may be called by the main loop only.
 - **Each asking reaches the internet:** one question to the name server and one exchange with the site, as at startup.
 
@@ -105,4 +113,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret that nothing uses yet, or fetches one fixed page, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page or asks the model one fixed question, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

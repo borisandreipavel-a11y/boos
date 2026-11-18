@@ -14,6 +14,7 @@ use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
 use crate::errand::{Errand, errand_answer, errand_network_ready, errand_take};
+use crate::model::model_tell;
 use crate::page::{page_fetch, page_tell};
 use crate::processor::time_stamp;
 use crate::serial::serial_print;
@@ -260,6 +261,8 @@ fn network_task() {
             let answer = match errand {
                 Errand::ExamplePage if has_address => page_tell(&mut interface, &mut card, &mut sockets, name_server),
                 Errand::ExamplePage => "no page came, because this machine has lost its address on the network".into(),
+                Errand::ModelQuestion if has_address => model_tell(&mut interface, &mut card, &mut sockets, name_server),
+                Errand::ModelQuestion => "no answer came, because this machine has lost its address on the network".into(),
             };
             errand_answer(answer);
         }

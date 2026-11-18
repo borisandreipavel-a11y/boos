@@ -16,6 +16,8 @@ use crate::processor::{signals_back, signals_off};
 pub enum Errand {
     // Fetch the example page from the web and say how the site answered.
     ExamplePage,
+    // Ask the model the one question and say what came back.
+    ModelQuestion,
 }
 
 // How far the one errand has got. There is room for one at a time.

@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use crate::errand::{Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
+use crate::model::QUESTION;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::page::SITE;
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
@@ -30,6 +31,11 @@ const SECRET_WORD: &str = "key";
 // The line that, sent by itself, makes the kernel fetch the example page from
 // the web again and say in the chat box how the site answered.
 const FETCH_WORD: &str = "fetch";
+
+// The line that, sent by itself, makes the kernel ask the model one fixed
+// question, with the secret that was taken before as the key, and say in the
+// chat box what came back.
+const ASK_WORD: &str = "ask";
 
 // While a secret is typed, each sign shows as a star. At most this many stars
 // are shown; behind them the row says how many more signs there are.
@@ -381,6 +387,17 @@ pub fn chat_key(letter: u8) {
                 match errand_ask(Errand::ExamplePage) {
                     Ok(()) => format!("Kernel: I am asking the network for the page of {}.", SITE),
                     Err(reason) => format!("Kernel: I cannot ask the network, because {}", reason),
+                }
+            } else if said == ASK_WORD {
+                // A third line that is not given back: it asks the model. That
+                // needs a key, and it is an errand for the network's task too.
+                if secret_length() == 0 {
+                    String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.")
+                } else {
+                    match errand_ask(Errand::ModelQuestion) {
+                        Ok(()) => format!("Kernel: I am asking the model \"{}\"", QUESTION),
+                        Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
+                    }
                 }
             } else {
                 format!("Kernel: you said \"{}\"", said)

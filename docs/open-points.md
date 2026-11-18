@@ -36,7 +36,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch. The kernel has random numbers now, and neither place uses them yet.
 - The stack's clock is the tick count, in steps of 10 ms, and runs slow when timer signals come late.
 - The stack is looked at once per tick whether or not anything happened, because the card sends no signals. smoltcp can say how long it may be left alone (`poll_delay`); that is not used.
-- Only the stack's own task may touch it. The main loop can ask it for one thing, the example page, through an errand (see [tasks.md](tasks.md)); no other task can ask, and nothing else can be asked for.
+- Only the stack's own task may touch it. The main loop can ask it for two things, the example page and one question to the model, through an errand (see [tasks.md](tasks.md)); no other task can ask, and nothing else can be asked for.
 - The copies in `vendor/` do not update by themselves, and smoltcp's limits are fixed in a file; see `vendor/README.md`.
 - Waiting for the gateway's answer is counted in looks, not in time, because it happens at startup with signals off. Tasks can wait for a time now, so network code that runs in a task should use that instead.
 - There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. The network stack's task sends packets now, so this breaks the rule to keep such stretches short: if the card ever were slow to take a packet, ticks and keys would wait too. In QEMU the card has always taken each packet at once, and the wait was never seen to be long.
@@ -53,7 +53,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 - **TLS 1.3 only, and one curve for agreeing on a key.** A site that speaks only the older TLS 1.2, or insists on another curve, is refused. The arithmetic for more is in the crates; the provider does not offer it.
 - **No look at whether a certificate was withdrawn.** A certificate that its issuer has called back before its last day is still believed.
-- **Only the page fetch can use the encrypted link**, one fixed site, inside the network stack's own task. Nothing can be sent but that one request.
+- **Two things can use the encrypted link:** the page fetch and the question to the model, each with one fixed site and one fixed request, inside the network stack's own task. One request per connection, and the link is made anew each time.
 - **Every task has a 256 KB stack because one task needs it.** The network task went 100 KB deep when it made an encrypted link, before the outside crates were built optimized; now it goes 56 KB deep at most, and the others use a few KB. One constant sets the size for all, so each task costs 256 KB of memory. The size was not lowered when the need shrank. A size per task would save the most.
 - **While a link is made the network task does nothing else.** That was about half a second of arithmetic before the outside crates were built optimized; it is about a tenth of a second or less now, judged by how much of its first four seconds the processor rested.
 - The startup check runs on the firmware's stack and uses 42 of the 124 KB free there. That room is what QEMU's firmware leaves; another firmware may leave less. Nothing notices if that stack overflows.
@@ -108,12 +108,26 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## JSON
 
-- **Nothing uses it yet.** The kernel can write a text the JSON way and find a text in a piece of JSON; no request is made with it. See [json.md](json.md).
+- **One request is made with it,** the question to the model, and its answer is read with it. See [json.md](json.md) and [model.md](model.md).
 - **Only texts can be read.** A number, `true`, `false` or `null` can be passed over, not read as a value; a list cannot be walked through without knowing how long it is; nothing says whether a name is there except by asking for its text.
 - **The parts that are passed over are not checked.** Commas, colons and the spelling of numbers and words are not looked at there, and a square bracket closes a curly one. The kernel hands out the right text from some pieces that a strict reader refuses.
 - **A text is copied whole, however long.** An answer with a text of many megabytes asks the heap for as much, and a request for memory that cannot be met stops the kernel (see "Memory"). Whoever hands an answer to the reader has to limit its size first.
 - **The whole piece has to be in memory at once.** It cannot be read as it arrives.
 - **The values of the startup check are made by a script that is not in the repository.** [json.md](json.md) says how to make them again.
+
+## Asking the model
+
+- **One fixed question.** What is asked is a constant; a typed line cannot be the question yet, and the answer is only said, not used.
+- **No good answer from the real provider has been seen.** Only its refusal of a made-up key. Where the model's words lie in a good answer is from the provider's documentation and from a stand-in written after it. Whether the model thinks before it answers, and whether 300 tokens then leave room for the answer, is not known.
+- **The model's words are cut at 300 signs** and shown as plain signs only: a letter with an accent becomes dots.
+- **An answer in pieces is not read.** If a provider sends its answer in pieces with their lengths in between ("chunked"), the body does not read as JSON. The provider did not answer that way to this kernel's request.
+- **The end of an answer is the closed connection.** A provider that sends its whole answer and then leaves the connection open is waited for until the minute is over, and its answer is then called "not whole". The length the provider names is not used.
+- **An asking can hold the network's task for a minute and more,** and cannot be called off.
+- **If the provider repeats the key in its answer, copies of it stay behind in memory.** What is said hides the key, but the answer as it arrived was unscrambled into rooms that are given back to the heap unwiped: the room for arrived bytes, a copy the encryption library makes of each piece, the collected answer and the words read out of it. A test machine's memory held the key two or three times after such answers, once in its own room and otherwise in such leftovers. A heap that wipes whatever is given back to it would end this; it does not exist. The real provider's refusal did not repeat the key.
+- **The wiping after a request is not shown to matter by a test.** The request passes through the encryption library, which makes a copy to scramble; no copy was found in memory afterwards. With the wiping of the request, or of the copy of the key that an asking works with, taken out on purpose, none was found either.
+- **A short key hides much.** A key shorter than six signs is hidden wherever it stands whole in the provider's or the model's words, so a key of one letter turns that letter into a star everywhere in them. A piece of five signs or fewer of a longer key is not hidden.
+- **The request names nothing about this kernel** (no note saying what kind of program asks). A provider that wants one would refuse; this one did not.
+- **Refusals are not told apart.** A wrong key, used-up credit and too many requests all read "the provider turned the question down", with the number and the provider's words.
 
 ## Random numbers and the date
 
@@ -180,16 +194,16 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The chat box
 
-- **The kernel gives the typed line back, with two lines set apart.** `key` takes a secret that nothing uses yet, and `fetch` fetches the example page and says how the site answered. Nothing else reads a line, and no model answers yet.
+- **The kernel gives the typed line back, with three lines set apart.** `key` takes a secret, `fetch` fetches the example page and says how the site answered, and `ask` asks the model one fixed question. Nothing reads what else is typed: a typed line cannot be the question yet.
 - **Only the main loop may use the chat box.** Its lists are not protected. Another task can get a text into it in one way only, as the answer to an errand (see [tasks.md](tasks.md)).
 - **There is room for one errand at a time,** and only the main loop may ask. A second asking is turned away until the answer to the first was picked up. Nothing can call an errand off once it is asked for.
-- **While an errand runs, the network's task does nothing else.** It is the same for its own fetch at startup: no other use of the network gets a turn until the work is done or gives up, which can take a quarter of a minute and more.
+- **While an errand runs, the network's task does nothing else.** It is the same for its own fetch at startup: no other use of the network gets a turn until the work is done or gives up, which can take a quarter of a minute and more, and a minute and more when the model is asked and its provider stays silent.
 - **An errand's answer is one text.** It cannot say anything but that sentence: not whether the work went well as a yes or no, and not a second piece of data.
 - **Nothing says in the chat box that an answer is still awaited,** except the row that the asking was made. The row of the answer simply appears.
-- **A secret can be typed, and nothing uses it yet.** It is kept in memory only, so it has to be typed again after every start.
+- **A secret is kept in memory only,** so it has to be typed again after every start. One thing uses it: the question to the model, as its key.
 - **A secret is typed blind.** The stars and the count are all the person sees; a wrong sign cannot be found except by typing the whole again. There is no way to leave the asking but Enter on nothing.
 - **A secret's signs pass through places that are not wiped:** the processor's registers and the stack of the main loop while a key is handled, a byte at a time. The dump of a test machine's memory held a typed secret exactly once and no further run of six of its signs, which is as far as that was looked into; where in memory the one copy lay was not looked at, and it is the breaks made on purpose that tie the count to the two rooms made for it.
-- **Anything in the kernel can read the secret's room.** The kernel has one memory for all its code; only apps in the box are shut out of it.
+- **Anything in the kernel can read the secret's room.** The kernel has one memory for all its code; only apps in the box are shut out of it. The compiler lets one file borrow the secret through `secret_lend`; that is a rule for code that keeps to Rust's rules, not a wall.
 - **Six rows of what was said are shown,** and there is no scrolling back. Of what was said before a switch-off, only the last line that was sent is said again at the next start.
 - **A long text is cut into rows where the row ends,** in the middle of a word if need be.
 - **A line is at most 50 signs,** and there is no way to move inside it; only its last sign can be taken away.

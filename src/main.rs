@@ -46,6 +46,7 @@ mod secret; // A secret typed by the person at the machine, kept in memory only.
 mod errand; // Errands: work the main loop hands to the network's task.
 mod json; // JSON: writing a text that way, and finding a text in it.
 mod json_values; // The values the check of JSON is made against.
+mod model; // Asking the model a question through its provider.
 
 use alloc::format;
 use alloc::string::String;

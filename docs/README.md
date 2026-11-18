@@ -25,10 +25,11 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 11. [json.md](json.md): making and reading JSON, the form that services on the internet speak: what the kernel's own code for it does, its rules for what comes from outside, the check at startup.
 12. [screen.md](screen.md): the screen's memory, painting rectangles, the rule that keeps drawing inside the screen, letters, and the box that shows an app's text.
 13. [chat.md](chat.md): the chat box, where the person at the machine types and reads the answers.
-14. [disk.md](disk.md): the disk: which kind and why, finding its controller, setting it up, a command, asking the disk who it is, reading a block, the parts of a disk and the kernel's own part, writing a block and the count of starts, the disk file in QEMU and the script that divides it.
-15. [notebook.md](notebook.md): the notebook, where named things are kept on the disk: its layout, opening it, keeping and finding, and who may use it.
-16. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-17. [open-points.md](open-points.md): known limits and what later work must deal with.
+14. [model.md](model.md): asking the model a question through its provider: which provider and which model, the request, reading the answer, and how the key is handled.
+15. [disk.md](disk.md): the disk: which kind and why, finding its controller, setting it up, a command, asking the disk who it is, reading a block, the parts of a disk and the kernel's own part, writing a block and the count of starts, the disk file in QEMU and the script that divides it.
+16. [notebook.md](notebook.md): the notebook, where named things are kept on the disk: its layout, opening it, keeping and finding, and who may use it.
+17. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+18. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -53,7 +54,7 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `pci.rs` | The PCI list of cards and devices: `pci_read`, `pci_write`, `pci_find`, `pci_find_kind`, `pci_memory_address` | [network.md](network.md) |
 | `network_card.rs` | The network card: `network_card_find`, `network_card_setup`, its waiting lines, `network_card_send`, `network_card_receive` | [network.md](network.md) |
 | `network.rs` | One question by hand (`gateway_ask`), then the network stack: the adapter `Card`, `network_start`, and `network_task`, which also starts the page fetch and runs the errands the main loop leaves for it | [network.md](network.md) |
-| `page.rs` | Fetching one page from the web over an encrypted link: `page_get`, which does it, `page_fetch`, which prints the report at startup, `page_tell`, which gives one sentence about it to whoever asked, the name lookup, the connection, `ConnectionWire`, and `Answer`, which reads what the site sends | [network.md](network.md) |
+| `page.rs` | Fetching one page from the web over an encrypted link: `page_get`, which does it, `page_fetch`, which prints the report at startup, `page_tell`, which gives one sentence about it to whoever asked; `site_exchange`, one exchange with any site, which the fetch and the question to the model both go through; the name lookup, the connection, `ConnectionWire`, and `Answer`, which reads what the site sends | [network.md](network.md) |
 | `random.rs` | Random numbers from the processor: `random_setup`, `random_number`, `random_fill` | [random-and-date.md](random-and-date.md) |
 | `clock.rs` | The clock chip: `clock_read`, which gives a `Date`, and `seconds_since_1970` | [random-and-date.md](random-and-date.md) |
 | `encryption.rs` | The startup check of the outside encryption code and the list of roots: `encryption_check`, `encryption_sound`, `root_list` | [encryption.md](encryption.md) |
@@ -63,11 +64,12 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `app_box.rs` | The locked box that apps run in, and what an app may ask the kernel for: `box_run`, `box_check`, `box_accepts`, `box_script`, which hands a script to a program in the box, `kernel_print`, `kernel_show`, the limits, and three whole apps written by hand, `ADDING_APP`, `GREETING_APP` and `SHOWING_APP` | [box.md](box.md) |
 | `screen.rs` | Drawing on the screen: `Colour`, `screen_setup`, `screen_size`, `screen_rectangle`, `screen_fill`, `screen_text`, and `screen_panel` with `PANEL_STYLE`, the box an app's text is shown in and its look | [screen.md](screen.md) |
 | `letters.rs` | The shapes of the letters, digits and signs, drawn by hand as grids of dots: `SHAPES`, `letter_shape` | [screen.md](screen.md) |
-| `chat.rs` | The chat box: `chat_setup`, `chat_key`, `chat_recall`, which says the line kept from before the last switch-off, the rows of what was said, the line being typed, the secret line (`secret_key`, the stars), the line that asks the network, `chat_say`, which adds a row the kernel says by itself, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
+| `chat.rs` | The chat box: `chat_setup`, `chat_key`, `chat_recall`, which says the line kept from before the last switch-off, the rows of what was said, the line being typed, the secret line (`secret_key`, the stars), the line that asks the network, the line that asks the model, `chat_say`, which adds a row the kernel says by itself, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
 | `errand.rs` | Errands, the way the main loop asks the network's task to do something and gets the answer back: `errand_ask`, `errand_take`, `errand_answer`, `errand_answer_take`, `errand_network_ready`, `Errand` | [tasks.md](tasks.md) |
 | `json.rs` | JSON: `json_text`, which writes a text the JSON way, `json_find_text`, which finds one text in a piece of JSON by its path (`Step`), and `json_check`, the check at startup | [json.md](json.md) |
 | `json_values.rs` | The values that check is made against. Made by a script from another JSON reader's answers, not written by hand | [json.md](json.md) |
-| `secret.rs` | A secret typed by the person at the machine, kept in memory only: `secret_keep`, `secret_length`, `wipe`, `SECRET_LIMIT`. Nothing here hands the secret out | [chat.md](chat.md) |
+| `secret.rs` | A secret typed by the person at the machine, kept in memory only: `secret_keep`, `secret_length`, `wipe`, `SECRET_LIMIT`, and `secret_lend`, which lends it to the one file that can show a pass | [chat.md](chat.md), [model.md](model.md) |
+| `model.rs` | Asking the model one question through its provider: `model_tell`, the request, `answer_parts` and `answer_sentence`, which read the answer, `key_hide`, which keeps the key out of what is said, and `KeyPass`, the pass for borrowing the key | [model.md](model.md) |
 | `disk.rs` | The disk: `disk_controller_find`, which looks for the controller that disks are plugged into, `disk_setup`, which sets it up and gives a `Disk` with the first disk's name and size, `disk_read`, which reads one block, `disk_write`, which writes one and can be called from `parts.rs` only, and `block_text` | [disk.md](disk.md) |
 | `parts.rs` | The parts of the disk: `part_find`, which reads the disk's list of parts and finds the kernel's own, `part_read` and `part_write`, which read and write one block of that part, and `WriteTicket` | [disk.md](disk.md) |
 | `starts.rs` | A count of the kernel's starts, kept on the disk: `start_count` | [disk.md](disk.md) |
@@ -89,7 +91,7 @@ Which file uses which:
 - `encryption.rs` uses `encryption_values.rs` and the crates for encryption. `provider.rs` uses `random.rs` and those crates. `tls.rs` uses `provider.rs`, `encryption.rs`, `clock.rs`, `random.rs`, `serial.rs`, `page.rs` (for `plain_text`) and rustls.
 - `app_box.rs` uses `page.rs` (for `plain_text`), `serial.rs`, `screen.rs` (for `screen_panel`) and the crate wasmi.
 - `screen.rs` uses `firmware.rs` (for `Screen`), `page_tables.rs`, `processor.rs` and `letters.rs`. `letters.rs` uses nothing.
-- `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`), `serial.rs`, `notebook.rs` and `secret.rs`. `secret.rs` uses nothing. `json.rs` uses `json_values.rs` and nothing else. `errand.rs` uses `processor.rs`; `chat.rs` and `network.rs` use it, and `chat.rs` uses `page.rs` for the site's name.
+- `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`), `serial.rs`, `notebook.rs` and `secret.rs`. `secret.rs` uses `processor.rs`, and `model.rs` for the pass. `model.rs` uses `page.rs`, `json.rs`, `secret.rs` and `network.rs` (for `Card`); `network.rs` uses it, and `chat.rs` uses it for the question. `json.rs` uses `json_values.rs` and nothing else. `errand.rs` uses `processor.rs`; `chat.rs` and `network.rs` use it, and `chat.rs` uses `page.rs` for the site's name.
 - `disk.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs`, `processor.rs` and `page.rs` (for `plain_text`). `parts.rs` uses `disk.rs`, and `disk.rs` uses `parts.rs` for the ticket that writing asks for. `starts.rs` uses `parts.rs` and `disk.rs`, and so does `notebook.rs`.
 - `interpreter.rs` uses `app_box.rs`, and the file that building the folder `interpreter/` makes.
 
@@ -133,7 +135,7 @@ The code is written to be readable without a background in kernels: plain words,
 **Shared values**
 
 - A value shared between a signal handler and other code is an atomic from `core::sync::atomic`, used with `Ordering::Relaxed`.
-- Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed. Four files depart from "by value": the chat box keeps two lists that grow, which cannot be copied in and out, so `chat.rs` has two small functions that hand them out through their addresses, and a third for the room a secret is typed into; `secret.rs` reaches the room where the secret is kept in the same way, so that the secret is never copied; `notebook.rs` has one such function for its list of names; and `errand.rs` reaches the errand and the answer that wait there in the same way, with device signals off, because two tasks touch them. The rule that goes with them is written above them and in [chat.md](chat.md).
+- Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed. Four files depart from "by value": the chat box keeps two lists that grow, which cannot be copied in and out, so `chat.rs` has two small functions that hand them out through their addresses, and a third for the room a secret is typed into; `secret.rs` reaches the room where the secret is kept in the same way, so that no copy of the secret is made there (the one file that borrows it makes one, and wipes it); `notebook.rs` has one such function for its list of names; and `errand.rs` reaches the errand and the answer that wait there in the same way, with device signals off, because two tasks touch them. The rule that goes with them is written above them and in [chat.md](chat.md).
 - Several tasks run at once, and a switch can happen between any two instructions. State that more than one task changes is changed with device signals off: `let were_on = signals_off(); ... signals_back(were_on);`. See [tasks.md](tasks.md).
 - Signal handlers only count or store. They never print.
 

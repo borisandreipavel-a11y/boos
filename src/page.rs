@@ -49,18 +49,86 @@ const SENDING_ROOM: usize = 512;
 fn page_get(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) -> Result<Answer, String> {
     // `let Some(..) = .. else` means: if there is one, go on with it;
     // if there is none, do what stands in the braces.
+    // The request, in the web's own language (HTTP): "GET /" asks for the
+    // site's front page, "Host" names the site, because one machine can serve
+    // many, and the empty line says that the request ends here. With
+    // "HTTP/1.0" the site closes the connection once the page is sent.
+    let request = format!("GET / HTTP/1.0\r\nHost: {}\r\n\r\n", SITE);
+
+    // The piece of code between the bars (a closure) is what takes each piece
+    // of the answer as it comes in.
+    let mut answer = Answer::new();
+    let site_finished = site_exchange(interface, card, sockets, name_server, SITE, request.as_bytes(), ANSWER_WAIT, &mut |bytes| {
+        for byte in bytes {
+            answer.take(*byte);
+        }
+    })?;
+    // The page counts as whole only if the site said, through the encrypted
+    // link itself, that it had sent everything.
+    answer.complete = site_finished;
+    answer.finish();
+    if answer.length == 0 {
+        return Err("the site sent nothing".into());
+    }
+    Ok(answer)
+}
+
+// One exchange with a site over an encrypted link: looks the site's name up,
+// connects, lets the site prove who it is, sends `request`, and hands every
+// piece of the answer to `taker`. `wait` is how many seconds the greeting and
+// the answer together may take. Answers "true" if the site said through the
+// link itself that it had sent everything. Whatever goes wrong comes back as
+// a reason in words. On the way it prints which address the name belongs to.
+// Only the network's task may call this.
+pub fn site_exchange(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    site: &str,
+    request: &[u8],
+    wait: u64,
+    taker: &mut dyn FnMut(&[u8]),
+) -> Result<bool, String> {
     let Some(name_server) = name_server else {
         return Err("the network named no name server".into());
     };
 
-    // The page is fetched over an encrypted link or not at all. If this
+    // The exchange happens over an encrypted link or not at all. If this
     // machine cannot encrypt, nothing is sent, not even the site's name.
     secure_ready()?;
 
-    let address = name_lookup(interface, card, sockets, name_server)?;
-    serial_print(&format!("Network: the name {} belongs to the address {}\r\n", SITE, address));
+    let address = name_lookup(interface, card, sockets, name_server, site)?;
+    serial_print(&format!("Network: the name {} belongs to the address {}\r\n", site, address));
 
-    page_ask(interface, card, sockets, address)
+    // A connection is an agreement between two machines to pass bytes back
+    // and forth so that none is lost and all arrive in order: each side
+    // numbers its bytes, the other side confirms what has arrived, and what
+    // is not confirmed is sent again. The network stack does all of that.
+    // This opens a connection to the site, has the conversation, and ends the
+    // connection again.
+    let connection = sockets.add(tcp::Socket::new(
+        tcp::SocketBuffer::new(vec![0; ARRIVAL_ROOM]),
+        tcp::SocketBuffer::new(vec![0; SENDING_ROOM]),
+    ));
+    let result = conversation(interface, card, sockets, connection, address, site, request, wait, taker);
+
+    // Say goodbye. If the site finished properly, finish properly too.
+    // Otherwise tell the site that this side has dropped the connection.
+    let socket = sockets.get_mut::<tcp::Socket>(connection);
+    match &result {
+        Ok(true) => socket.close(),
+        _ => socket.abort(),
+    }
+    let end = wait_end(GOODBYE_WAIT);
+    loop {
+        stack_turn(interface, card, sockets);
+        if !sockets.get_mut::<tcp::Socket>(connection).is_active() || wait_is_over(end) {
+            break;
+        }
+    }
+    sockets.remove(connection);
+    result
 }
 
 // Fetches the site's page for somebody who asked for it, and says in one
@@ -135,9 +203,10 @@ fn name_lookup(
     card: &mut Card,
     sockets: &mut SocketSet,
     name_server: Ipv4Address,
+    site: &str,
 ) -> Result<IpAddress, &'static str> {
     let asker = sockets.add(dns::Socket::new(&[IpAddress::Ipv4(name_server)], vec![]));
-    let question = match sockets.get_mut::<dns::Socket>(asker).start_query(interface.context(), SITE, DnsQueryType::A) {
+    let question = match sockets.get_mut::<dns::Socket>(asker).start_query(interface.context(), site, DnsQueryType::A) {
         Ok(question) => question,
         Err(_) => {
             sockets.remove(asker);
@@ -166,37 +235,7 @@ fn name_lookup(
     answer
 }
 
-// ---------- Asking for the page ----------
-
-// A connection is an agreement between two machines to pass bytes back and
-// forth so that none is lost and all arrive in order: each side numbers its
-// bytes, the other side confirms what has arrived, and what is not confirmed
-// is sent again. The network stack does all of that. This opens a connection
-// to the site, has the conversation, and ends the connection again.
-fn page_ask(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, address: IpAddress) -> Result<Answer, String> {
-    let connection = sockets.add(tcp::Socket::new(
-        tcp::SocketBuffer::new(vec![0; ARRIVAL_ROOM]),
-        tcp::SocketBuffer::new(vec![0; SENDING_ROOM]),
-    ));
-    let result = conversation(interface, card, sockets, connection, address);
-
-    // Say goodbye. If the site finished properly, finish properly too.
-    // Otherwise tell the site that this side has dropped the connection.
-    let socket = sockets.get_mut::<tcp::Socket>(connection);
-    match &result {
-        Ok(answer) if answer.complete => socket.close(),
-        _ => socket.abort(),
-    }
-    let end = wait_end(GOODBYE_WAIT);
-    loop {
-        stack_turn(interface, card, sockets);
-        if !sockets.get_mut::<tcp::Socket>(connection).is_active() || wait_is_over(end) {
-            break;
-        }
-    }
-    sockets.remove(connection);
-    result
-}
+// ---------- The conversation ----------
 
 // The conversation itself: connect, then greet the site, send the request and
 // take in the answer over an encrypted link.
@@ -206,7 +245,11 @@ fn conversation(
     sockets: &mut SocketSet,
     connection: SocketHandle,
     address: IpAddress,
-) -> Result<Answer, String> {
+    site: &str,
+    request: &[u8],
+    wait: u64,
+    taker: &mut dyn FnMut(&[u8]),
+) -> Result<bool, String> {
     // This side needs a port number too. Any number from the range kept for
     // this use will do. The processor's count of its own steps picks one, so
     // that it differs from one start of the kernel to the next.
@@ -232,31 +275,11 @@ fn conversation(
         }
     }
 
-    // The request, in the web's own language (HTTP): "GET /" asks for the
-    // site's front page, "Host" names the site, because one machine can serve
-    // many, and the empty line says that the request ends here. With
-    // "HTTP/1.0" the site closes the connection once the page is sent.
-    let request = format!("GET / HTTP/1.0\r\nHost: {}\r\n\r\n", SITE);
-
     // From here on nothing travels in the open. The encrypted link greets the
     // site, checks its certificate, sends the request scrambled, and hands
-    // over the answer unscrambled, piece by piece. The piece of code between
-    // the bars (a closure) is what takes each piece of the answer.
-    let mut answer = Answer::new();
-    let mut wire = ConnectionWire { interface, card, sockets, connection, end: wait_end(ANSWER_WAIT) };
-    let site_finished = secure_exchange(SITE, request.as_bytes(), &mut wire, &mut |bytes| {
-        for byte in bytes {
-            answer.take(*byte);
-        }
-    })?;
-    // The page counts as whole only if the site said, through the encrypted
-    // link itself, that it had sent everything.
-    answer.complete = site_finished;
-    answer.finish();
-    if answer.length == 0 {
-        return Err("the site sent nothing".into());
-    }
-    Ok(answer)
+    // over the answer unscrambled, piece by piece.
+    let mut wire = ConnectionWire { interface, card, sockets, connection, end: wait_end(wait) };
+    secure_exchange(site, request, &mut wire, taker)
 }
 
 // The connection, in the form the encrypted link wants it: something that
