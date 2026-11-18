@@ -2,6 +2,8 @@
 
 This folder holds copies of seven crates that were not written for this kernel. Everything else in the repository was.
 
+Outside code that needed no copy is not listed here. The crates for encryption, wasmi and its helpers are fetched from crates.io unchanged; the notes on encryption and on the box say which. So is omnilua, the interpreter for Lua, which is not compiled into the kernel but into a program the kernel carries; its record, with the notices its licence asks to be kept, is in `docs/interpreter.md`.
+
 | Folder | Crate and version | Taken from | Licence | Licence file |
 | --- | --- | --- | --- | --- |
 | `smoltcp/` | smoltcp 0.14.0, a network stack | crates.io | 0BSD | `smoltcp/LICENSE-0BSD.txt` |

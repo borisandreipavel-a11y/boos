@@ -1,0 +1,12 @@
+# Build for WebAssembly, not for the machine the kernel runs on. Cargo reads
+# this file only when it is started from inside this folder, so the
+# interpreter is always built from here: `cd interpreter`, then
+# `cargo build --release`. `run.bat` does that.
+[build]
+target = "wasm32-unknown-unknown"
+
+# A WebAssembly program made from Rust sets aside 1 MB of its memory as its
+# stack unless told otherwise, and the box allows an app 1 MB in all, so such
+# a program would be turned away before it began. 256 KB is plenty here.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=262144"]

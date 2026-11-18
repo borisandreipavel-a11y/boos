@@ -6,9 +6,11 @@ There are no automated tests. The kernel is verified by booting it in QEMU, read
 
 ## Build and run
 
-- `cargo build` builds `target\x86_64-unknown-uefi\debug\boos.efi`.
-- The very first build on a computer fetches 64 crates from crates.io, about 3.4 MB, so it needs the internet once. After that, building works without it. Seven crates are not fetched; they are copies in `vendor/`. A build from nothing takes about 16 seconds.
-- `run.bat`, run from the project root, builds, copies that file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, a disk controller with the file `disk.img` as its disk, the UEFI firmware file, the `esp` folder as a second disk to boot from, and the serial port connected to the terminal. It makes `disk.img` the first time, 16 MB, with `qemu-img`, which comes with QEMU, and has the script `make-disk.ps1` divide it into parts.
+- Two things are built, in this order. `cargo build --release`, started from inside the folder `interpreter`, builds the interpreter for Lua, `interpreter\target\wasm32-unknown-unknown\release\interpreter.wasm`. It needs Rust's WebAssembly target, added once with `rustup target add wasm32-unknown-unknown`. See [interpreter.md](interpreter.md).
+- `cargo build`, started from the project root, then builds the kernel, `target\x86_64-unknown-uefi\debug\boos.efi`, which reads the interpreter's file in. Without that file the kernel's build stops with `couldn't read ... interpreter.wasm`.
+- **A test must build both, and see that the kernel holds the interpreter it just built.** A kernel built alone carries whatever interpreter was built last.
+- The very first build on a computer fetches 64 crates from crates.io for the kernel, about 3.4 MB, and 8 for the interpreter, about 0.8 MB, so it needs the internet once. After that, building works without it. Seven crates are not fetched; they are copies in `vendor/`. A build of both from nothing takes about 50 seconds, about 20 of them for the interpreter; with nothing changed it takes about a second.
+- `run.bat`, run from the project root, builds both, copies the kernel's file to `esp\EFI\BOOT\BOOTX64.EFI` and starts QEMU with 256 MB, QEMU's usual processor plus the instruction for random numbers (`-cpu qemu64,+rdrand`), a virtio network card on QEMU's built-in network, a disk controller with the file `disk.img` as its disk, the UEFI firmware file, the `esp` folder as a second disk to boot from, and the serial port connected to the terminal. It makes `disk.img` the first time, 16 MB, with `qemu-img`, which comes with QEMU, and has the script `make-disk.ps1` divide it into parts.
 - **A test boot never uses the project's `disk.img`.** That file holds what was stored on the machine, and every boot with a divided disk file writes to it: the kernel counts its starts there. Make a disk file for the test in a temporary folder (`qemu-img create -f raw <path> 16M`) and name that one in the `-drive` option.
 - The kernel's lines appear in the terminal, not in the QEMU window. The QEMU window shows what the kernel paints: a dark blue screen with one sentence in white, in the middle a light box with an app's text, and along the bottom the chat box. Keys are typed in the QEMU window, not in the terminal, and appear in the chat box; a line sent with Enter is repeated in the terminal with the kernel's answer.
 - What a normal boot prints is listed in [startup.md](startup.md).
@@ -655,6 +657,37 @@ Every check below used a test disk file of its own. The disk file was judged fro
 - With the notebook in: a boot has one line more, 29 on a machine with no way out to the internet, and one more again when a line was kept. **"Free memory" reads 195 MB with a divided disk** and 196 with an undivided one; the kernel before read 196 with both. The kernel's file grew by 18 KB and the figure is rounded down. The rest count read 399. Every line ends in bytes 13 and 10 and no byte is anything but plain text. The chat box test and the Shift test still pass. The build: no warning, no program compiled along the way is run, and Windows recorded no block.
 - Not verified: keeping a line while the encrypted fetch of a page is at work; a real disk; a power cut in the middle of writing one block, which was only played by building spoiled blocks by hand; the reading back after a write, which was not broken on purpose here as it was for the count of starts; a write the disk loses without saying so; how long keeping a line takes on a real disk; a notebook on a part larger than 14 MB; use from a task.
 - A person ran `run.bat`, typed a line in the chat box of the window and sent it, closed the window, ran `run.bat` again, and saw the line said again. A copy of that disk file, read by the outside reader afterwards, had its list of parts in order, a head of version 1, one entry under the name `last line`, the count of starts in order, and nothing but zeros in every other block of the kernel's part. That disk file had been made before the notebook came, with a count of starts already in it.
+- Checked after the change that brought the notebook in: a clean export of it differed from the working files in line ends only and held no disk file; it built on its own in 18 seconds with no warning and no program run along the way, and Windows recorded no block. Its kernel began a notebook on a disk divided by the exported script, kept a typed line (three blocks of the part changed: the head, the entry, the count), said it again at the next start (one block changed, the count), left an undivided disk byte for byte the same, and passed the chat box test with every sent line found in the notebook by the outside reader.
+
+**The interpreter on board**
+
+- **Builds.** The interpreter was built inside the project folder: 20 seconds the first time, no program made along the way, and Windows recorded no block; the linker for WebAssembly ran. Nothing was fetched: the eight crate files were on the computer from a trial. A copy of the same source built in two other folders gave the same 761,879 bytes, and so did the source with the other kind of line end.
+- **What the built file is,** read by a script that walks a WebAssembly file's sections without running it: it asks its host for `kernel.print` and nothing else; shows `memory`, `room` and `run`; has 1,158 functions and a table of 272 places; asks for 5 pages of memory at its start and names no upper bound.
+- **The line.** On the machine `run.bat` starts: `Interpreter: a program of 761879 bytes that understands Lua is on board, and the box accepts it`, right after the greeting app's line, 1.2 to 1.4 seconds after it. The byte count is the built file's. Every line of the boot ends in bytes 13 and 10 and no byte is anything but plain text. "Free memory" reads 195 MB as before; the kernel's file is 7.1 MB, 6.3 before.
+- **Other machines,** the same line on each: `-cpu max`, no network card, no disk, no display card, 96 MB, 128 MB, 512 MB, 2 GB.
+- **The check alone, at its place in the startup,** by a temporary snippet in a copy of the kernel: 44,920 bytes deep on the firmware's stack, measured by filling the stack below with a pattern first; 556 frames taken for the heap by the first check and none by a second and third; no fuel used.
+- **Files the box should not take,** each put in the interpreter's place in a copy of the project, the kernel built with it and booted. Every one gave `Interpreter: not usable, because ...`, and the kernel carried on to the prompt with every line in order:
+  - a compiler-made program that asks for 17 pages of memory at its start: `failed to instantiate memory: a resource limiter denied to allocate or grow the linear memory`;
+  - a good small program with a `start` and no `room`: `it shows no function called `room``;
+  - the first half of the file: `unexpected end-of-file (at offset 0x5cb7f)`;
+  - an empty file: `unexpected end-of-file (at offset 0x0)`;
+  - `run`, `room` and `memory`, each under another name in turn: `it shows no function called ...` twice and `it shows no memory called `memory``;
+  - a call the kernel does not offer (`kernel.prinz`): `cannot find definition for import kernel::prinz ...`, cut at 120 signs;
+  - one byte changed in the middle of the code: `unknown label: branch depth too large (at offset 0x5d00a)`, refused by the check before anything ran;
+  - a text file: `magic header not detected: bad magic number ...`.
+  - With the real file in that copy, as a control, the line was the good one.
+- **That the built file is the one that was tried.** The program's source was tidied when it came into the repository, and the built file then differed in some bytes from the one of the trial. So the final file was put through the trial's copy of the kernel, which hands scripts over through `room` and `run`: eight small Lua scripts gave the same 72 printed lines as before.
+- **`run.bat` as a whole file,** in a copy of the project with real builds and only the line that starts QEMU replaced:
+  - a fresh copy: both built in 50 seconds, the kernel put in place holds the interpreter just built, which is byte for byte the project's, and no program was made along the way;
+  - again with nothing changed: 1 second;
+  - the interpreter's source broken: `The interpreter could not be built`, the kernel is not built, QEMU is not started, and the terminal is left in the project's folder, not in `interpreter`;
+  - mended: both built again;
+  - the folder `interpreter` missing: it stops at once, and nothing is built in the wrong place;
+  - the kernel built alone in a fresh copy, without the interpreter: `couldn't read ... interpreter.wasm`.
+- The chat box test and the Shift test still pass, every dot and every line.
+- One test run was void and done again: two tests ran at the same time and both wanted the same port for QEMU's monitor, so one of them never booted. See "Oddities seen once".
+- Not verified: a script handed to the interpreter by the kernel itself (only a trial's copy does that); what `room` and `run` take and give, which the check does not look at; a build on another computer or with another version of the compiler; a computer without the WebAssembly target, beyond what the kernel's build says without the file; a boot that fetches the real page with this kernel.
+- A person ran `run.bat`, which built both, and saw the interpreter's line in the terminal after the greeting app's line.
 
 **The split into files**
 
@@ -669,5 +702,7 @@ Every check below used a test disk file of its own. The disk file was judged fro
 - Keyboards with a layout other than US.
 
 ## Oddities seen once
+
+- **Two test boots at once.** Each windowless boot gives QEMU a port for its monitor. Two tests started at the same time with the same port: the second QEMU ends at once with `Failed to find an available port`, and its test reports a kernel that printed nothing. Run tests one after another, or give each its own port.
 
 - **One silent boot.** One boot out of roughly two hundred printed "Hello from my kernel!" and then nothing, with QEMU still running. It was the first boot of the build that added the heap, it stopped before any memory code runs, and it did not come back in 56 further boots, 20 of them with the compiler running alongside. Unexplained. If it comes back, `info registers` tells the two candidates apart: a processor asleep in the main loop (`HLT=1`) means the serial port test failed and the kernel is only mute; anything else means it is stuck.

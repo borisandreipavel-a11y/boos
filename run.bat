@@ -1,4 +1,15 @@
 @echo off
+rem Two things are built. First the interpreter, a program that the kernel
+rem carries inside it. It is built from inside its own folder, because that
+rem is where its settings are. Then the kernel itself.
+pushd interpreter || exit /b 1
+cargo build --release
+if %errorlevel% neq 0 (
+    popd
+    echo The interpreter could not be built
+    exit /b 1
+)
+popd
 cargo build || exit /b 1
 if not exist esp\EFI\BOOT mkdir esp\EFI\BOOT
 del /Q esp\EFI\BOOT\BOOTX64.EFI 2>nul

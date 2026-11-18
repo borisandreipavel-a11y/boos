@@ -320,6 +320,25 @@ pub fn box_run(program: &[u8]) -> Result<(), String> {
     start.call(&mut store, ()).map_err(reason)
 }
 
+// Asks whether the box would take a program that is not an app with a
+// `start`, without running any of it: gets the program ready as for a run,
+// with the same check and the same limits, and then looks whether it shows
+// the outside a memory called `memory` and a function under each of the
+// names in `functions`. The interpreter is such a program: it is not run
+// once from a `start`, but handed a script and told to carry it out.
+pub fn box_accepts(program: &[u8], functions: &[&str]) -> Result<(), String> {
+    let (store, app) = box_start(program)?;
+    if app.get_memory(&store, "memory").is_none() {
+        return Err(String::from("it shows no memory called `memory`"));
+    }
+    for name in functions {
+        if app.get_func(&store, name).is_none() {
+            return Err(format!("it shows no function called `{}`", name));
+        }
+    }
+    Ok(())
+}
+
 // wasmi's own words for what went wrong, or the kernel's from `kernel_print`.
 // wasmi's can hold names taken from the program, which is text from outside,
 // so they are cleaned before they are shown and cut at 120 signs.

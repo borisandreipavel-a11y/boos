@@ -50,6 +50,8 @@ Getting an app ready is `box_start(program)`. Its steps:
 
 `box_run` then finds `start` by name, sees that it takes and gives nothing, and calls it. `box_check` uses `box_start` too, and calls a function `add` instead.
 
+`box_accepts(program, functions)` uses `box_start` as well and calls nothing. It answers whether the box would take a program that is not an app with a `start`: after the five steps it looks whether the program shows a memory called `memory` and a function under each of the names given, and gives back the reason in words if not (`it shows no function called ...`). It looks for the names only, not at what the functions take and give. The interpreter is checked with it at startup; see [interpreter.md](interpreter.md).
+
 That `start` is a function the app shows to the outside under this name. It is not WebAssembly's "start section", a different thing with a similar name: a program may name one function there that runs by itself during step 5. Such a function runs under the same limits and fuel, which are set before that step, but no program with one has been tried.
 
 `reason()` turns an error into text. wasmi's errors can hold names taken from the program, so the text is cleaned with `plain_text` and cut at 120 signs before it is shown.
@@ -148,7 +150,7 @@ WebAssembly has numbers with a point, so wasmi carries code for them. The build 
 
 In QEMU, in the plain debug build:
 
-- **Stack:** 45,776 bytes for the greeting app and for the showing app alike, at startup, of the 124 KB free on the firmware's stack and of a task's 256 KB. (It was 45,408 for the greeting app before the second call came in.) The adding app went 43,112 deep when it was measured, before the print call existed. Larger programs will go deeper; nothing bigger than 540 bytes has been run.
+- **Stack:** 45,776 bytes for the greeting app and for the showing app alike, at startup, of the 124 KB free on the firmware's stack and of a task's 256 KB. (It was 45,408 for the greeting app before the second call came in.) The adding app went 43,112 deep when it was measured, before the print call existed. Larger programs will go deeper; no app bigger than 540 bytes has been run. The interpreter, a program of 762 KB, is got ready at startup without any of it being run, and that went 44,920 bytes deep; see [interpreter.md](interpreter.md).
 - **Size:** the kernel's file grew from 2.9 MB to 6.2 MB.
 - **Speed:** checking and translating a program of 540 bytes took about 5 thousandths of a second. A small counting loop ran about 0.7 million rounds a second, at about 4 units of fuel a round. Ten million units of fuel lasted about 2 seconds.
 - **Memory:** three rounds of 42 runs took 274 frames in the first round and none after. Two passes over 333 changed programs took none. So nothing is lost from run to run; the heap only never hands frames back (see [memory.md](memory.md)).
@@ -156,7 +158,7 @@ In QEMU, in the plain debug build:
 
 ## How to test it
 
-The programs for tests are made by hand, byte by byte, with a short script outside the repository; no compiler for WebAssembly is installed. Habits that proved their worth:
+The programs for these tests are made by hand, byte by byte, with a short script outside the repository; none of them comes from a compiler. (The interpreter does come from one, and has its own way of being tested; see [interpreter.md](interpreter.md).) Habits that proved their worth:
 
 - **Run every test program in another engine first** and take the expected outcome from there. Node has one built in: `WebAssembly.validate(bytes)` says whether a program follows the rules, and `new WebAssembly.Instance(new WebAssembly.Module(bytes), imports)` runs it, with `imports` holding a `print` that does what the kernel's is meant to do. A hand-made program with a mistake in it is otherwise indistinguishable from a runtime that is wrong. One thing Node cannot judge: the shape of a function. A function written in JavaScript has none, so Node accepts a program that asks for `show` in another shape, or whose `start` takes values, where the kernel refuses it.
 - **Change every byte of a good program, one at a time**, and run each changed copy. Most are refused by the check; the rest run and either end or are stopped. None may bring the kernel down.

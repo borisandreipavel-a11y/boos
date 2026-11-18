@@ -1,0 +1,29 @@
+[package]
+name = "interpreter"
+version = "0.1.0"
+edition = "2024"
+
+# This is not part of the kernel. It is a program of its own that is built
+# into one WebAssembly file, and the kernel carries that file inside it and
+# runs it in the locked box, like any app. See docs/interpreter.md.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The interpreter for the language Lua. Not written for this project. Its
+# default features are switched off: they bring the parts of Lua that reach
+# for files, the clock and other programs, which a program in the box does
+# not have. What stays is the language itself with its text, table and
+# arithmetic helpers. The version is fixed, so that a build always uses the
+# code that was tested.
+omnilua = { version = "=0.7.1", default-features = false }
+
+# Built small rather than fast: the kernel checks the whole file every time
+# it starts the interpreter. A mistake that would end the program ends it at
+# once (`panic = "abort"`) instead of carrying code to unwind it.
+[profile.release]
+opt-level = "s"
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = true

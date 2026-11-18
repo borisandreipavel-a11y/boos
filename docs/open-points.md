@@ -80,13 +80,26 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Fuel is a count of steps, not time.** How long ten million units last depends on the build and the machine.
 - **The limits are the same for every app,** fixed as constants.
 - **wasmi's own memory for an app is not counted in the app's limit.** It is taken from the kernel's heap: the translated program, and a stack of values of up to 1 MB. Many apps at once, or one very large program, could still ask the heap for more than the machine has, and that stops the kernel (see "Memory").
-- **The stack depth is known only for small programs:** 45 KB for programs of up to 540 bytes. Nothing notices a stack that overflows (see "Tasks").
+- **The stack depth is known only for small programs:** 45 KB for programs of up to 540 bytes, and for getting the interpreter ready, which runs none of it. In a trial's copy a script running through the interpreter went 56 KB deep. Nothing notices a stack that overflows (see "Tasks").
 - **The kernel no longer starts with 64 MB.** Its file is 6 MB in this kind of build, and QEMU's firmware refuses to load it on so small a machine. 96 MB works.
 - **Running an app is slow in this kind of build.** The outside crates are built unoptimized; built optimized they were about 25 times faster in a trial, and the kernel's file about half the size. That setting would change how smoltcp and the crates for encryption are built as well.
 - **The version of wasmi is fixed at 1.1.0.** The line after it cannot be built here (see [box.md](box.md)). If the 1.x line stops getting fixes, there is no way forward yet.
 - **wasmi contains `unsafe` code,** and a mistake there could let an app out of its memory. Both of its past security advisories are, by their titles, mistakes with memory. Nothing in the kernel or its build watches for new ones, and the copies in `vendor/` do not renew themselves.
-- **Only programs made by hand were run:** 41 to 540 bytes, with whole numbers of 32 bits, numbers with a point, one memory, loops, calls, and texts handed to the kernel. No program made by a compiler has run. Tables in use, values shared across functions, and whole numbers of 64 bits were not tried.
+- **Only programs made by hand were run:** 41 to 540 bytes, with whole numbers of 32 bits, numbers with a point, one memory, loops, calls, and texts handed to the kernel. No program made by a compiler has run in this kernel: the interpreter is one, and it is checked and got ready at startup, but none of its code is carried out yet. It did run, with scripts, in a trial's copy of the kernel (see [interpreter.md](interpreter.md)). Tables in use, values shared across functions, and whole numbers of 64 bits were not tried.
 - Two versions of the helper crate `bitflags` are built, an older one for smoltcp and a newer one for the program checker.
+
+## The interpreter
+
+- **No script runs yet.** The kernel carries the interpreter for Lua and sees at startup that the box would take it; nothing hands it a script. See [interpreter.md](interpreter.md).
+- **The check at startup costs over a second,** with device signals off, and it is done again at every start. Its result is not kept: when a script is to run, the box will check and translate the whole program once more, unless something is built that keeps a checked program.
+- **The check looks for the two functions by name only.** A program that shows a `run` of another shape would pass it.
+- **The box's fuel was set for apps written by hand.** In a trial a script of five lines cost about 4.4 million of the 10 million units, and a loop about 24 thousand a round. A script needs a budget of its own.
+- **Fuel does not bound time.** In a trial a script that filled memory kept the processor for many seconds on little fuel. Stopping an app by the clock is not built; wasmi's way of going on after the fuel has run out stopped the kernel in one of its two settings (see [interpreter.md](interpreter.md)).
+- **A script can only print.** The interpreter asks the kernel for `print` and nothing else, so a script cannot show a text on the screen yet.
+- **The outside code is young.** omnilua's first release was in June 2026, one account keeps it, its makers describe it as translated from the C original with the help of AI, and nobody outside has checked it. It runs inside the box, so a mistake in it can harm the app it runs and not the kernel; the box is what that rests on.
+- **Nothing watches for new versions or advisories** of omnilua, as for the other outside code.
+- **The kernel's build now needs a second build first,** and the building computer needs Rust's WebAssembly target. A kernel built without rebuilding the interpreter carries the old one without saying so, except through the byte count in its line.
+- **The built interpreter is not in the repository,** so what a given kernel file carries can only be made again by building, with the same compiler and the same version of the crates. Two builds on one computer gave the same bytes; another version of the compiler was not tried.
 
 ## Random numbers and the date
 
