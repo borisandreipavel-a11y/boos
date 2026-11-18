@@ -11,6 +11,7 @@ use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::model::QUESTION;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
+use crate::onboarding::{NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, person_name};
 use crate::page::SITE;
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
@@ -188,11 +189,13 @@ fn chat_place() -> Option<ChatPlace> {
 // How many signs the line being typed may have on this machine: the limit,
 // or less if the screen is so narrow that fewer fit on the row. Three places
 // of the row are taken: two by the "> " in front and one by the "_" behind.
-// On a machine without a screen it is the limit itself.
+// On a machine without a screen it is the limit itself. While the kernel
+// waits for a name, the limit is the longest name.
 fn chat_line_room() -> usize {
+    let limit = if onboarding_asking() { NAME_LIMIT } else { CHAT_LINE_LIMIT };
     match chat_place() {
-        Some(place) => CHAT_LINE_LIMIT.min(place.room.saturating_sub(3) as usize),
-        None => CHAT_LINE_LIMIT,
+        Some(place) => limit.min(place.room.saturating_sub(3) as usize),
+        None => limit,
     }
 }
 
@@ -313,25 +316,48 @@ pub fn chat_setup() {
     chat_paint_typing();
 }
 
-// Says what the last line was that was sent before the machine was switched
-// off, if the notebook on the disk holds one. Call it once at startup, after
-// the notebook is opened.
-pub fn chat_recall() {
-    let row = match notebook_find(LAST_LINE) {
+// Says what the kernel has to say once the notebook is opened: a greeting by
+// the person's name, or, at a start that does not know their name yet, the
+// question for it (see `onboarding.rs`); and the last line that was sent
+// before the machine was switched off, if the notebook on the disk holds one.
+// Call it once at startup, after the notebook is opened.
+pub fn chat_begin() {
+    let mut rows = onboarding_begin();
+    if !rows.is_empty() {
+        // The greeting or the question takes the place of the row that
+        // `chat_setup` put up, which says what to do.
+        chat_rows().clear();
+    }
+    if let Some(row) = recall_row() {
+        // While the kernel waits for an answer, its question stays last.
+        if onboarding_asking() {
+            rows.insert(0, row);
+        } else {
+            rows.push(row);
+        }
+    }
+    for row in rows.iter() {
+        serial_print(&format!("{}\r\n", row));
+        chat_add(Speaker::Kernel, row);
+    }
+    chat_paint_rows();
+}
+
+// The row that says the last line that was sent before the machine was
+// switched off, or nothing if the notebook holds none.
+fn recall_row() -> Option<String> {
+    match notebook_find(LAST_LINE) {
         Ok(Some(kept)) => {
             // What comes from the disk comes from outside the kernel: at
             // most as many signs as a line may have are taken, and every
             // byte that is not a plain sign becomes a dot.
             let said: String = kept.iter().take(CHAT_LINE_LIMIT).map(|byte| if (b' '..=b'~').contains(byte) { *byte as char } else { '.' }).collect();
-            format!("Kernel: last time you said \"{}\"", said)
+            Some(format!("Kernel: last time you said \"{}\"", said))
         }
         // Nothing was kept yet: there is nothing to say.
-        Ok(None) => return,
-        Err(reason) => format!("Kernel: I cannot read what you said last time, because {}", reason),
-    };
-    serial_print(&format!("{}\r\n", row));
-    chat_add(Speaker::Kernel, &row);
-    chat_paint_rows();
+        Ok(None) => None,
+        Err(reason) => Some(format!("Kernel: I cannot read what you said last time, because {}", reason)),
+    }
 }
 
 // Says something in the chat box that is not an answer to the line just
@@ -349,6 +375,8 @@ pub fn chat_say(text: &str) {
 // Takes one typed key, given as its letter. A letter is added to the line
 // being typed, Backspace takes the last one away, and Enter sends the line:
 // it moves up into what was said, and the kernel answers by giving it back.
+// While the kernel waits for the answer to its question (see
+// `onboarding.rs`), the line that is sent is that answer.
 pub fn chat_key(letter: u8) {
     // While the kernel waits for a secret, the keys go there and nowhere else.
     if unsafe { SECRET_ASKED } {
@@ -364,6 +392,30 @@ pub fn chat_key(letter: u8) {
             }
             chat_paint_typing();
         }
+        b'\n' if onboarding_asking() => {
+            // The answer to the question. It may be empty: Enter alone
+            // leaves the name as it is. It is not given back, and it is not
+            // kept as the last line; the onboarding keeps it.
+            let said = core::mem::take(line);
+            let mut rows = Vec::new();
+            if !said.is_empty() {
+                rows.push((Speaker::Person, format!("{}: {}", person_name(), said)));
+            }
+            rows.push((Speaker::Kernel, onboarding_answer(&said)));
+
+            // Repeated in the terminal in one go, like any other line.
+            let mut repeated = String::new();
+            for (_, row) in rows.iter() {
+                repeated.push_str(row);
+                repeated.push_str("\r\n");
+            }
+            serial_print(&repeated);
+            for (speaker, row) in rows.iter() {
+                chat_add(*speaker, row);
+            }
+            chat_paint_rows();
+            chat_paint_typing();
+        }
         b'\n' => {
             // An empty line is not sent.
             if line.is_empty() {
@@ -371,7 +423,7 @@ pub fn chat_key(letter: u8) {
             }
             // Take the typed line out, which leaves an empty one behind.
             let said = core::mem::take(line);
-            let mine = format!("You: {}", said);
+            let mine = format!("{}: {}", person_name(), said);
 
             // One line is not given back: the word that asks the kernel to
             // take a secret. From the next key on, what is typed is the
@@ -399,6 +451,10 @@ pub fn chat_key(letter: u8) {
                         Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
                     }
                 }
+            } else if said == SETUP_WORD {
+                // A fourth line that is not given back: the kernel asks for
+                // the person's name again, and the next line is the answer.
+                onboarding_again()
             } else {
                 format!("Kernel: you said \"{}\"", said)
             };

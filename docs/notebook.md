@@ -87,7 +87,9 @@ The disk controller sends no signals; the kernel looks until a command is finish
 
 ## The first user: the chat box
 
-When a line is sent with Enter, `chat_key` keeps it under the name `last line`. At startup, `chat_recall` finds that name and, if a line is there, adds the row `Kernel: last time you said "..."` to the chat box and prints the same line through the serial port.
+When a line is sent with Enter, `chat_key` keeps it under the name `last line`. At startup, `chat_begin` finds that name and, if a line is there, adds the row `Kernel: last time you said "..."` to the chat box and prints the same line through the serial port.
+
+The person's name is kept too, under the name `name`, by `onboarding.rs`: the answer to the question the kernel asks at a start where the notebook holds no name, or after the line `setup`. An entry under `name` that holds no signs means that the answer was to stay `You`. Whether such an entry is there at all is what tells a start whether to ask. See "The name" in [chat.md](chat.md).
 
 - If the line was kept, nothing is said about it.
 - If it could not be kept, the kernel says so in a row and in the terminal, `Kernel: I could not keep that line, because ...`, and the chat goes on as before.
@@ -105,7 +107,7 @@ One line, after the line about the kernel's own part and before the count of sta
 | `Disk: the notebook holds 2 entries and is damaged behind that; nothing is added to it` | Something lies behind the notebook's end |
 | `Disk: nothing is kept on it, because ...` | The part holds something the kernel does not know. No count of starts follows |
 
-And, after the count of starts, `Kernel: last time you said "..."` if a line was kept.
+And, after the count of starts, the chat box's rows from the notebook: the greeting by the kept name, or the question for a name, and `Kernel: last time you said "..."` if a line was kept. See [chat.md](chat.md).
 
 ## How long it takes
 

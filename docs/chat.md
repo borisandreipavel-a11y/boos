@@ -1,16 +1,16 @@
 # The chat box: typing on the screen
 
-Code: `src/chat.rs`, `src/secret.rs`, the call of `chat_setup` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
+Code: `src/chat.rs`, `src/secret.rs`, `src/onboarding.rs`, the calls of `chat_setup` and `chat_begin` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
 
-The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but three by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below.
+The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but four by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below. The fourth is `setup`, which makes it ask for the person's name again; see "The name" below. At a start where the kernel does not know the person's name yet, it asks for it before anything else.
 
 ## What it does
 
 - **A key with a letter** adds that letter to the line being typed, and the row being typed is painted again. The row reads `> `, the line so far, and a `_` that marks where the next sign will go.
 - **Backspace** takes the last sign away. On an empty line it does nothing.
-- **Enter** sends the line. The line moves up into what was said as `You: ...`, the kernel's answer follows as `Kernel: you said "..."`, and the row being typed is empty again. On an empty line Enter does nothing.
+- **Enter** sends the line. The line moves up into what was said as `You: ...`, the kernel's answer follows as `Kernel: you said "..."`, and the row being typed is empty again. Once the person has given a name, it stands in front of their lines in place of `You` (see "The name" below). On an empty line Enter does nothing, except while the kernel waits for a name.
 - **The line that was sent is kept on the disk,** in the notebook, under the name `last line`; see [notebook.md](notebook.md). Nothing is said when that works. If it does not, a row says so, `Kernel: I could not keep that line, because ...`, and the chat goes on. On a machine without a disk, or without a notebook that can be added to, nothing is kept and nothing is said about it.
-- **At the next start the kernel says that line again:** `chat_recall`, called once from `efi_main` after the notebook is opened, adds the row `Kernel: last time you said "..."` and prints the same line in the terminal. Only the last line is said, although every line that was sent is still in the notebook.
+- **At the next start the kernel says that line again:** `chat_begin`, called once from `efi_main` after the notebook is opened, adds the row `Kernel: last time you said "..."` and prints the same line in the terminal. It comes after the greeting by name, or before the question at a start that asks for a name. Only the last line is said, although every line that was sent is still in the notebook.
 - **A line is at most 50 signs long** (`CHAT_LINE_LIMIT`). A key pressed after that is ignored until a sign is taken away or the line is sent. On a screen so narrow that fewer than 53 signs fit on a row, the line may be only as long as fits behind the `> ` and before the `_`.
 - **A text longer than a row goes on in the next row.** It is cut where the row ends, in the middle of a word if need be. On a screen 1280 dots wide a row holds 97 signs, so nothing typed needs a second row there; on a screen 800 dots wide a row holds 57, and the answer to a long line takes two.
 - **Six rows of what was said are shown.** When a seventh comes, the oldest goes. Nothing older is kept anywhere.
@@ -18,6 +18,23 @@ The chat box is the place on the screen where the person at the machine types. I
 - **On a machine without a usable screen** nothing is shown and no rows are kept, but typing works: the line is collected, held to 50 signs, and repeated with its answer in the terminal on Enter.
 
 Only the keys `key_letter` knows can be typed: the letters, small and with Shift capital, the digits, the signs of a US keyboard with and without Shift, the space bar, Enter and Backspace. That is every one of the 95 signs the screen has a picture for. Caps Lock does nothing. The arrow keys, Esc, Tab, Delete and the F keys give nothing. See [interrupts.md](interrupts.md) for how Shift is followed.
+
+## The name
+
+Code: `src/onboarding.rs`. The kernel asks the person at the machine what to call them, keeps the answer in the notebook on the disk (see [notebook.md](notebook.md)), and puts it in front of their rows.
+
+- **At a start where the notebook holds no name,** the kernel asks, in two rows that take the place of the row that says what to do: `Kernel: hello! I do not know your name yet, so I have one question before we begin.` and `Kernel: what should I call you? Type a name and press Enter. Enter alone keeps "You".` If a line was kept from before, its row `Kernel: last time you said "..."` comes first, so that the question is the last row. The rows are printed in the terminal too, before the prompt.
+- **While the kernel waits for the answer, the next line sent is the answer,** whatever it says: `key`, `fetch`, `ask` and `setup` are names then like any other. Enter alone is an answer too. A name is at most 20 signs (`NAME_LIMIT`): while the kernel waits, the line takes no more. Spaces at either end are dropped.
+- **A name is kept under the name `name`,** and the kernel says `Kernel: hello, Ada. I will remember your name. Type a line and press Enter.` From then on the name stands in front of the person's rows in place of `You`, in the chat box and in the terminal. The row with the answer shows it as typed, with what stood in front of the rows before. The answer is not given back and not kept as the `last line`.
+- **Enter alone leaves the name as it is.** At a start that asks, that is `You`: the kernel keeps an entry that holds no signs, which says that the question was answered, and says `Kernel: I will call you "You". Type a line and press Enter.` When a name is kept already, nothing is written, and the kernel says `Kernel: your name stays "Ada". Type a line and press Enter.` A line of nothing but spaces counts as Enter alone.
+- **Every later start greets the person by the name,** in place of the row that says what to do: `Kernel: welcome back, Ada. Type a line and press Enter.`, or `Kernel: welcome back. Type a line and press Enter.` when the answer was to stay `You`. The row of the last line follows if there is one.
+- **The line `setup`, sent by itself, asks again** (`SETUP_WORD`): the question row, with the name that Enter alone keeps. The line `setup` itself is kept as the last line, like any other line.
+- **If the answer cannot be kept,** the kernel uses it until the machine is switched off and says why: `Kernel: hello, Ada. I could not keep your name, because ..., so it lasts only until the machine is switched off.` At a start that asked, the next start asks again.
+- **Without a notebook that can be added to** (no disk, a disk without a part of the kernel's own, a part that holds something the kernel does not know, a damaged notebook), nothing is asked at startup, and the chat box begins with the row that says what to do, as without the name. A name kept in a damaged notebook is still read, and the person is greeted by it. `setup` asks all the same, and the answer lasts until the machine is switched off.
+- **An entry under `name` is what tells a later start that the question was answered.** It is written only when the answer comes, so a start that is switched off before that asks again at the next start.
+- **The name stays on the disk as typed,** readable by anyone with the disk, like every line kept there. Nothing takes it out; a new answer only takes its place.
+- **A name read from the disk comes from outside the kernel:** at most 20 bytes are taken, every byte that is not a plain sign becomes a dot, and spaces at either end are dropped.
+- **Only the main loop may call the functions of `onboarding.rs`,** as for `chat.rs`: the name and the two marks `ASKING` and `ANSWER_KEPT` are plain `static mut` values, and the name is reached through its address by `name()`, with the same rule as the chat box's lists.
 
 ## A secret
 
@@ -80,7 +97,7 @@ The chat box, the box that shows an app's text and the sentence at the top do no
 
 ## How it is painted
 
-- `chat_setup` paints the whole chat box once at startup: all of it in the frame's colour, then the two areas inside, which leave the frame showing. It adds one row from the kernel that says what to do.
+- `chat_setup` paints the whole chat box once at startup: all of it in the frame's colour, then the two areas inside, which leave the frame showing. It adds one row from the kernel that says what to do. Once the notebook is opened, `chat_begin` puts the greeting by name, or the question for one, in that row's place and paints the rows again.
 - After a key, only the row being typed is painted again (`chat_paint_typing`): its area in its colour, then the text.
 - After Enter, the rows of what was said are painted again as well (`chat_paint_rows`): their whole area in the inside colour, which wipes out what stood there, then each row. A short row in the place of a long one leaves nothing of the long one.
 - This is the first drawing that happens after startup, with device signals on. The timer and the other tasks carry on while the main loop paints.
@@ -100,7 +117,7 @@ Keys wait in the keyboard's line of 16 key numbers while the main loop paints, a
 
 ## Text from outside
 
-What is typed comes from the keyboard, which can only produce plain signs, and the kernel's rows come from its own code. One text comes from outside the kernel: the line kept on the disk. `chat_recall` takes at most 50 signs of it and turns every byte that is not a plain sign into a dot. Any other text that comes from outside the kernel must be cleaned before it is handed to the chat box, as everywhere else (see `plain_text` in `page.rs`). A sign without a picture would show as an empty box on the screen; in the terminal it would go out as it is.
+What is typed comes from the keyboard, which can only produce plain signs, and the kernel's rows come from its own code. Two texts come from outside the kernel: the line kept on the disk and the name kept there. `chat_begin` takes at most 50 signs of the line, `onboarding.rs` at most 20 of the name, and both turn every byte that is not a plain sign into a dot. Any other text that comes from outside the kernel must be cleaned before it is handed to the chat box, as everywhere else (see `plain_text` in `page.rs`). A sign without a picture would show as an empty box on the screen; in the terminal it would go out as it is.
 
 ## How to test it
 
@@ -113,4 +130,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page or asks the model one fixed question, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question or asks for a name, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

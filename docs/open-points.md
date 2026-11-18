@@ -195,7 +195,12 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The chat box
 
-- **The kernel gives the typed line back, with three lines set apart.** `key` takes a secret, `fetch` fetches the example page and says how the site answered, and `ask` asks the model one fixed question. Nothing reads what else is typed: a typed line cannot be the question yet.
+- **The kernel gives the typed line back, with four lines set apart.** `key` takes a secret, `fetch` fetches the example page and says how the site answered, `ask` asks the model one fixed question, and `setup` asks for the person's name again. Nothing reads what else is typed: a typed line cannot be the question yet.
+- **The kernel asks one thing of the person at the machine: a name.** It is asked at a start where the notebook holds none, and after `setup`. While the kernel waits, the next line is the answer, whatever it says; there is no way to leave the question but to answer it, Enter alone included.
+- **A name is one line of at most 20 plain signs.** Nothing checks it further: any signs, a name of one sign, a name that is a command word.
+- **The name is kept on the disk as typed, readable by anyone with the disk,** and nothing takes it out; a new answer only adds an entry that takes its place. Every `setup` answered with a new name adds an entry, like every line sent.
+- **A notebook from before the question was built asks at its next start,** because it holds no name. Its kept lines stay, and the last one is still said, before the question.
+- **Nothing is asked when the notebook cannot be added to,** because the answer could not be kept: a damaged notebook, or none. `setup` asks all the same there, and the answer lasts until the machine is switched off.
 - **Only the main loop may use the chat box.** Its lists are not protected. Another task can get a text into it in one way only, as the answer to an errand (see [tasks.md](tasks.md)).
 - **There is room for one errand at a time,** and only the main loop may ask. A second asking is turned away until the answer to the first was picked up. Nothing can call an errand off once it is asked for.
 - **While an errand runs, the network's task does nothing else.** It is the same for its own fetch at startup: no other use of the network gets a turn until the work is done or gives up, which can take a quarter of a minute and more, and a minute and more when the model is asked and its provider stays silent.

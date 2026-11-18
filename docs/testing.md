@@ -923,6 +923,26 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 - Not verified: whether this model thinks before it answers, how long a good answer takes, whether 1000 tokens are enough for longer answers, and the raw form of a real good answer.
 - A person ran `run.bat`, typed `key` and a real key of their own in the chat box of the window, then `ask`, and saw the model's answer as a row in the chat box. Nothing of that run was watched or recorded here: not the words, not the time.
 
+**The name**
+
+- On fresh test disks divided by the test's own builder, every picture was compared dot by dot with one built by a script that keeps its own account of what the chat box should hold, written from the rules in [chat.md](chat.md) and not from the kernel's code. The terminal's lines were compared word for word: the rows at startup, between the disk's lines and the prompt, and the lines said after the prompt. After each start the notebook was read by the independent reader in Python: the entries that start added had to be exactly the ones meant, and nothing in front of the kernel's part could change. Names were typed through QEMU's keys, capitals with Shift. All right, in 32 pictures and 18 starts:
+  - a first start: the two rows of the question; a name typed (`Ada`), shown in the row being typed; the answer; a line after it shown as `Ada: hello`. The notebook got `name` holding `Ada`, then `last line` holding `hello`, and nothing for the answer itself;
+  - the next start: `Kernel: welcome back, Ada. Type a line and press Enter.` and the row of the last line, and no question. `setup` asked with `"Ada"` in the question; a name with a space in it (`Bea Lee`) was taken, its row reading `Ada: Bea Lee`; `setup` and Enter alone gave `your name stays "Bea Lee"` and wrote nothing. The start after that greeted by the new name;
+  - Enter alone at a first start: `I will call you "You"`, an entry holding no signs; the next start said `Kernel: welcome back. Type a line and press Enter.` and did not ask;
+  - 25 signs typed for a name: 20 taken. Spaces at either end dropped; a line of spaces counted as Enter alone. After the answer the line took 50 signs again;
+  - a notebook from before the question (two kept lines, no name): the row of the last line, then the question; the next start greeted, then said the line;
+  - a start switched off while the question waited, with two signs typed and not sent: nothing kept, and the next start asked again;
+  - a name written into a notebook from outside, 31 bytes long with bytes that are not plain signs: shown cleaned and cut to 20, and no byte that is not plain text in the terminal. A name of three spaces kept from outside: greeted as with no name;
+  - a damaged notebook (something lies behind its end): without a name nothing was asked and the chat box began as before; `setup` asked, and the answer was not kept, with the reason `the notebook cannot be added to`. With a name the person was greeted. Nothing was added to the notebook either time;
+  - a disk without a list of parts: the chat box began as before; `setup` asked, the answer lasted for that start, and the disk file stayed byte for byte as it was;
+  - a screen of 800 by 600: the question's rows, and the question with a name of 20 signs in it, wrap onto the next row;
+  - a machine without a display card: the rows in the terminal only; a name answered there, and the next start greeted by it there.
+- The test of the secret line, on a divided disk, now begins with the question, answered with Enter alone: every picture right, the secret nowhere in the terminal or on the disk, and in memory exactly as before. The chat box test and the Shift test, on disks without a list of parts: as before. These three ran on the build before the last change, which was to a comment only; the name's own tests ran again on the final build.
+- Breaks made on purpose, each alone, each caught by these tests: the answer kept as the last line too; no limit of 20 signs while the kernel waits for a name; no question at a start without a name; the person's rows keeping `You`; Enter alone at a first start keeping nothing (the start after asked again); a name read from the disk not cleaned; the row of the last line put after the question; `setup` not known.
+- The lines of a start are the same as before except the rows from the notebook; "Free memory" still reads 198 MB, and the rest count read 397.
+- Not verified: keeping that fails on a notebook that can otherwise be added to, such as a full one (`the notebook is full`) or a disk that refuses the write; only the refusal of a damaged notebook was seen, and the sentence is made the same way; an entry for the name that the opening found and that can no longer be read when it is asked for (the kernel then says so and asks again); a power cut at the moment the answer is kept.
+- A person ran `run.bat` with a disk file that held kept lines and no name, typed their name at the question in the window, closed it, ran `run.bat` again, and was greeted by that name.
+
 **The split into files**
 
 - Every line of code in the old single file appears unchanged in the new files; only `pub`, `mod` and `use` were added and comments changed.

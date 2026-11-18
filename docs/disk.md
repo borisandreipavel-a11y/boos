@@ -194,18 +194,19 @@ In QEMU the disk is a file on the building computer, `disk.img` in the project f
 
 ## What a boot prints
 
-Five lines, after the lines of the apps and before the network card's, and a sixth if a line from the chat box was kept:
+Five lines, after the lines of the apps and before the network card's, and then the chat box's rows from the notebook:
 
 ```
 Disk controller: found, device 4 on bus 0 of the PCI list
 Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller
 Disk: my own part is 14 MB, from block 2048 to block 32734
-Disk: the notebook holds 2 entries and has room for 30683 more
+Disk: the notebook holds 3 entries and has room for 30682 more
 Disk: this is start number 3
+Kernel: welcome back, Ada. Type a line and press Enter.
 Kernel: last time you said "hello"
 ```
 
-- The fourth line is the notebook's, and the sixth comes from the chat box; [notebook.md](notebook.md) lists their other forms. If the notebook cannot be opened the fourth line reads `Disk: nothing is kept on it, because ...`, nothing is written to the part, and no line about the count follows.
+- The fourth line is the notebook's, and the lines that begin with `Kernel:` come from the chat box: the greeting by the name kept in the notebook, or the question for a name, and the line kept last; [notebook.md](notebook.md) and [chat.md](chat.md) list their other forms. If the notebook cannot be opened the fourth line reads `Disk: nothing is kept on it, because ...`, nothing is written to the part, and no line about the count follows.
 - The fifth line counts the kernel's starts with this disk. The number is one higher at every start, because the kernel keeps it on the disk. A new disk file begins at 1.
 - If the block for the count holds something the kernel does not know, the line reads `Disk: the count of starts could not be read and begins again; this is start number 1`.
 - If the count cannot be written, or the disk does not hold what was written when it is read back, the line reads `Disk: this start could not be counted, because ...` with the reason, and the kernel carries on.

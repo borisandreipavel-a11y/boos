@@ -37,6 +37,7 @@ mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
 mod chat; // The chat box: typing on the screen, and what was said.
+mod onboarding; // What the kernel asks at a start where it does not know the person yet.
 mod disk; // The disk: its controller, asking the disk who it is, reading a block.
 mod parts; // The parts of the disk, and the one that is this kernel's own.
 mod starts; // A count of the kernel's starts, kept on the disk.
@@ -58,7 +59,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
 use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
-use chat::{chat_key, chat_recall, chat_say, chat_setup};
+use chat::{chat_begin, chat_key, chat_say, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
 use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
@@ -322,9 +323,11 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                                     }
                                 }
 
-                                // If a line was kept in the notebook before
-                                // the machine was switched off, say it.
-                                chat_recall();
+                                // Greet the person by the name kept in the
+                                // notebook, or ask for it if none is kept,
+                                // and say the line that was kept before the
+                                // machine was switched off, if there is one.
+                                chat_begin();
                             }
                             Err(reason) => {
                                 write!(serial, "Disk: nothing is kept on it, because {}\r\n", reason).ok();
