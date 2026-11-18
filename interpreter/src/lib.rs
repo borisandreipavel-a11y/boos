@@ -41,8 +41,10 @@ pub extern "C" fn room(length: usize) -> *mut u8 {
 }
 
 // Lua's own `print` writes to a screen that a program in the box does not
-// have. This one, written in Lua itself, joins what it is given with tabs,
-// as Lua's does, and hands the line to the kernel through `say`.
+// have. This one, written in Lua itself, joins what it is given and hands
+// the line to the kernel through `say`. Lua's own puts a tab between two
+// values; this one puts a space, because the kernel prints plain signs only
+// and would show a tab as a dot.
 // (Written line by line, each with its line end spelt out, so that the built
 // program does not depend on which kind of line end this file has.)
 const PRINT_IN_LUA: &str = concat!(
@@ -51,7 +53,7 @@ const PRINT_IN_LUA: &str = concat!(
     "  for i = 1, select(\"#\", ...) do\n",
     "    parts[i] = tostring((select(i, ...)))\n",
     "  end\n",
-    "  say(table.concat(parts, \"\\t\"))\n",
+    "  say(table.concat(parts, \" \"))\n",
     "end\n",
 );
 
@@ -70,21 +72,31 @@ fn run_script(text: &str) -> Result<(), String> {
     lua.load(text).set_name("app").exec().map_err(|problem| problem.to_string())
 }
 
+// What `run` gives back to the kernel: whether the script was carried out to
+// its end, or stopped by a mistake.
+const RAN_TO_ITS_END: i32 = 0;
+const STOPPED: i32 = 1;
+
 // The kernel calls this after writing a script of `length` bytes into the
 // room. A script that cannot be carried out to its end is reported as a
-// printed line, and this program ends in the ordinary way.
+// printed line, and the kernel is told through the number given back. Either
+// way this program itself ends in the ordinary way.
 #[unsafe(no_mangle)]
-pub extern "C" fn run(length: usize) {
+pub extern "C" fn run(length: usize) -> i32 {
     let script = unsafe { &*(&raw const SCRIPT) };
     let Some(bytes) = script.get(..length) else {
         say("Lua: the script is longer than the room asked for");
-        return;
+        return STOPPED;
     };
     let Ok(text) = core::str::from_utf8(bytes) else {
         say("Lua: the script is not text");
-        return;
+        return STOPPED;
     };
-    if let Err(problem) = run_script(text) {
-        say(&format!("Lua stopped: {}", problem));
+    match run_script(text) {
+        Ok(()) => RAN_TO_ITS_END,
+        Err(problem) => {
+            say(&format!("Lua stopped: {}", problem));
+            STOPPED
+        }
     }
 }

@@ -60,7 +60,7 @@ use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
 use encryption::{encryption_check, trusted_roots};
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
-use interpreter::interpreter_check;
+use interpreter::{GREETING_SCRIPT, interpreter_check, script_run};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
 use network::{gateway_ask, network_start};
@@ -234,11 +234,14 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
 
     // Apps will be written as text in the language Lua, and a program that
     // understands Lua, the interpreter, runs them inside the box. It is a
-    // far bigger program than the apps above. See that the box takes it.
-    // No script is run yet.
+    // far bigger program than the apps above. See that the box takes it,
+    // and then have it run a script written by hand, which prints one line.
     match interpreter_check() {
         Ok(size) => {
             write!(serial, "Interpreter: a program of {} bytes that understands Lua is on board, and the box accepts it\r\n", size).ok();
+            if let Err(reason) = script_run(GREETING_SCRIPT) {
+                write!(serial, "Interpreter: the script was stopped, because {}\r\n", reason).ok();
+            }
         }
         Err(reason) => {
             write!(serial, "Interpreter: not usable, because {}\r\n", reason).ok();

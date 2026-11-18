@@ -688,6 +688,42 @@ Every check below used a test disk file of its own. The disk file was judged fro
 - One test run was void and done again: two tests ran at the same time and both wanted the same port for QEMU's monitor, so one of them never booted. See "Oddities seen once".
 - Not verified: a script handed to the interpreter by the kernel itself (only a trial's copy does that); what `room` and `run` take and give, which the check does not look at; a build on another computer or with another version of the compiler; a computer without the WebAssembly target, beyond what the kernel's build says without the file; a boot that fetches the real page with this kernel.
 - A person ran `run.bat`, which built both, and saw the interpreter's line in the terminal after the greeting app's line.
+- Checked after the change that brought the interpreter on board: a clean export of it differed from the working files in line ends only and held no disk file and no built file; its `run.bat` and the interpreter's source end every line in bytes 13 and 10. Both builds ran in the export from nothing, the interpreter in 17 seconds and the kernel in 19, with no warning and no program made along the way, and Windows recorded no block. The exported interpreter was byte for byte the project's and lay inside the exported kernel, which booted to the prompt with the interpreter's line after the greeting app's and passed the chat box test.
+
+**A script that prints**
+
+- **The lines.** On the machine `run.bat` starts: `Interpreter: a program of 761902 bytes that understands Lua is on board, and the box accepts it`, then `App: Hello from a Lua script!!!`, the script's own line. Every line of the boot ends in bytes 13 and 10 and no byte is anything but plain text. "Free memory" reads 195 MB as before.
+- **Other machines,** the same two lines on each: `-cpu max`, no network card, no disk, no display card, 96 MB, 128 MB, 512 MB, 2 GB.
+- **Time,** by the test computer's clock, over fourteen boots: the check 1.1 to 2.9 seconds, the script 2.6 to 5.2 seconds after it. The spread is the test computer: the kernel from before this change, booted in between, was as slow at the same hour.
+- **Twenty-eight scripts that should run to their end,** each run through `script_run` by a temporary file at the place where the kernel runs its own script, and what each printed read line by line against what was worked out by hand: the greeting; arithmetic with whole numbers and numbers with a point; the helpers for text, with patterns and `string.format`; tables, sorting, `pairs` and `ipairs`; closures and `pcall`; `//`, bit operators and `goto`; tables with methods; six small apps (FizzBuzz, a times table, an account, counting words, a bar chart, unpacking a list); several values in one `print`, which come out with a space between; Windows line ends; a script that is only a comment; an empty script; letters with accents, which come out as dots; `say` called directly; a line of 500 signs and one of 201, both cut at 200; and a script of exactly 32,768 bytes. Two more are stopped by the budget and are named below.
+- **Scripts that should be stopped,** each with its reason, and the kernel carried on every time:
+  - one byte longer than allowed: `the script is too long`, at once;
+  - a mistake in writing, a mistake while running, a call of `error` with a text, with a table and with nothing, `os.date`, and a text of bytes that are no letters: `the script made a mistake, which is told in the line before`, after a line such as `App: Lua stopped: [string "app"]:2: attempt to index a nil value (local 't')`; what the script printed before the mistake stayed printed;
+  - a loop without end, a loop of 100,000 rounds, calls without end, `fib(20)` and the Tower of Hanoi with ten discs: `all fuel consumed by WebAssembly`, after 3 to 6 seconds;
+  - 1,000 prints: `it printed too many texts`, after exactly 100 lines;
+  - a script that fills memory: `wasm `unreachable` instruction executed`, after 43 seconds (29 in a trial at another hour). It is the slowest case found.
+  - After all of them the greeting ran again and printed its line.
+- **How long the budget lasts,** in a trial's copy of the kernel with nine scripts that never end, each given 100 million units: 2 seconds for an empty loop, for counting and for calls; 5 for sorting; 13 for turning numbers into text; 15 for a hard pattern; 17 for making small lists; 23 and 24 for repeating and joining texts. The budget had first been set to a billion, and was lowered when this was seen.
+- **Fifteen hand-made programs in the interpreter's place,** handed to `box_script` with a script of twelve letters; each was accepted as a proper program by Node's engine first:
+  - an honest one, which prints what arrived: `App: abcdefghijkl`, and an empty line for an empty script;
+  - `room` naming a place far outside the memory, a place below zero, and one whose last bytes lie outside: `it gave room for the script outside its own memory`, and `run` was not called;
+  - `room` naming the last twelve bytes of the memory: accepted;
+  - `room` or `run` of another shape (taking nothing, taking two, giving nothing): `encountered an incorrect number of parameters` or `... of results`, before any of the program ran;
+  - `room` or `run` stopping at once: `wasm `unreachable` instruction executed`;
+  - `run` giving back 7 or -1: `the script made a mistake, ...`;
+  - `room` or `run` that never ends: `all fuel consumed by WebAssembly`, after 31 and 32 seconds. A tight loop written by hand uses its fuel up more slowly than anything the interpreter did.
+- **Stack,** by filling the firmware's stack below the call with a pattern first: 54,824 bytes for each of seven scripts, among them calls without end, a loop without end and the flood of prints.
+- **Memory:** the 28 well-behaved scripts took 25 frames for the heap between them; the 14 that are stopped took 514, of which 513 at the script with calls without end; the 15 hand-made programs none.
+- Breaks made on purpose, each caught by the case named:
+  - the script's budget not set, so that the app's ten million stand: FizzBuzz was stopped with `all fuel consumed`;
+  - a script's length not looked at: the script that is one byte too long ran, and one of two million bytes ended with `unreachable`, the box holding it;
+  - what `run` gives back not looked at: the script with a mistake in writing was reported as having run to its end.
+- **An older interpreter in the new one's place,** the one from before `run` gave a number back, in a copy of the project: the check passed, with the older file's byte count in its line, and the kernel then said `Interpreter: the script was stopped, because encountered an incorrect number of results` and carried on. This is what a kernel built without rebuilding the interpreter looks like.
+- **Keys pressed while the script runs at startup,** three boots: they are lost, as keys always were before device signals come on, and that stretch is now four to eight seconds longer. A line typed after the prompt arrived whole each time.
+- The temporary file and the breaks were taken out again; the two source files they touched were compared with their state before by a check value.
+- The chat box test and the Shift test still pass.
+- Not verified: a script that comes from outside the kernel; a script run from a task, or after startup at all; scripts longer than about 40 lines of real code (the long one was comments); what a script costs with the outside crates built optimized, beyond a trial; a boot that fetches the real page with this kernel.
+- A person ran `run.bat` and saw the script's line in the terminal after the interpreter's line.
 
 **The split into files**
 

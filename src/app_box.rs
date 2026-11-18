@@ -32,6 +32,23 @@ const APP_TABLE_LIMIT: usize = 4096;
 // for good.
 const APP_FUEL: u64 = 10_000_000;
 
+// The most work one script may do. A script is not run by the box directly:
+// a program in the box, the interpreter, carries it out, and that costs far
+// more fuel than an app written by hand: five lines of script cost over four
+// million units, and one round of a loop about 24 thousand. So a script gets
+// ten times an app's budget. The number is a stopgap, set by measuring. Fuel
+// counts steps, not time: this much is used up in about two seconds by an
+// empty loop and in about half a minute by a script that joins texts without
+// end, in this kind of build. A higher number would let a bad script hold the
+// machine for minutes; this one stops a harmless loop after about four
+// thousand rounds.
+const SCRIPT_FUEL: u64 = 100_000_000;
+
+// The longest script the kernel hands over, in bytes. The script is copied
+// into the program's memory, which is limited, so a script that could never
+// fit is turned away before anything is started.
+const SCRIPT_LIMIT: usize = 32 * 1024;
+
 // The longest text an app may hand to the kernel to print, in bytes, and the
 // most texts it may print in one run. Printing costs the kernel time, and an
 // app that printed without end would bury everything else on the screen.
@@ -337,6 +354,42 @@ pub fn box_accepts(program: &[u8], functions: &[&str]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// Hands a script to a program in the box that can carry scripts out, and has
+// it carried out. Such a program, the interpreter, is not run once from a
+// `start`. It shows the outside two functions instead:
+//
+// - `room`, which takes the script's length in bytes and gives back where in
+//   the program's own memory the kernel should write the script;
+// - `run`, which takes the length again, carries the script out, and gives
+//   back 0 if the script ran to its end.
+//
+// The program is got ready exactly as an app is, with the same check, the
+// same limits and the same system API. Nothing it says is taken on trust:
+// the place it names for the script is written to through `write`, which
+// refuses if any byte of it lies outside the program's memory.
+pub fn box_script(program: &[u8], script: &str) -> Result<(), String> {
+    if script.len() > SCRIPT_LIMIT {
+        return Err(String::from("the script is too long"));
+    }
+    let length = script.len() as i32;
+
+    let (mut store, app) = box_start(program)?;
+    let room = app.get_typed_func::<i32, i32>(&store, "room").map_err(reason)?;
+    let run = app.get_typed_func::<i32, i32>(&store, "run").map_err(reason)?;
+    let memory = app.get_memory(&store, "memory").ok_or_else(|| String::from("it shows no memory called `memory`"))?;
+
+    // From here on the program's own code runs, on the budget for a script.
+    store.set_fuel(SCRIPT_FUEL).map_err(reason)?;
+    let place = room.call(&mut store, length).map_err(reason)?;
+    memory
+        .write(&mut store, place as u32 as usize, script.as_bytes())
+        .map_err(|_| String::from("it gave room for the script outside its own memory"))?;
+    match run.call(&mut store, length).map_err(reason)? {
+        0 => Ok(()),
+        _ => Err(String::from("the script made a mistake, which is told in the line before")),
+    }
 }
 
 // wasmi's own words for what went wrong, or the kernel's from `kernel_print`.

@@ -52,6 +52,16 @@ Getting an app ready is `box_start(program)`. Its steps:
 
 `box_accepts(program, functions)` uses `box_start` as well and calls nothing. It answers whether the box would take a program that is not an app with a `start`: after the five steps it looks whether the program shows a memory called `memory` and a function under each of the names given, and gives back the reason in words if not (`it shows no function called ...`). It looks for the names only, not at what the functions take and give. The interpreter is checked with it at startup; see [interpreter.md](interpreter.md).
 
+`box_script(program, script)` is the second way to run something in the box, for a program that carries scripts out. Such a program is not run once from a `start`. After the five steps of `box_start` the kernel:
+
+1. finds `room` and `run` and sees that each takes one whole number of 32 bits and gives one back; a program whose functions have another shape is turned away here;
+2. sets the fuel to `SCRIPT_FUEL`, the budget for a script;
+3. calls `room(length)` with the script's length in bytes, and gets back where in the program's memory the script should go;
+4. writes the script there, through wasmi's `write`, which refuses if any byte of it would lie outside the program's memory. So the place is not taken on trust: a program that names a place outside, or below zero, is stopped with `it gave room for the script outside its own memory`;
+5. calls `run(length)`. 0 back means the script ran to its end; anything else is reported as `the script made a mistake, which is told in the line before`, because the program prints what went wrong itself.
+
+A script longer than `SCRIPT_LIMIT` is turned away before anything is started. What the script prints goes through `kernel.print` like any app's text, with its limits: 200 bytes a text, 100 texts a run.
+
 That `start` is a function the app shows to the outside under this name. It is not WebAssembly's "start section", a different thing with a similar name: a program may name one function there that runs by itself during step 5. Such a function runs under the same limits and fuel, which are set before that step, but no program with one has been tried.
 
 `reason()` turns an error into text. wasmi's errors can hold names taken from the program, so the text is cleaned with `plain_text` and cut at 120 signs before it is shown.
@@ -96,6 +106,8 @@ An app is held to these. They are constants in `app_box.rs`.
 | Table (`APP_TABLE_LIMIT`) | 4096 places | Not started |
 | Tables | 1 | Not started |
 | Fuel (`APP_FUEL`) | 10,000,000 units per run | The app is stopped with "all fuel consumed" |
+| Fuel for a script (`SCRIPT_FUEL`) | 100,000,000 units per script | The script is stopped with "all fuel consumed" |
+| Length of a script (`SCRIPT_LIMIT`) | 32 KB | The script is not handed over, and nothing is started |
 | Length of a printed text (`APP_TEXT_LIMIT`) | 200 bytes | The app is stopped |
 | Texts printed (`APP_PRINT_LIMIT`) | 100 per run | The app is stopped |
 | Length of a shown text (`APP_SHOWN_TEXT_LIMIT`) | 40 bytes | The app is stopped |
@@ -107,6 +119,7 @@ Why they are needed:
 
 - **A request for memory that cannot be met stops the whole kernel** (see [memory.md](memory.md)). With the memory limit taken out on purpose, a program that asks for 1 GB did exactly that: `Kernel panic: ... the machine is out of memory`. The limits on tables and on the number of memories and tables close the same door.
 - **Without fuel, a loop that never ends never comes back.** With fuel taken out on purpose, the test never got past such a loop. In this build ten million units are about two seconds of the processor.
+- **A script has a budget of its own, ten times as large,** because a program in the box carries it out and every step of the script costs many of the box's steps: five lines of script cost over four million units, one round of a loop about 24 thousand. The number is a stopgap set by measuring. Fuel bounds the steps and not the time: the same budget lasts two seconds in one kind of work and half a minute in another; see [interpreter.md](interpreter.md).
 
 What the limits do not cover: wasmi's own bookkeeping for an app lives on the kernel's heap and is not counted in the app's memory. A translated program takes room in proportion to its size.
 
