@@ -818,6 +818,33 @@ A made-up secret of 41 signs was typed through QEMU's keys. It stands in the tes
 - The chat box test and the Shift test still pass.
 - What the memory check cannot see: a single sign in one of the processor's registers or on the stack while its key is handled, and anything shorter than six signs. Not verified: a real keyboard, a secret typed while another task keeps the processor busy.
 - A person ran `run.bat`, typed `key` and then a made-up secret in the chat box of the window, and saw only stars and then the count of signs.
+- Checked after the change that brought the secret line in: a clean export of it differed from the working files in line ends only and held no disk file and no built file. Both builds ran in the export from nothing with no warning and no program made along the way, and Windows recorded no block. Its kernel booted to the prompt with the usual lines and passed the whole secret test (eleven steps: every picture right, nothing of the made-up secret in the terminal or on the disk, the memory's counts as meant) and the chat box test.
+
+**JSON**
+
+The cases were made by a script, kept in two files of bytes, and read in by a temporary piece of the kernel, which printed one line for each. The script then judged the lines. The judge is Python's own JSON code.
+
+- **The line.** `JSON: 13 of 13 checks of making and reading it are right`, after the script's line, on the machine `run.bat` starts, on a screen of 800 by 600, with 96 MB and without a display card. Four more machines (`-cpu max`, no network card, no disk, 2 GB) booted to the prompt with one line more than before; the line itself was not looked for there. The rest of the boot is as before, and "Free memory" still reads 198 MB. The check takes one to two hundredths of a second.
+- **Reading what Python made:** 260 documents built at random, nested up to four deep, with names and texts full of quotes, backslashes, control signs, letters with accents, signs of other scripts and signs with large numbers, written in four ways (with and without `\u` forms, spread over lines, and with no spaces at all). 273 texts asked for by their paths: each came out exactly as Python reads it. 234 parts that are no texts and 260 paths that lead nowhere: each refused with the reason that fits.
+- **The kernel's own rules,** 28 cases, each as meant: a half of a surrogate pair alone, in five positions; a name that stands twice; `null`; nothing at all; only spaces; a page of a web site in place of JSON; a control sign in the text and in a text passed over; bytes that are no proper text, in the text and in a text passed over; a wrong letter behind a backslash; too few digits; a sound text with a broken rest, with something behind the end, with one bracket too many, and with only spaces behind the end; a text by itself; ten thousand lists inside each other, closed and left open; a path two thousand steps long; a path longer than the nesting; a text of a million signs; and the three bytes some programs put in front of a text.
+- **Broken pieces,** 1,440 of them, where the one rule is that the kernel must not stop, and it did not: an answer cut off at each of its 285 bytes, each of its bytes changed in three ways, and 300 rows of bytes at random.
+  - In 148 the kernel and Python both found a text, the same one. In 996 both refused.
+  - In 296 the kernel handed out a text where Python refuses the piece. All 296 are pieces with one byte changed, none is cut off and none is made of bytes at random, and each time the text was the right one: the damage lay in a part that is passed over, where the kernel does not look at commas and the like.
+  - In none did the kernel refuse a piece that Python reads, and in none did it hand out another text than Python.
+  - Before the rule about what stands behind a text was added, one damaged piece gave a shortened text: a changed byte had turned `\"` into a plain quote, the text ended there, and the kernel believed it. That is what the rule is for.
+- **Making:** 395 texts, among them the empty one, every sign from 0 to 127, and one of 5,000 signs. Python read each one back as it was, and each was written exactly as Python writes it.
+- Breaks made on purpose, each alone, each caught:
+  - a byte reached without asking whether it is there: `Kernel panic: src\json.rs:...: index out of bounds`, in the startup check itself, at its piece that is cut off. This is what `get` prevents;
+  - a backslash in a text that is passed over not taking the next sign along: the startup check failed, and 187 of the 273 texts Python made came out wrong;
+  - brackets inside a text that is passed over counted: 84 of the 273 wrong;
+  - the two halves of a large sign joined wrongly: the startup check failed, and 67 of the 273 wrong;
+  - the rest behind a text not looked at: three of the kernel's own rules wrong;
+  - a name taken for another that ends alike: 34 of the 273 wrong;
+  - control signs written as they are: the startup check failed, and Python could not read back the texts with such signs in them.
+- The startup check had twelve checks at first and missed three of those breaks: the rest behind a text, brackets inside a text, and a name that ends alike. A thirteenth check and two decoys in the piece with the names were added for them, and each of the three was booted again with its break: 12 of 13 each time.
+- The temporary piece was taken out again, and `main.rs` and `json.rs` compared with their state before by a check value. The chat box test still passes, and the picture after a boot is right in every dot.
+- Not verified: a real answer from a service, of which the documentation shows none; pieces of JSON made by any other writer than Python's; a piece larger than about 1 MB.
+- A person ran `run.bat` and saw the JSON line in the terminal after the script's line.
 
 **The split into files**
 

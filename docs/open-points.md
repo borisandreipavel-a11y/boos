@@ -106,6 +106,15 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The kernel's build needs a second build first,** and the building computer needs Rust's WebAssembly target. A kernel built without rebuilding the interpreter carries the old one without saying so, except through the byte count in its line.
 - **The built interpreter is not in the repository,** so what a given kernel file carries can only be made again by building, with the same compiler and the same version of the crates. Two builds on one computer gave the same bytes; another version of the compiler was not tried.
 
+## JSON
+
+- **Nothing uses it yet.** The kernel can write a text the JSON way and find a text in a piece of JSON; no request is made with it. See [json.md](json.md).
+- **Only texts can be read.** A number, `true`, `false` or `null` can be passed over, not read as a value; a list cannot be walked through without knowing how long it is; nothing says whether a name is there except by asking for its text.
+- **The parts that are passed over are not checked.** Commas, colons and the spelling of numbers and words are not looked at there, and a square bracket closes a curly one. The kernel hands out the right text from some pieces that a strict reader refuses.
+- **A text is copied whole, however long.** An answer with a text of many megabytes asks the heap for as much, and a request for memory that cannot be met stops the kernel (see "Memory"). Whoever hands an answer to the reader has to limit its size first.
+- **The whole piece has to be in memory at once.** It cannot be read as it arrives.
+- **The values of the startup check are made by a script that is not in the repository.** [json.md](json.md) says how to make them again.
+
 ## Random numbers and the date
 
 - Random numbers have one source, the processor's own instruction. A processor without it gives none, and the kernel has no second source: not the firmware's, not a virtual machine's device, not noise it gathers itself.

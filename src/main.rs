@@ -43,6 +43,8 @@ mod starts; // A count of the kernel's starts, kept on the disk.
 mod notebook; // The notebook: named things kept on the disk.
 mod interpreter; // The interpreter for apps written as Lua text.
 mod secret; // A secret typed by the person at the machine, kept in memory only.
+mod json; // JSON: writing a text that way, and finding a text in it.
+mod json_values; // The values the check of JSON is made against.
 
 use alloc::format;
 use alloc::string::String;
@@ -62,6 +64,7 @@ use encryption::{encryption_check, trusted_roots};
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interpreter::{GREETING_SCRIPT, interpreter_check, script_run};
+use json::json_check;
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
 use network::{gateway_ask, network_start};
@@ -248,6 +251,16 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         Err(reason) => {
             write!(serial, "Interpreter: not usable, because {}\r\n", reason).ok();
         }
+    }
+
+    // Services on the internet speak JSON. The kernel makes and reads it with
+    // code of its own; see that this code gives what another JSON reader
+    // gives.
+    let (right, all) = json_check();
+    if right == all {
+        write!(serial, "JSON: {} of {} checks of making and reading it are right\r\n", right, all).ok();
+    } else {
+        write!(serial, "JSON: not to be trusted here, only {} of {} checks of making and reading it are right\r\n", right, all).ok();
     }
 
     // Look for the controller that the machine's disks are plugged into.
