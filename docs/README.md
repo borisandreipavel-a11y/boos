@@ -8,7 +8,7 @@ This folder holds what the code cannot say for itself: the order things must hap
 
 A from-scratch kernel for x86-64 PCs, written in Rust. It is a UEFI application: the firmware loads it directly and there is no separate bootloader. It runs in QEMU and has never run on real hardware.
 
-Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, small letters and with Shift capitals and the second signs of the keys, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back. It also finds the controller that the machine's disks are plugged into, sets it up, asks the first disk for its name and size, reads the list that says how the disk is divided into parts, and finds the part that is its own. It writes only inside that part, and keeps one thing there so far: a count of its own starts, which goes up by one at every start.
+Today it starts, takes the machine over from the firmware, reports processor failures, listens to the timer and the keyboard, manages memory (frames, its own page tables, a heap), runs several tasks that take turns under the timer and can wait without using the processor, and finds and sets up its network card. A network stack runs in a task of its own and gets the kernel a network address. It can get random numbers from the processor and read the date from the clock chip. With all of that it fetches one web page at startup over an encrypted link: the site proves who it is with a certificate, which the kernel checks, and the kernel prints how the page begins. It can also run a small program that is not part of it, an app, locked in a box: the app gets a block of memory of its own and can touch nothing else. An app can ask the kernel for two things so far: to print a text, and to show a text on the screen. It knows where the screen's memory is and how large the screen is, because it asks the firmware before the takeover, and it can paint filled rectangles and write text there, with letters whose shapes were drawn by hand for it: at startup it fills the screen with one colour and writes one sentence, and an app's text appears in a box in the middle of the screen. The app only says which text; the kernel decides how the box looks. Along the bottom of the screen is a chat box: what is typed on the keyboard appears there, small letters and with Shift capitals and the second signs of the keys, Backspace takes a sign away, and Enter sends the line, which the kernel answers for now by giving it back. It also finds the controller that the machine's disks are plugged into, sets it up, asks the first disk for its name and size, reads the list that says how the disk is divided into parts, and finds the part that is its own. It writes only inside that part. There it keeps a notebook: things kept under a name, each written as a new entry behind the last, so that nothing already written is ever changed. The first thing kept is the last line that was sent in the chat box, which the kernel says again at its next start. It also keeps a count of its own starts there, which goes up by one at every start.
 
 ## Read in this order
 
@@ -24,8 +24,9 @@ Today it starts, takes the machine over from the firmware, reports processor fai
 10. [screen.md](screen.md): the screen's memory, painting rectangles, the rule that keeps drawing inside the screen, letters, and the box that shows an app's text.
 11. [chat.md](chat.md): the chat box, where the person at the machine types and reads the answers.
 12. [disk.md](disk.md): the disk: which kind and why, finding its controller, setting it up, a command, asking the disk who it is, reading a block, the parts of a disk and the kernel's own part, writing a block and the count of starts, the disk file in QEMU and the script that divides it.
-13. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
-14. [open-points.md](open-points.md): known limits and what later work must deal with.
+13. [notebook.md](notebook.md): the notebook, where named things are kept on the disk: its layout, opening it, keeping and finding, and who may use it.
+14. [testing.md](testing.md): how to build, run and verify, what has been verified, and the traps.
+15. [open-points.md](open-points.md): known limits and what later work must deal with.
 
 ## Where things are
 
@@ -60,10 +61,11 @@ Each file in `src/` holds one topic. `main.rs` lists them in the order below.
 | `app_box.rs` | The locked box that apps run in, and what an app may ask the kernel for: `box_run`, `box_check`, `kernel_print`, `kernel_show`, the limits, and three whole apps written by hand, `ADDING_APP`, `GREETING_APP` and `SHOWING_APP` | [box.md](box.md) |
 | `screen.rs` | Drawing on the screen: `Colour`, `screen_setup`, `screen_size`, `screen_rectangle`, `screen_fill`, `screen_text`, and `screen_panel` with `PANEL_STYLE`, the box an app's text is shown in and its look | [screen.md](screen.md) |
 | `letters.rs` | The shapes of the letters, digits and signs, drawn by hand as grids of dots: `SHAPES`, `letter_shape` | [screen.md](screen.md) |
-| `chat.rs` | The chat box: `chat_setup`, `chat_key`, the rows of what was said, the line being typed, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
+| `chat.rs` | The chat box: `chat_setup`, `chat_key`, `chat_recall`, which says the line kept from before the last switch-off, the rows of what was said, the line being typed, and `CHAT_STYLE`, its look | [chat.md](chat.md) |
 | `disk.rs` | The disk: `disk_controller_find`, which looks for the controller that disks are plugged into, `disk_setup`, which sets it up and gives a `Disk` with the first disk's name and size, `disk_read`, which reads one block, `disk_write`, which writes one and can be called from `parts.rs` only, and `block_text` | [disk.md](disk.md) |
 | `parts.rs` | The parts of the disk: `part_find`, which reads the disk's list of parts and finds the kernel's own, `part_read` and `part_write`, which read and write one block of that part, and `WriteTicket` | [disk.md](disk.md) |
 | `starts.rs` | A count of the kernel's starts, kept on the disk: `start_count` | [disk.md](disk.md) |
+| `notebook.rs` | The notebook, named things kept on the disk: `notebook_open`, `notebook_keep`, `notebook_find`, `notebook_ready` | [notebook.md](notebook.md) |
 
 Which file uses which:
 
@@ -80,8 +82,8 @@ Which file uses which:
 - `encryption.rs` uses `encryption_values.rs` and the crates for encryption. `provider.rs` uses `random.rs` and those crates. `tls.rs` uses `provider.rs`, `encryption.rs`, `clock.rs`, `random.rs`, `serial.rs`, `page.rs` (for `plain_text`) and rustls.
 - `app_box.rs` uses `page.rs` (for `plain_text`), `serial.rs`, `screen.rs` (for `screen_panel`) and the crate wasmi.
 - `screen.rs` uses `firmware.rs` (for `Screen`), `page_tables.rs`, `processor.rs` and `letters.rs`. `letters.rs` uses nothing.
-- `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`) and `serial.rs`.
-- `disk.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs`, `processor.rs` and `page.rs` (for `plain_text`). `parts.rs` uses `disk.rs`, and `disk.rs` uses `parts.rs` for the ticket that writing asks for. `starts.rs` uses `parts.rs` and `disk.rs`.
+- `chat.rs` uses `screen.rs`, `letters.rs` (for the size of a letter), `keyboard.rs` (for `BACKSPACE`), `serial.rs` and `notebook.rs`.
+- `disk.rs` uses `pci.rs`, `frames.rs`, `page_tables.rs`, `processor.rs` and `page.rs` (for `plain_text`). `parts.rs` uses `disk.rs`, and `disk.rs` uses `parts.rs` for the ticket that writing asks for. `starts.rs` uses `parts.rs` and `disk.rs`, and so does `notebook.rs`.
 
 Outside `src/`:
 
@@ -121,7 +123,7 @@ The code is written to be readable without a background in kernels: plain words,
 **Shared values**
 
 - A value shared between a signal handler and other code is an atomic from `core::sync::atomic`, used with `Ordering::Relaxed`.
-- Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed. One file departs from "by value": the chat box keeps two lists that grow, which cannot be copied in and out, so `chat.rs` has two small functions that hand them out through their addresses. The rule that goes with them is written above them and in [chat.md](chat.md).
+- Other global state is a `static mut`, read and written by value inside `unsafe`. Edition 2024 refuses references to a `static mut`; use `&raw` when an address is needed. Two files depart from "by value": the chat box keeps two lists that grow, which cannot be copied in and out, so `chat.rs` has two small functions that hand them out through their addresses, and `notebook.rs` has one for its list of names. The rule that goes with them is written above them and in [chat.md](chat.md).
 - Several tasks run at once, and a switch can happen between any two instructions. State that more than one task changes is changed with device signals off: `let were_on = signals_off(); ... signals_back(were_on);`. See [tasks.md](tasks.md).
 - Signal handlers only count or store. They never print.
 

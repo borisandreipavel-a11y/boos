@@ -40,6 +40,7 @@ mod chat; // The chat box: typing on the screen, and what was said.
 mod disk; // The disk: its controller, asking the disk who it is, reading a block.
 mod parts; // The parts of the disk, and the one that is this kernel's own.
 mod starts; // A count of the kernel's starts, kept on the disk.
+mod notebook; // The notebook: named things kept on the disk.
 
 use alloc::format;
 use alloc::string::String;
@@ -51,7 +52,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
 use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
-use chat::{chat_key, chat_setup};
+use chat::{chat_key, chat_recall, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
 use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
@@ -62,6 +63,7 @@ use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
 use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
+use notebook::notebook_open;
 use page_tables::{GIGABYTE, page_tables_setup};
 use parts::part_find;
 use processor::{sse_refuse, stop};
@@ -256,17 +258,40 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                     Ok(part) => {
                         write!(serial, "Disk: my own part is {} MB, from block {} to block {}\r\n", part.blocks / (1024 * 1024 / BLOCK_SIZE), part.first, part.last).ok();
 
-                        // Count this start, in a block of that part. It is
-                        // the first thing the kernel writes to a disk.
-                        match start_count() {
-                            Ok((number, false)) => {
-                                write!(serial, "Disk: this is start number {}\r\n", number).ok();
-                            }
-                            Ok((number, true)) => {
-                                write!(serial, "Disk: the count of starts could not be read and begins again; this is start number {}\r\n", number).ok();
+                        // Open the notebook that the kernel keeps things in,
+                        // in that part. If the part holds something else,
+                        // the kernel writes nothing to it at all.
+                        match notebook_open() {
+                            Ok(notebook) => {
+                                let entries = if notebook.entries == 1 { "entry" } else { "entries" };
+                                if notebook.damaged {
+                                    write!(serial, "Disk: the notebook holds {} {} and is damaged behind that; nothing is added to it\r\n", notebook.entries, entries).ok();
+                                } else if notebook.new {
+                                    write!(serial, "Disk: a new notebook was begun, with room for {} entries\r\n", notebook.room).ok();
+                                } else {
+                                    write!(serial, "Disk: the notebook holds {} {} and has room for {} more\r\n", notebook.entries, entries, notebook.room).ok();
+                                }
+
+                                // Count this start, in the last block of the
+                                // part.
+                                match start_count() {
+                                    Ok((number, false)) => {
+                                        write!(serial, "Disk: this is start number {}\r\n", number).ok();
+                                    }
+                                    Ok((number, true)) => {
+                                        write!(serial, "Disk: the count of starts could not be read and begins again; this is start number {}\r\n", number).ok();
+                                    }
+                                    Err(reason) => {
+                                        write!(serial, "Disk: this start could not be counted, because {}\r\n", reason).ok();
+                                    }
+                                }
+
+                                // If a line was kept in the notebook before
+                                // the machine was switched off, say it.
+                                chat_recall();
                             }
                             Err(reason) => {
-                                write!(serial, "Disk: this start could not be counted, because {}\r\n", reason).ok();
+                                write!(serial, "Disk: nothing is kept on it, because {}\r\n", reason).ok();
                             }
                         }
                     }

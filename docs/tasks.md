@@ -105,7 +105,7 @@ What is protected today:
 Not protected, and fine as long as it stays that way:
 
 - The keyboard's waiting line is taken from by one task only, the main loop.
-- **The disk** is set up at startup, before any task runs; its list of parts is read there and the count of starts is written there. Nothing uses it afterwards yet. Its code keeps no protection of its own: a command lies in one frame and the socket has one place for it, so two tasks giving commands at once would overwrite each other. A rule for who may use the disk is still to be made; see [disk.md](disk.md).
+- **The disk and the notebook on it** are used by startup code and by one task only, the main loop, which keeps a line in the notebook when one is sent in the chat box. That happens with signals on, so a switch can come in the middle of a disk command; the command is simply carried on when the main loop has its turn again, and that does no harm as long as no other task uses the disk. The disk's code keeps no protection of its own: a command lies in one frame and the socket has one place for it, so two tasks giving commands at once would overwrite each other, and the notebook's list of names is not protected either. **A second task must not call the functions of `disk.rs`, `parts.rs`, `starts.rs` or `notebook.rs`**; see [notebook.md](notebook.md).
 - **The chat box** is used by one task only, the main loop, and nothing protects its lists. A second task must not call its functions; see [chat.md](chat.md).
 - The screen. Two tasks drawing at once would give a mixed picture and nothing worse; see [screen.md](screen.md). Today only startup draws.
 

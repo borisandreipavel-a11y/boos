@@ -8,12 +8,17 @@ use alloc::vec::Vec;
 
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
+use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::serial::serial_print;
 
 // The longest line that can be typed, in signs. A key pressed after that is
 // ignored, until a sign is taken away again or the line is sent with Enter.
 const CHAT_LINE_LIMIT: usize = 50;
+
+// The name under which the last line that was sent is kept in the notebook
+// on the disk, so that it is still known after the machine was switched off.
+const LAST_LINE: &str = "last line";
 
 // How the chat box looks. Everything about its look is decided here, in this
 // one place: changing the look means changing these values and nothing else.
@@ -257,6 +262,27 @@ pub fn chat_setup() {
     chat_paint_typing();
 }
 
+// Says what the last line was that was sent before the machine was switched
+// off, if the notebook on the disk holds one. Call it once at startup, after
+// the notebook is opened.
+pub fn chat_recall() {
+    let row = match notebook_find(LAST_LINE) {
+        Ok(Some(kept)) => {
+            // What comes from the disk comes from outside the kernel: at
+            // most as many signs as a line may have are taken, and every
+            // byte that is not a plain sign becomes a dot.
+            let said: String = kept.iter().take(CHAT_LINE_LIMIT).map(|byte| if (b' '..=b'~').contains(byte) { *byte as char } else { '.' }).collect();
+            format!("Kernel: last time you said \"{}\"", said)
+        }
+        // Nothing was kept yet: there is nothing to say.
+        Ok(None) => return,
+        Err(reason) => format!("Kernel: I cannot read what you said last time, because {}", reason),
+    };
+    serial_print(&format!("{}\r\n", row));
+    chat_add(Speaker::Kernel, &row);
+    chat_paint_rows();
+}
+
 // Takes one typed key, given as its letter. A letter is added to the line
 // being typed, Backspace takes the last one away, and Enter sends the line:
 // it moves up into what was said, and the kernel answers by giving it back.
@@ -286,6 +312,17 @@ pub fn chat_key(letter: u8) {
 
             chat_add(Speaker::Person, &mine);
             chat_add(Speaker::Kernel, &answer);
+
+            // Keep the line on the disk, if there is a notebook to keep it
+            // in. When that works nothing is said about it. When it does
+            // not, the kernel says so, and the chat goes on as before.
+            if notebook_ready() {
+                if let Err(reason) = notebook_keep(LAST_LINE, said.as_bytes()) {
+                    let trouble = format!("Kernel: I could not keep that line, because {}", reason);
+                    serial_print(&format!("{}\r\n", trouble));
+                    chat_add(Speaker::Kernel, &trouble);
+                }
+            }
             chat_paint_rows();
             chat_paint_typing();
         }

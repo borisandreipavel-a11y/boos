@@ -9,6 +9,8 @@ The chat box is the place on the screen where the person at the machine types. I
 - **A key with a letter** adds that letter to the line being typed, and the row being typed is painted again. The row reads `> `, the line so far, and a `_` that marks where the next sign will go.
 - **Backspace** takes the last sign away. On an empty line it does nothing.
 - **Enter** sends the line. The line moves up into what was said as `You: ...`, the kernel's answer follows as `Kernel: you said "..."`, and the row being typed is empty again. On an empty line Enter does nothing.
+- **The line that was sent is kept on the disk,** in the notebook, under the name `last line`; see [notebook.md](notebook.md). Nothing is said when that works. If it does not, a row says so, `Kernel: I could not keep that line, because ...`, and the chat goes on. On a machine without a disk, or without a notebook that can be added to, nothing is kept and nothing is said about it.
+- **At the next start the kernel says that line again:** `chat_recall`, called once from `efi_main` after the notebook is opened, adds the row `Kernel: last time you said "..."` and prints the same line in the terminal. Only the last line is said, although every line that was sent is still in the notebook.
 - **A line is at most 50 signs long** (`CHAT_LINE_LIMIT`). A key pressed after that is ignored until a sign is taken away or the line is sent. On a screen so narrow that fewer than 53 signs fit on a row, the line may be only as long as fits behind the `> ` and before the `_`.
 - **A text longer than a row goes on in the next row.** It is cut where the row ends, in the middle of a word if need be. On a screen 1280 dots wide a row holds 97 signs, so nothing typed needs a second row there; on a screen 800 dots wide a row holds 57, and the answer to a long line takes two.
 - **Six rows of what was said are shown.** When a seventh comes, the oldest goes. Nothing older is kept anywhere.
@@ -60,7 +62,7 @@ Keys wait in the keyboard's line of 16 key numbers while the main loop paints, a
 
 ## Text from outside
 
-Everything in the chat box today comes from the keyboard or from the kernel's own code, and the keyboard can only produce plain signs. Text that comes from outside the kernel must be cleaned before it is handed to the chat box, as everywhere else (see `plain_text` in `page.rs`). A sign without a picture would show as an empty box on the screen; in the terminal it would go out as it is.
+What is typed comes from the keyboard, which can only produce plain signs, and the kernel's rows come from its own code. One text comes from outside the kernel: the line kept on the disk. `chat_recall` takes at most 50 signs of it and turns every byte that is not a plain sign into a dot. Any other text that comes from outside the kernel must be cleaned before it is handed to the chat box, as everywhere else (see `plain_text` in `page.rs`). A sign without a picture would show as an empty box on the screen; in the terminal it would go out as it is.
 
 ## How to test it
 
@@ -73,4 +75,4 @@ Everything in the chat box today comes from the keyboard or from the kernel's ow
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, one task may use the chat box, six rows are shown and nothing older is kept, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

@@ -77,7 +77,7 @@ What is not recognised:
 
 ## Writing a block
 
-Code: `disk_write` in `src/disk.rs`, `part_write` and `WriteTicket` in `src/parts.rs`, and `src/starts.rs`, which is the only thing that writes so far.
+Code: `disk_write` in `src/disk.rs`, `part_write` and `WriteTicket` in `src/parts.rs`. Two things write: the count of starts in `src/starts.rs`, and the notebook in `src/notebook.rs`; see [notebook.md](notebook.md).
 
 - **The kernel writes only inside its own part.** `part_write(block, from)` writes one block of the kernel's own part, numbered from 0 at the part's beginning, and refuses a number at or past the part's length, exactly as `part_read` does for reading. It is the only place in the kernel that writes to a disk.
 - **That is enforced when the kernel is built, not by habit.** `disk_write`, which writes a block of the disk by its own number, asks for a ticket, a `WriteTicket`. What a ticket holds is private to `parts.rs`, so only code in that file can make one, and `part_write` is the one place that does. Code anywhere else that tries to call `disk_write`, with a ticket it makes itself or with none, does not build.
@@ -91,11 +91,12 @@ Code: `disk_write` in `src/disk.rs`, `part_write` and `WriteTicket` in `src/part
 
 `start_count()` in `starts.rs` counts how often the kernel has started. It shows that what the kernel writes is still there after the machine was switched off.
 
-- The count is kept in **the last block of the kernel's own part**, so that the part's first blocks stay free for what will later be kept there.
+- The count is kept in **the last block of the kernel's own part**. The part's first block holds the head of the notebook and the blocks between hold its entries; the notebook leaves the last block alone. See [notebook.md](notebook.md).
 - The block holds the 16 letters `boos start count`, then the count as a number of 8 bytes, lowest byte first, then a check value of those 24 bytes in 4 bytes. The rest is zeros.
+- **A start is counted only after the notebook was opened.** If the kernel's part holds something the kernel does not know, the notebook refuses it, and then nothing is written to the part, the count included.
 - At each start the kernel reads the block. Nothing but zeros means no start was counted yet. The letters with a check value that fits give the count. Anything else is not believed: the count begins again, and the line says so. The kernel's own part is its own, so it writes over what it finds there.
 - It adds 1, without going past the largest number there is, writes the block, **reads it back, and counts the start only if the disk holds exactly what was written.**
-- This is a demonstration. It can go, with its block, when something better is kept on the disk.
+- This is a demonstration. It can go, with its block, now that the notebook keeps things on the disk.
 
 ## Reading a block
 
@@ -185,7 +186,7 @@ In QEMU the disk is a file on the building computer, `disk.img` in the project f
 - `run.bat` makes it the first time, 16 MB of zeros, with `qemu-img`, a program that comes with QEMU: `qemu-img create -f raw disk.img 16M`, and then divides it with `make-disk.ps1`; see "Dividing a disk file". If the file is there already it is left alone, divided or not. A disk file from before the list of parts came is not divided, and the kernel then says that the disk has no list of parts. The remedy is to delete the file, which loses what is in it; `run.bat` makes a new, divided one at its next run. If it cannot be made or divided, `run.bat` stops and says so, and leaves no half-made file behind.
 - `run.bat` then starts QEMU with three more options: `-device ich9-ahci,id=ahci0` adds an AHCI controller, `-drive if=none,id=disk0,format=raw,file=disk.img` names the file as a disk, and `-device ide-hd,drive=disk0,bus=ahci0.0` plugs that disk into the controller's first socket. (`ide-hd` is QEMU's name for a hard disk, also for one on a SATA controller.)
 - The options stand behind the network card's, so the card keeps its place on the PCI list, device 3, and the controller gets device 4.
-- **The file is not in the repository.** `.gitignore` names it. It holds what the kernel has stored, today its count of starts. **Every start of the kernel changes it.**
+- **The file is not in the repository.** `.gitignore` names it. It holds what the kernel has stored: its notebook and its count of starts. **Every start of the kernel changes it, and so does every line sent in the chat box.**
 - **Tests never use this file.** Each test boot makes a disk file of its own in a temporary folder.
 - In QEMU the kernel can reach only what QEMU is given: this file, and the folder it boots from. It cannot reach the building computer's own disk.
 - **On the machine `run.bat` starts, the drive the kernel boots from is another device.** The `esp` folder is attached to QEMU's IDE controller (device 1, function 1), not to the AHCI controller. A driver that talks only to the AHCI controller cannot reach it there. That is true of this one machine. On QEMU's newer kind of PC, and on a real PC, every SATA disk is plugged into the one AHCI controller, the disk with the machine's own system among them, and the first disk the kernel finds there is usually that one. Today it only asks that disk who it is. On such a machine nothing but the rule in "The parts of a disk" keeps the kernel off what is not its own: it will write only inside the part that the disk's list names as its.
@@ -193,19 +194,22 @@ In QEMU the disk is a file on the building computer, `disk.img` in the project f
 
 ## What a boot prints
 
-Four lines, after the lines of the apps and before the network card's:
+Five lines, after the lines of the apps and before the network card's, and a sixth if a line from the chat box was kept:
 
 ```
 Disk controller: found, device 4 on bus 0 of the PCI list
 Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller
 Disk: my own part is 14 MB, from block 2048 to block 32734
+Disk: the notebook holds 2 entries and has room for 30683 more
 Disk: this is start number 3
+Kernel: last time you said "hello"
 ```
 
-- The fourth line counts the kernel's starts with this disk. The number is one higher at every start, because the kernel keeps it on the disk. A new disk file begins at 1.
+- The fourth line is the notebook's, and the sixth comes from the chat box; [notebook.md](notebook.md) lists their other forms. If the notebook cannot be opened the fourth line reads `Disk: nothing is kept on it, because ...`, nothing is written to the part, and no line about the count follows.
+- The fifth line counts the kernel's starts with this disk. The number is one higher at every start, because the kernel keeps it on the disk. A new disk file begins at 1.
 - If the block for the count holds something the kernel does not know, the line reads `Disk: the count of starts could not be read and begins again; this is start number 1`.
 - If the count cannot be written, or the disk does not hold what was written when it is read back, the line reads `Disk: this start could not be counted, because ...` with the reason, and the kernel carries on.
-- A disk with no part of the kernel's own gives no fourth line, and nothing is written to it.
+- A disk with no part of the kernel's own gives no fourth and no fifth line, and nothing is written to it.
 
 - The third line says where the kernel's own part lies on the disk, with its first and its last block, and its size in MB, rounded down.
 - If the kernel finds no part of its own, the third line reads `Disk: nothing on it is mine, because ...` with one of the reasons listed under "What `part_find` checks", or with the reason of a block that could not be read. A disk file that was never divided gives `it has no list of parts`.
@@ -217,9 +221,9 @@ Disk: this is start number 3
 - The name is the disk's own. The size is in MB, and in GB for a disk of 10 GB or more, rounded down.
 - If the disk cannot be made ready the second line reads `Disk: not ready, because ...` with the reason: `no disk is plugged into the controller`, `the controller does not say where its controls are`, `the firmware did not hand the controller over`, `the disk's socket did not stop carrying out commands`, `the disk's socket did not stop taking answers`, `the controller cannot reach the memory the kernel has for it`, `the disk stayed busy`, `the disk reported that it could not do what was asked`, `the disk did not answer in time`, `the disk finished the command without sending a whole block`, `the disk's blocks are not 512 bytes long`, `the disk's socket is stopped`, or `the disk gave a number of blocks that cannot be true`.
 
-The kernel carries on in every case. Nothing depends on the disk yet.
+The kernel carries on in every case. Without a disk, or without a notebook on it, the chat box keeps nothing and says nothing about it.
 
-With the controller attached, "Free memory" reads 196 MB, one less than without: the firmware keeps a little more for itself. The two frames lent to the controller are taken after that line is printed.
+With the controller attached and a divided disk on it, "Free memory" reads 195 MB, two less than without a controller: the firmware keeps a little more for itself. With a disk that is not divided it reads 196. The two frames lent to the controller are taken after that line is printed.
 
 ## Waiting
 
@@ -227,4 +231,4 @@ All waiting for the controller is done by looking again and again, up to 3 milli
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel reads and writes one block at a time, and keeps one thing on the disk, a count of its starts; only an AHCI controller and the first disk on it are used; only startup code uses the disk; every list of parts it has read was made by this project's own script or tests; and several of the steps were never seen to matter in QEMU.
+See [open-points.md](open-points.md). In short: the kernel reads and writes one block at a time; only an AHCI controller and the first disk on it are used; only startup code and the main loop use the disk; every list of parts it has read was made by this project's own script or tests; and several of the steps were never seen to matter in QEMU.
