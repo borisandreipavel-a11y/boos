@@ -131,38 +131,38 @@ It is a demonstration, like the three small apps before it. Nothing depends on i
 A script is held to the box's limits like any app (1 MB of memory, 100 printed lines), with one difference: its fuel. `SCRIPT_FUEL` in `app_box.rs` is 100,000,000 units, ten times an app's.
 
 - **Why more:** every step of a script costs the interpreter many of the box's steps. The five-line greeting costs about 4.4 million units, small scripts 4 to 11 million, one round of a loop about 24 thousand.
-- **Why not far more:** fuel counts steps, and the same number of units lasts very different times. Measured with scripts that never end, each given 100 million units, in the plain debug build, in a trial's copy of the kernel with the interpreter as it was one change earlier:
+- **Why not far more:** fuel counts steps, and the same number of units lasts very different times. Measured with scripts that never end, each given 100 million units. The first column of seconds is today's kernel; the second is from before the outside crates were built optimized, when the number was chosen:
 
-| The script's work | Seconds until the fuel was used up |
-| --- | --- |
-| an empty loop, counting, calling a function | about 2 |
-| sorting a list | 5 |
-| turning numbers into text | 13 |
-| a pattern that is hard to match | 15 |
-| making small lists and dropping them | 17 |
-| repeating or joining texts | 23 to 24 |
+| The script's work | Seconds now | Seconds, plain |
+| --- | --- | --- |
+| an empty loop, counting, calling a function | 0.4 to 0.5 | about 2 |
+| sorting a list | 0.5 | 5 |
+| turning numbers into text | 0.7 | 13 |
+| a pattern that is hard to match | 0.8 | 15 |
+| making small lists and dropping them | 1.0 | 17 |
+| repeating or joining texts | 1.3 to 1.4 | 23 to 24 |
 
-- So with this budget a bad script holds the machine for up to about half a minute. With ten times the budget, which was the first try, it would be minutes.
+- So with this budget a bad script holds the machine for about a second and a half at most. In the plain build it was half a minute, and ten times the budget, which was the first try, would have been minutes. Now ten times the budget would be 4 to 14 seconds; the number has not been raised.
 - **What the budget stops that is harmless:** a loop of more than about four thousand rounds, `fib(20)`, the Tower of Hanoi with ten discs. The number is a stopgap until something better bounds a script's time.
-- **One kind of script is not ended by the fuel at all:** one that fills its memory. It was ended by the memory limit after 29 to 43 seconds, having used 92 million units.
+- **One kind of script is not ended by the fuel at all:** one that fills its memory. It is ended by the memory limit after 1.6 to 1.8 seconds, having used 92 million units (29 to 43 seconds in the plain build).
 
 ## What was measured
 
-In QEMU, in the plain debug build. The times vary with how busy the test computer is; the same kernel took 1.3 seconds for the check at one hour and 2.1 at another.
+In QEMU. The times vary with how busy the test computer is, so the kernel from before a change and the one after it are booted turn about.
 
-- **Time:** the check adds 1.1 to 2.9 seconds to a start and the script 2.6 to 6.5 more, both with device signals off. Showing a text adds a few hundredths of a second to that. Most of the script's time is getting the interpreter ready again.
-- **Stack:** 44,920 bytes deep for the check and 54,824 while a script runs, at their place in the startup, of the 124 KB free on the firmware's stack. The second figure was the same for seven scripts, among them calls without end, a loop without end, a flood of prints, and the greeting, which paints the box on the screen from inside the script's run.
-- **Memory:** the first check took 556 frames (2.2 MB) for the kernel's heap, a second and a third none. Twenty-eight well-behaved scripts in a row took 25 frames more. Fourteen that should be stopped took 514, 513 of them at the script with calls without end, the only one that made the interpreter's memory grow far. The heap keeps them for later use and never hands frames back (see [memory.md](memory.md)).
+- **Time:** the check adds 0.16 to 0.33 seconds to a start and the script 0.26 to 0.49 more, both with device signals off. Most of the script's time is getting the interpreter ready again. Showing a text adds a few hundredths of a second.
+- **Time, plain:** before the outside crates were built optimized the check took 1.1 to 3.3 seconds and the script 2.6 to 6.8.
+- **Stack:** 16,744 bytes deep for the check and 17,384 while a script runs, at their place in the startup, of the 124 KB free on the firmware's stack; the second figure was the same for four scripts, among them calls without end and a flood of prints. Plain, the two figures were 44,920 and 54,824.
+- **Memory:** the first check takes 556 frames (2.2 MB) for the kernel's heap, a second and a third none. Twenty-eight well-behaved scripts in a row took 25 frames more. Fourteen that should be stopped took about 514, 513 of them at the script with calls without end, the only one that made the interpreter's memory grow far. The heap keeps them for later use and never hands frames back (see [memory.md](memory.md)).
 - **A script's own memory:** every small script ended with 384 KB of the app's 1 MB in use (measured in a trial's copy).
-- **Size:** the kernel's file is 7.1 MB, 6.3 before the interpreter came. "Free memory" reads the same as before on the usual machine.
-- The kernel still starts with 96 MB of memory.
+- **Size:** the interpreter adds its own 0.76 MB to the kernel's file, which is 4.0 MB.
+- The kernel starts with 80 MB of memory and not with 64, where the firmware refuses to load a file of this size.
 
 ## What trials showed beyond that
 
-None of this is in the kernel. It was measured in a copy of the kernel:
+None of this is in the kernel. It was measured in a copy of the kernel, in the plain build:
 
-- **With the outside crates built optimized,** a setting that is not in use: getting the interpreter ready takes about a tenth of a second and a small script as long again, where the plain build takes seconds. That setting would change how every outside crate is built.
-- **With the interpreter checked once and kept** for several scripts, each started from that one check in a store of its own: a later small script took 0.7 to 1.4 seconds in the plain build, and half the fuel, because translating is paid once.
+- **With the interpreter checked once and kept** for several scripts, each started from that one check in a store of its own: a later small script took half the time and half the fuel, because translating is paid once.
 - **Going on after the fuel has run out, a trap.** wasmi can take a run up again where it stopped for lack of fuel (`call_resumable`, `resume`), which would let the kernel hand out fuel in slices and look at its clock in between. With wasmi translating each function at its first use, which is its default and what the box uses, **that stopped the whole kernel with a panic inside wasmi** in the first script tried. With everything translated up front (`CompilationMode::Eager`) nine runs went through and a loop without end was stopped by the clock. Do not use `resume` with the default setting.
 - **Where scripts run today the timer does not tick,** so a limit by the clock could not work there whatever wasmi did.
 

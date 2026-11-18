@@ -131,7 +131,7 @@ Also:
 
 - **The start number.** smoltcp wants a number that differs at every start of the kernel, for picking port numbers and the like. `time_stamp()` in `processor.rs` gives the processor's count of its own steps, which did differ between boots. smoltcp's documentation says the number need not be secret. It is not, and it would not do for encryption.
 - **`network_start(card_address)`** is called from `efi_main` once the card is set up. It keeps the card's address and adds the task. With no card, or a card that could not be set up, the stack is not started.
-- The task uses up to 100 KB of its 256 KB stack. Nearly all of that is the arithmetic of an encrypted link; without one it was 11.5 KB with a page fetch and 8.7 KB before there was one. smoltcp's own objects are small: the interface measured 392 bytes when only the address request was switched on.
+- The task uses up to 56 KB of its 256 KB stack (100 KB before the outside crates were built optimized). Nearly all of that is the arithmetic of an encrypted link; without one it was 11.5 KB with a page fetch and 8.7 KB before there was one. smoltcp's own objects are small: the interface measured 392 bytes when only the address request was switched on.
 
 ## Getting an address
 

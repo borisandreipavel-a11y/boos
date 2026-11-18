@@ -37,11 +37,11 @@ const APP_FUEL: u64 = 10_000_000;
 // more fuel than an app written by hand: five lines of script cost over four
 // million units, and one round of a loop about 24 thousand. So a script gets
 // ten times an app's budget. The number is a stopgap, set by measuring. Fuel
-// counts steps, not time: this much is used up in about two seconds by an
-// empty loop and in about half a minute by a script that joins texts without
-// end, in this kind of build. A higher number would let a bad script hold the
-// machine for minutes; this one stops a harmless loop after about four
-// thousand rounds.
+// counts steps, not time: this much is used up in under half a second by an
+// empty loop and in about a second and a half by a script that joins texts
+// without end. (When the number was chosen, the code that runs apps was
+// built the slow way and those were two seconds and half a minute.) It also
+// stops a harmless loop after about four thousand rounds.
 const SCRIPT_FUEL: u64 = 100_000_000;
 
 // The longest script the kernel hands over, in bytes. The script is copied

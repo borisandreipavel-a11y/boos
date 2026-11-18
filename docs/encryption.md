@@ -91,7 +91,7 @@ The arithmetic crates each hold two versions of their code: a fast one for proce
 - `efi_main` prints `Encryption: 8 of 8 checks of the arithmetic are right, and 112 trusted roots are on board`. If a check fails the line is `Encryption: not to be trusted here, only N of 8 checks of the arithmetic are right`, and the kernel carries on.
 - The result is kept. `encryption_sound()` gives it, and the encrypted link asks it first: after a failed check no link is made.
 - `root_list()` puts the list of roots into the form rustls wants, and `trusted_roots()` counts it.
-- The check takes about half a second in QEMU and goes 45,696 bytes deep on the stack. At startup the kernel runs on the firmware's stack, which has 124 KB free at that point; see [memory.md](memory.md).
+- The check takes 0.2 to 0.3 seconds in QEMU and goes 41,544 bytes deep on the stack. Before the outside crates were built optimized (see [README.md](README.md)) it took half a second or more and went 45,696 deep. At startup the kernel runs on the firmware's stack, which has 124 KB free at that point; see [memory.md](memory.md).
 - **What the check does not show:** that the code is safe against an attacker. It shows that the arithmetic comes out right on this machine, for one example of each kind.
 
 To make the Windows values again: sign the message in the file with a new key on each curve (`ECDsa.SignData`) and with a new RSA key of 2048 bits in both forms (`RSACng.SignData`), and write out the public halves and the signatures.
@@ -158,7 +158,7 @@ What can still be read on the way:
 
 How it goes in QEMU:
 
-- A link took 100 KB of the network task's stack at most, with a chain that has RSA keys of up to 4096 bits. That is why a task's stack is 256 KB; see [tasks.md](tasks.md).
+- A link took 100 KB of the network task's stack at most, with a chain that has RSA keys of up to 4096 bits, before the outside crates were built optimized. That is why a task's stack is 256 KB; see [tasks.md](tasks.md). Now a link takes 56 KB at most, with keys on a curve, and 38 KB with RSA keys.
 - A fetch from the test server took 1.3 to 1.5 seconds, nearly all of it arithmetic. The rest count at startup falls from 397 to between 336 and 365 of 400 ticks because of it.
 - Three fetches in a row used no more stack and no more frames than one.
 

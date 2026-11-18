@@ -223,7 +223,7 @@ Kernel: last time you said "hello"
 
 The kernel carries on in every case. Without a disk, or without a notebook on it, the chat box keeps nothing and says nothing about it.
 
-With the controller attached and a divided disk on it, "Free memory" reads 195 MB, two less than without a controller: the firmware keeps a little more for itself. With a disk that is not divided it reads 196. The two frames lent to the controller are taken after that line is printed.
+With the controller attached and a divided disk on it, "Free memory" read 195 MB when this was looked at, two less than without a controller (it reads 198 and 199 since the kernel's file got smaller; see [memory.md](memory.md)): the firmware keeps a little more for itself. With a disk that is not divided it reads 196. The two frames lent to the controller are taken after that line is printed.
 
 ## Waiting
 

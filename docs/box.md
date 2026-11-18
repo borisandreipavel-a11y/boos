@@ -118,8 +118,8 @@ Two more come from wasmi and are left as it sets them: at most 1000 calls nested
 Why they are needed:
 
 - **A request for memory that cannot be met stops the whole kernel** (see [memory.md](memory.md)). With the memory limit taken out on purpose, a program that asks for 1 GB did exactly that: `Kernel panic: ... the machine is out of memory`. The limits on tables and on the number of memories and tables close the same door.
-- **Without fuel, a loop that never ends never comes back.** With fuel taken out on purpose, the test never got past such a loop. In this build ten million units are about two seconds of the processor.
-- **A script has a budget of its own, ten times as large,** because a program in the box carries it out and every step of the script costs many of the box's steps: five lines of script cost over four million units, one round of a loop about 24 thousand. The number is a stopgap set by measuring. Fuel bounds the steps and not the time: the same budget lasts two seconds in one kind of work and half a minute in another; see [interpreter.md](interpreter.md).
+- **Without fuel, a loop that never ends never comes back.** With fuel taken out on purpose, the test never got past such a loop. Ten million units are about half a second of the processor in a tight loop written by hand (two seconds before the outside crates were built optimized).
+- **A script has a budget of its own, ten times as large,** because a program in the box carries it out and every step of the script costs many of the box's steps: five lines of script cost over four million units, one round of a loop about 24 thousand. The number is a stopgap set by measuring. Fuel bounds the steps and not the time: the same budget lasts three to four times as long in one kind of work as in another; see [interpreter.md](interpreter.md).
 
 What the limits do not cover: wasmi's own bookkeeping for an app lives on the kernel's heap and is not counted in the app's memory. A translated program takes room in proportion to its size.
 
@@ -153,7 +153,7 @@ All are whole WebAssembly programs written out by hand in `app_box.rs`, with a c
 
 The kernel carries on whatever the outcome. Nothing depends on these runs yet.
 
-All three run with device signals off, on the firmware's stack, like the encryption check before them. The greeting app and the showing app go equally deep, 45,776 bytes, of the 124 KB free there. How long they take was not measured; they do not visibly slow the start.
+All three run with device signals off, on the firmware's stack, like the encryption check before them. The greeting app goes 15,752 bytes deep of the 124 KB free there (45,776 before the outside crates were built optimized). How long they take was not measured; they do not visibly slow the start.
 
 ## Numbers with a point
 
@@ -161,13 +161,14 @@ WebAssembly has numbers with a point, so wasmi carries code for them. The build 
 
 ## What was measured
 
-In QEMU, in the plain debug build:
+In QEMU. The figures marked "plain" are from before the outside crates were built optimized (see [README.md](README.md)); they are kept because much of the testing was done then.
 
-- **Stack:** 45,776 bytes for the greeting app and for the showing app alike, at startup, of the 124 KB free on the firmware's stack and of a task's 256 KB. (It was 45,408 for the greeting app before the second call came in.) The adding app went 43,112 deep when it was measured, before the print call existed. Larger programs will go deeper; no app bigger than 540 bytes has been run. The interpreter, a program of 762 KB, is got ready at startup without any of it being run, and that went 44,920 bytes deep; see [interpreter.md](interpreter.md).
-- **Size:** the kernel's file grew from 2.9 MB to 6.2 MB.
-- **Speed:** checking and translating a program of 540 bytes took about 5 thousandths of a second. A small counting loop ran about 0.7 million rounds a second, at about 4 units of fuel a round. Ten million units of fuel lasted about 2 seconds.
+- **Stack, now:** 15,960 bytes for the adding app and 15,752 for the greeting app, at startup, of the 124 KB free on the firmware's stack.
+- **Stack, plain:** 45,776 bytes for the greeting app and for the showing app alike, at startup, of the 124 KB free on the firmware's stack and of a task's 256 KB. (It was 45,408 for the greeting app before the second call came in.) The adding app went 43,112 deep when it was measured, before the print call existed. Larger programs will go deeper; no app bigger than 540 bytes has been run. The interpreter, a program of 762 KB, is got ready at startup without any of it being run, and that went 44,920 bytes deep; see [interpreter.md](interpreter.md).
+- **Size:** the kernel's file grew from 2.9 MB to 6.2 MB when the box came, in the plain build. Built as it is now, with everything that has come since, it is 4.0 MB.
+- **Speed, plain:** checking and translating a program of 540 bytes took about 5 thousandths of a second. A small counting loop ran about 0.7 million rounds a second, at about 4 units of fuel a round. Ten million units of fuel lasted about 2 seconds.
+- **Speed, now:** a tight loop written by hand uses a hundred million units up in 4.3 to 4.8 seconds, where it took 31 to 32: about seven times as fast. The interpreter, a far bigger program, gained more; see [interpreter.md](interpreter.md).
 - **Memory:** three rounds of 42 runs took 274 frames in the first round and none after. Two passes over 333 changed programs took none. So nothing is lost from run to run; the heap only never hands frames back (see [memory.md](memory.md)).
-- With the outside crates built optimized, in a trial: the file is about half the size, the stack a third as deep, and the steps about 25 times as fast. That setting is not in use; it would change how every outside crate is built.
 
 ## How to test it
 

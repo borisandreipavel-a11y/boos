@@ -45,3 +45,13 @@ rustls-webpki = { path = "vendor/rustls-webpki" }
 num-traits = { path = "vendor/num-traits" }
 wasmparser = { path = "vendor/wasmparser" }
 libm = { path = "vendor/libm" }
+
+# Every crate that was not written for this kernel is built to run fast
+# (the compiler takes more time over it and makes quicker code). The kernel's
+# own code is still built the plain way, which builds quickly and is the
+# easiest to follow when something goes wrong. The outside code does the
+# heavy work: the arithmetic of encryption, and carrying out apps step by
+# step. Built plain it was many times slower. The checks that stop on a
+# number too large for its type stay switched on for all of it.
+[profile.dev.package."*"]
+opt-level = 2
