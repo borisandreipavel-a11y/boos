@@ -15,9 +15,13 @@ The line `ask`, sent by itself in the chat box, makes the kernel ask the model o
 | The sentence | When |
 |---|---|
 | `the model answered "..."` | The provider's answer carries the number 200 and the model's words were found in it |
-| `the provider turned the question down (401): "..."` | Any other number; the words are the provider's reason. 401 is what a key it does not know gets |
-| `the provider turned the question down (N), and I could not read why.` | Any other number, and the answer's body is not JSON with a reason in one of the three places looked at |
-| `the provider answered, but I could not find the model's words in its answer, because ...` | The number 200, with a body that is not sound JSON or does not hold the words where they are looked for |
+| `the model answered "...", but it was cut off at the limit of 1000 tokens.` | The same, and the answer says it ended because it reached the limit (`length`) |
+| `the model answered "...", but the provider held part of it back.` | The same, and the answer says the provider's filter ended it (`content_filter`) |
+| `the model's answer was empty.` | The number 200, and the model's words are an empty text, spaces only, or `null`. A reason is added when the answer gives one: `, because it spent all of its 1000 tokens thinking` (it reached the limit and has thoughts beside its words), `, because it reached the limit of 1000 tokens`, or `, because the provider held it back` |
+| `the provider turned the question down (401): "..."` | Any other number that is not from 500 to 599; the words are the provider's reason. 401 is what a key it does not know gets, 402 used-up credit, 404 a model it does not know, 429 too many questions |
+| `the provider could not answer (502): "..."` | A number from 500 to 599: the trouble is on the provider's side or the model's. Asking again later may work |
+| `the provider ... (N), and I could not read why.` | Either of the two above, with a body that is not JSON with a reason in one of the three places looked at |
+| `the provider answered, but I could not find the model's words in its answer, because ... It begins "...".` | The number 200, with a body that is not sound JSON or does not hold the words where they are looked for. The first 160 signs of the body are said (`BEGINNING_SHOWN`), cleaned and with the key hidden, so that an answer of another shape than the documentation describes can be seen without asking again |
 | `no answer came that I could read, because ...` | What came does not begin as an answer on the web does, or is larger than the room for it |
 | `no answer came, because ...` | Nothing came: no name server, no key, a link that could not be made, a certificate that was refused, a provider that stayed silent |
 
@@ -40,15 +44,17 @@ One request per connection, over an encrypted link whose certificate was checked
 POST /v1/chat/completions HTTP/1.0
 Host: api.orcarouter.ai
 Content-Type: application/json
-Content-Length: 128
+Content-Length: 144
 Connection: close
 Authorization: Bearer <the key>
 
-{"model":"deepseek/deepseek-v4.1-flash-1017","messages":[{"role":"user","content":"Say hello in five words."}],"max_tokens":300}
+{"model":"deepseek/deepseek-v4.1-flash-1017","messages":[{"role":"user","content":"Say hello in five words."}],"max_tokens":1000,"stream":false}
 ```
 
 - `POST` hands something in at the place named behind it. The lines after it are notes: which site is meant, what form the body has, how many bytes long it is, that the connection may be closed after the answer, and the key. An empty line ends the notes, and the body follows.
-- The body is JSON. The two texts in it are written with `json_text` (see [json.md](json.md)). `max_tokens` is the longest answer the model may give (`ANSWER_TOKENS`); models count in tokens, which are pieces of words.
+- The body is JSON. The two texts in it are written with `json_text` (see [json.md](json.md)). `max_tokens` is the longest answer the model may give (`ANSWER_TOKENS`, 1000); models count in tokens, which are pieces of words. The model can think before it answers (its page at the provider says it has a thinking and a non-thinking way, and not which it takes when nothing is said), and thinking may be paid out of the same tokens, so the limit leaves room for far more than a five-word answer. The provider is paid by the token used, not by the limit: at the model's prices in November 2026 (0.60 dollars a million tokens out, twice that in the provider's busy hours) the whole limit would cost about a tenth of a cent.
+- `"stream":false` asks for the whole answer in one piece. The provider's documentation does not say what it does when nothing is said; sent word by word, the answer would not read as JSON.
+- Nothing is sent to choose thinking or not: the provider's documentation names no such setting for this model, and a setting it does not know could make it refuse the question.
 - The length note counts bytes, not signs.
 - `HTTP/1.0` and `Connection: close` ask the provider to close the connection after its answer, which is how the kernel knows the answer is over.
 
@@ -69,10 +75,13 @@ Connection: close
 
 - The whole answer is collected, up to 64 KB (`ANSWER_ROOM`). A longer one is not read at all.
 - `answer_parts` takes it apart: the number is the three digits behind the first space of the first line, which must begin with `HTTP/`; the notes are passed over up to the empty line; the rest is the body.
-- With the number 200, the model's words are looked for in the body at `choices`, the first of them, `message`, `content`. That place is from the provider's documentation. **No good answer from the real provider has been seen yet**, only the refusal above.
-- With any other number, the reason is looked for at `error` then `message`, then at `error` as a text, then at `message`.
-- The words are cleaned like every text from outside (`plain_text`) and cut at 300 signs (`WORDS_SHOWN`).
-- The reader takes bytes from outside, so it reads them with `get` and the JSON reader's rules; see [json.md](json.md). 6,091 damaged answers were put through it; see [testing.md](testing.md).
+- With the number 200 (`model_sentence`), the model's words are looked for in the body at `choices`, the first of them, `message`, `content`. If what stands there is not a text, the first piece of a list there is tried (`content`, first, `text`): the provider's documentation allows the words as a list of pieces. The places are from the provider's documentation, and a good answer from the real provider was read from them (see "What the real question showed").
+- How the answer ended is read at `choices`, the first of them, `finish_reason`. Two values are told apart, `length` (the limit of tokens was reached) and `content_filter` (the provider held something back); any other value, or none, counts as an ordinary end. The value is compared and never said, so whatever stands there cannot reach the screen.
+- Spaces and line ends before and after the words are taken off. Words that are then empty, or a `null` where the words belong, make the sentence "the model's answer was empty". A `null`, or no words at all, counts only if `finish_reason` was read as a text: the JSON reader checks that the rest of the answer closes properly only when it hands out a text, so a damaged answer is not taken for an empty one.
+- A model that thinks may send its thoughts beside its words, at `reasoning_content` or `reasoning` (the provider's documentation names the first; the second is the other common name). They are not shown as words; they are only looked at to say "it spent all of its tokens thinking" when the answer is empty and reached the limit. The one place where they can appear is the beginning of an answer whose words cannot be found, which is said as it is.
+- With any other number, the reason is looked for at `error` then `message`, then at `error` as a text, then at `message`. A number from 500 to 599 is "the provider could not answer", any other "the provider turned the question down". The provider's page for the model gave an error rate of about 5 in 100 over a week in November 2026, so a 502 or 503 now and then is to be expected.
+- The words are cleaned like every text from outside (`plain_text`) and cut at 300 signs (`WORDS_SHOWN`). Only the signs that are said, and as many behind them as the key is long, are cleaned and searched for the key: a piece of the key that begins among the signs that are said ends among those.
+- The reader takes bytes from outside, so it reads them with `get` and the JSON reader's rules; see [json.md](json.md). 11,499 damaged and made-up answers were put through it; see [testing.md](testing.md).
 - An answer sent in pieces with their lengths in between (the web calls it "chunked") is not put together again: its body does not read as JSON, and the sentence is "I could not read why". The provider did not answer that way.
 
 ## The key
@@ -99,3 +108,10 @@ One question was sent to the real provider with a made-up key.
 - The provider takes the kernel's link as it is: TLS 1.3 with the one curve this kernel offers, and its certificate leads back to one of the trusted roots.
 - It takes a request in `HTTP/1.0` form and answers with the whole body and its length, not in pieces, and closes the connection with a proper goodbye.
 - The refusal came 1.4 seconds after the asking.
+
+## What the real question showed
+
+The real question was then asked with a real key, in a person's own run, and the chat box showed `Kernel: the model answered "...".`
+
+- So a good answer comes through the kernel's link too, within the minute the kernel waits, and the model's words lie where the provider's documentation says.
+- Nothing more of that run is known: not the words, not how long the answer took, not whether the model thought first or how many tokens it used. A run with a real key is not watched, and the raw answer is not printed, so its exact shape was not seen.

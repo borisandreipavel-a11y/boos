@@ -59,7 +59,7 @@ kernel                      shares the processor and the memory, talks to device
 
 - Asks a model one fixed question, "Say hello in five words.", and says in the chat box what came back. The model is `deepseek/deepseek-v4.1-flash-1017`, reached through the provider OrcaRouter, a service on the internet that passes questions on to models.
 - Sends the key that the provider asks for, which you type yourself, to that one site only, over a link whose certificate was checked. If the provider repeats the key in its answer, stars are shown in its place.
-- So far it has only been refused: the one question sent to the real provider carried a made-up key. A good answer has been read from a stand-in only.
+- The real provider has answered it: in a run with a real key, the model's answer appeared in the chat box. The tests use a stand-in for the provider and a made-up key.
 
 **Apps**
 
@@ -213,7 +213,7 @@ Seven crates are kept as copies in `vendor/`. Six of them came with a build scri
 
 Said plainly, because a list of what works is only half the picture:
 
-- No app is made on request. The model can be asked one fixed question, and its answer is only said, not used. A good answer from the real provider has not been seen yet.
+- No app is made on request. The model can be asked one fixed question, and its answer is only said, not used.
 - It has run in QEMU only. What a real PC may do differently is collected in [docs/open-points.md](docs/open-points.md).
 - Its network card is a virtio card, a kind that exists only in virtual machines.
 - Nothing can hand the kernel a script from outside yet. The one script it runs is written by hand and kept inside it.

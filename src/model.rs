@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use smoltcp::iface::{Interface, SocketSet};
 use smoltcp::wire::Ipv4Address;
 
-use crate::json::{Step, json_find_text, json_text};
+use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_text, json_text};
 use crate::network::Card;
 use crate::page::{plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, wipe};
@@ -29,8 +29,11 @@ const MODEL_NAME: &str = "deepseek/deepseek-v4.1-flash-1017";
 pub const QUESTION: &str = "Say hello in five words.";
 
 // The longest answer the model may give. Models count in tokens, which are
-// pieces of words; a token is about three quarters of a word.
-const ANSWER_TOKENS: usize = 300;
+// pieces of words; a token is about three quarters of a word. A model that
+// thinks before it answers may spend tokens on that too, so there is room
+// for far more than a short answer needs. The provider is paid by the token
+// used, not by this limit.
+const ANSWER_TOKENS: usize = 1000;
 
 // How many seconds the greeting and the answer together may take. A model
 // needs longer for its answer than a site needs for a page.
@@ -42,6 +45,10 @@ const ANSWER_ROOM: usize = 64 * 1024;
 
 // How many signs of the provider's or the model's words are said.
 const WORDS_SHOWN: usize = 300;
+
+// How many signs of the beginning of a good answer are said when the model's
+// words cannot be found in it.
+const BEGINNING_SHOWN: usize = 160;
 
 // A piece of the key this long or longer is not passed on if the provider
 // repeats it in its answer (see `key_hide`).
@@ -80,8 +87,10 @@ pub fn model_tell(interface: &mut Interface, card: &mut Card, sockets: &mut Sock
 fn question_ask(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>, key: &[u8]) -> String {
     // What is asked, the JSON way. `json_text` puts each text in quotes and
     // takes care of signs that have a meaning of their own in JSON.
+    // `"stream":false` asks for the whole answer in one piece, not word by
+    // word as it is written.
     let body = format!(
-        "{{\"model\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{}}}",
+        "{{\"model\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
         json_text(MODEL_NAME),
         json_text(QUESTION),
         ANSWER_TOKENS
@@ -204,36 +213,126 @@ fn answer_sentence(answer: &[u8], whole: bool, key: &[u8]) -> String {
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
 
     if parts.number == 200 {
-        // The model's words are in the body at: choices, the first of them,
-        // message, content.
-        let path = [Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("content")];
-        return match json_find_text(parts.body, &path) {
-            Ok(words) => format!("the model answered \"{}\".{}", words_shown(&words, key), cut_short),
-            Err(reason) => format!("the provider answered, but I could not find the model's words in its answer, because {}.{}", reason, cut_short),
-        };
+        return model_sentence(parts.body, key, cut_short);
     }
 
-    // Any other number is a refusal. The provider says why in the body, in
-    // one of these places.
+    // Any other number means the question was not answered. A number from
+    // 500 on says the trouble is on the provider's side, or the model's; any
+    // other says the provider turned the question down. The provider says
+    // why in the body, in one of these places.
+    let what = if (500..600).contains(&parts.number) { "the provider could not answer" } else { "the provider turned the question down" };
     let places: [&[Step]; 3] = [&[Step::Name("error"), Step::Name("message")], &[Step::Name("error")], &[Step::Name("message")]];
     for path in places {
         if let Ok(words) = json_find_text(parts.body, path) {
-            return format!("the provider turned the question down ({}): \"{}\".{}", parts.number, words_shown(&words, key), cut_short);
+            return format!("{} ({}): \"{}\".{}", what, parts.number, words_shown(&words, key), cut_short);
         }
     }
-    format!("the provider turned the question down ({}), and I could not read why.{}", parts.number, cut_short)
+    format!("{} ({}), and I could not read why.{}", what, parts.number, cut_short)
+}
+
+// The places in a good answer's body that are read, from the provider's
+// documentation. The model's words are at choices, the first of them,
+// message, content. The documentation allows a second form there: a list of
+// pieces, whose first holds the text. How the answer ended is at choices,
+// the first of them, finish_reason.
+const WORDS: &[Step<'static>] = &[Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("content")];
+const FIRST_PIECE: &[Step<'static>] =
+    &[Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("content"), Step::Place(0), Step::Name("text")];
+const ENDING: &[Step<'static>] = &[Step::Name("choices"), Step::Place(0), Step::Name("finish_reason")];
+
+// A model that thinks before it answers may send what it thought beside its
+// words, in one of these places. It is only looked at to say whether it is
+// there; it is never shown.
+const THOUGHTS: [&[Step<'static>]; 2] = [
+    &[Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("reasoning_content")],
+    &[Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("reasoning")],
+];
+
+// Says in one sentence what the body of a good answer (the number 200)
+// holds: the model's words, and whether its answer was cut off or held back.
+fn model_sentence(body: &[u8], key: &[u8], cut_short: &str) -> String {
+    // How the answer ended. Two ways need saying: "length", the answer
+    // reached the limit of tokens, and "content_filter", the provider held
+    // something back. Any other way, or none, counts as an ordinary end.
+    // What stands there is compared and never said itself.
+    let ending = json_find_text(body, ENDING).ok();
+    let out_of_room = ending.as_deref() == Some("length");
+    let held_back = ending.as_deref() == Some("content_filter");
+
+    // The model's words, without the spaces and line ends before and after.
+    let found = match json_find_text(body, WORDS) {
+        Err(NOT_A_TEXT) => json_find_text(body, FIRST_PIECE).map_err(|_| NOT_A_TEXT),
+        other => other,
+    };
+    let words = match &found {
+        Ok(words) => Ok(words.trim()),
+        Err(reason) => Err(*reason),
+    };
+
+    match words {
+        Ok(words) if !words.is_empty() => {
+            let said = words_shown(words, key);
+            if out_of_room {
+                format!("the model answered \"{}\", but it was cut off at the limit of {} tokens.{}", said, ANSWER_TOKENS, cut_short)
+            } else if held_back {
+                format!("the model answered \"{}\", but the provider held part of it back.{}", said, cut_short)
+            } else {
+                format!("the model answered \"{}\".{}", said, cut_short)
+            }
+        }
+        // No words: an empty text, or a text of nothing but spaces.
+        Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short),
+        // Something else where the words belong (`null`, say), or nothing
+        // there at all. That counts as an answer with no words only if the
+        // answer also says how it ended: that text is read with the check
+        // that the rest of the answer closes properly, which finding
+        // something that is not a text does not make.
+        Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short),
+        // The answer has another shape than the provider's documentation
+        // describes. Its beginning is said too, cleaned and with the key
+        // hidden, so that the shape can be seen without asking again.
+        Err(reason) => {
+            let beginning = words_cut(&String::from_utf8_lossy(body), key, BEGINNING_SHOWN);
+            let shown = if beginning.is_empty() { String::new() } else { format!(" It begins \"{}\".", beginning) };
+            format!("the provider answered, but I could not find the model's words in its answer, because {}.{}{}", reason, shown, cut_short)
+        }
+    }
+}
+
+// The sentence for a good answer that holds no words, with the reason if
+// the answer gives one.
+fn empty_sentence(body: &[u8], out_of_room: bool, held_back: bool, cut_short: &str) -> String {
+    let thought = THOUGHTS.iter().any(|path| json_find_text(body, path).map(|text| !text.trim().is_empty()).unwrap_or(false));
+    let why = if out_of_room && thought {
+        format!(", because it spent all of its {} tokens thinking", ANSWER_TOKENS)
+    } else if out_of_room {
+        format!(", because it reached the limit of {} tokens", ANSWER_TOKENS)
+    } else if held_back {
+        String::from(", because the provider held it back")
+    } else {
+        String::new()
+    };
+    format!("the model's answer was empty{}.{}", why, cut_short)
 }
 
 // ---------- Words from outside ----------
 
 // Makes words that came from the provider fit to be said: cleaned like every
 // text from outside, with the key hidden in them, and cut at `WORDS_SHOWN`
-// signs. The key is hidden before the cut, so that the cut cannot leave the
-// beginning of the key standing at the end.
+// signs.
 fn words_shown(words: &str, key: &[u8]) -> String {
-    let mut signs = plain_text(words, usize::MAX).into_bytes();
+    words_cut(words, key, WORDS_SHOWN)
+}
+
+// The same, cut at `longest` signs. The key is hidden before the cut, so
+// that the cut cannot leave the beginning of the key standing at the end.
+// Only the signs that are said, and as many behind them as the key is long,
+// are cleaned and searched: a piece of the key that begins among the signs
+// that are said ends among those.
+fn words_cut(words: &str, key: &[u8], longest: usize) -> String {
+    let mut signs = plain_text(words, longest.saturating_add(key.len())).into_bytes();
     key_hide(&mut signs, key);
-    signs.truncate(WORDS_SHOWN);
+    signs.truncate(longest);
     // Only plain signs are left, one byte each, so this cannot fail.
     String::from_utf8_lossy(&signs).into_owned()
 }

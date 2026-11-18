@@ -118,7 +118,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 ## Asking the model
 
 - **One fixed question.** What is asked is a constant; a typed line cannot be the question yet, and the answer is only said, not used.
-- **No good answer from the real provider has been seen.** Only its refusal of a made-up key. Where the model's words lie in a good answer is from the provider's documentation and from a stand-in written after it. Whether the model thinks before it answers, and whether 300 tokens then leave room for the answer, is not known.
+- **A good answer from the real provider was seen once, and only its row.** In a person's own run with a real key the model's words appeared in the chat box; the raw answer was not seen. Whether the model thinks before it answers, how long a good answer takes, and whether 1000 tokens leave room for longer answers are not known; if they do not, the kernel says so ("the model's answer was empty, because ...") instead of showing nothing. The kernel does not ask for thinking or no thinking, because the provider's documentation names no setting for this model.
+- **The tokens used are not read.** The answer says how many tokens the question and the answer cost (`usage`), but the JSON reader only reads texts, not numbers, so the kernel cannot say what an asking cost.
 - **The model's words are cut at 300 signs** and shown as plain signs only: a letter with an accent becomes dots.
 - **An answer in pieces is not read.** If a provider sends its answer in pieces with their lengths in between ("chunked"), the body does not read as JSON. The provider did not answer that way to this kernel's request.
 - **The end of an answer is the closed connection.** A provider that sends its whole answer and then leaves the connection open is waited for until the minute is over, and its answer is then called "not whole". The length the provider names is not used.
@@ -127,7 +128,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The wiping after a request is not shown to matter by a test.** The request passes through the encryption library, which makes a copy to scramble; no copy was found in memory afterwards. With the wiping of the request, or of the copy of the key that an asking works with, taken out on purpose, none was found either.
 - **A short key hides much.** A key shorter than six signs is hidden wherever it stands whole in the provider's or the model's words, so a key of one letter turns that letter into a star everywhere in them. A piece of five signs or fewer of a longer key is not hidden.
 - **The request names nothing about this kernel** (no note saying what kind of program asks). A provider that wants one would refuse; this one did not.
-- **Refusals are not told apart.** A wrong key, used-up credit and too many requests all read "the provider turned the question down", with the number and the provider's words.
+- **Refusals are not told apart.** A wrong key, used-up credit, a model the provider does not know and too many requests all read "the provider turned the question down", with the number and the provider's words. Only the provider's own trouble (500 to 599) reads differently, "the provider could not answer". Nothing asks again by itself.
 
 ## Random numbers and the date
 

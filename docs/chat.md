@@ -49,7 +49,7 @@ The secret is used as the key when the model is asked; see "Asking the model" be
 
 - **The line `ask`, sent by itself, asks the model one fixed question** (`ASK_WORD`; the question is `QUESTION` in `model.rs`). It needs a kept secret, which goes along as the key. Without one: `Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.`
 - It is an errand for the network's task, like `fetch`, and the chat box answers at once, `Kernel: I am asking the model "Say hello in five words."`
-- **The answer comes later, as a row of its own:** what the model answered, why the provider turned the question down, or why no answer came. The sentences are listed in [model.md](model.md). A provider that refuses answers within a second or two; one that stays silent is waited for a minute.
+- **The answer comes later, as a row of its own:** what the model answered, why the provider turned the question down or could not answer, or why no answer came. The sentences are listed in [model.md](model.md). A provider that refuses answers within a second or two; one that stays silent is waited for a minute.
 - **The key that was sent does not show.** If the provider repeats it or a piece of it in its answer, stars stand in its place in the row and in the terminal.
 - **One asking at a time,** of either kind: while the answer to an `ask` or a `fetch` is awaited, both are turned away, `... because the answer to what I asked before has not come yet`. Typing goes on meanwhile.
 - **`chat_say(text)`** is how such a row gets in: it adds a row of the kernel's and repeats it in the terminal. The main loop calls it when an errand's answer has come. Like every function of `chat.rs` it may be called by the main loop only.
