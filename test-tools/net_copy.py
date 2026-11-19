@@ -76,11 +76,26 @@ def build(port, roots=(), more=None, redirect=True):
     open(path, "w", newline="").write(code)
     if more:
         for name, change in more.items():
-            if name == "page":
+            if name in ("page", "interpreter"):
                 continue
             path = os.path.join(COPY, "src", name)
             text = open(path, "rb").read().decode().replace("\r\n", "\n")
             open(path, "w", newline="").write(change(text))
+    if more and "interpreter" in more:
+        # A change to the interpreter's own source: the copy gets the interpreter's files, the change, and a
+        # build of its own, whose file then takes the place of the project's in the copy.
+        inner = os.path.join(COPY, "interpreter")
+        for name in ["Cargo.toml", "Cargo.lock", os.path.join(".cargo", "config.toml"), os.path.join("src", "lib.rs")]:
+            os.makedirs(os.path.dirname(os.path.join(inner, name)), exist_ok=True)
+            shutil.copyfile(os.path.join(PROJECT, "interpreter", name), os.path.join(inner, name))
+        path = os.path.join(inner, "src", "lib.rs")
+        text = open(path, "rb").read().decode().replace("\r\n", "\n")
+        open(path, "w", newline="").write(more["interpreter"](text))
+        built = subprocess.run(["cargo", "build", "--release"], cwd=inner, capture_output=True, text=True)
+        if built.returncode != 0:
+            print("THE COPY'S INTERPRETER DID NOT BUILD")
+            print(built.stderr[-3000:])
+            sys.exit(1)
 
     built = subprocess.run(["cargo", "build"], cwd=COPY, capture_output=True, text=True)
     if built.returncode != 0:

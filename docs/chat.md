@@ -2,7 +2,7 @@
 
 Code: `src/chat.rs`, `src/secret.rs`, `src/onboarding.rs`, the calls of `chat_setup` and `chat_begin` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
 
-The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but four by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below. The fourth is `setup`, which makes it ask for the person's name and the model's key again; see "The name" and "The key and the password" below. At a start where the kernel does not know the person's name yet, it asks for it before anything else, and then for the key, which it tries with one question to the model before it keeps it; at a start where a key is locked on the disk, it asks for the password that unlocks it.
+The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but five by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below. The fourth is `setup`, which makes it ask for the person's name and the model's key again; see "The name" and "The key and the password" below. The fifth is `make` and a few words, which asks the model to write an app; see "Asking for an app" below. At a start where the kernel does not know the person's name yet, it asks for it before anything else, and then for the key, which it tries with one question to the model before it keeps it; at a start where a key is locked on the disk, it asks for the password that unlocks it.
 
 ## What it does
 
@@ -105,6 +105,14 @@ The secret is used as the key when the model is asked; see "Asking the model" be
 
 The word and the page are a demonstration of the road an answer from the network takes into the chat box.
 
+## Asking for an app
+
+- **A line that begins with the word `make` and a space asks the model to write an app** (`MAKE_WORD` and `app_ask` in `apps.rs`): `make a dice that rolls`. It needs a kept key, like `ask`, and it is an errand for the network's task, like `ask`; one errand of any kind at a time. The chat box answers at once, `Kernel: I am asking the model to make "a dice that rolls".`, and the answer comes later as a row of its own.
+- **The script the model wrote is not put in the chat box.** The row says how many lines it has, and the terminal shows it, line by line. `chat_answer` hands it to `app_print_script` for that, and then runs it with `app_run`, here in the main loop, and says a second row of its own about how the run went, such as `Kernel: the app ran to its end.` While the app runs, nothing is painted in the chat box and keys wait in the keyboard's line; what the app shows appears in the box in the middle of the screen.
+- `make` by itself asks nothing and says how to ask; `makes` and `Make ...` are ordinary lines.
+
+[apps.md](apps.md) has the rest.
+
 ## The look
 
 The whole look is one set of values, `CHAT_STYLE` in `chat.rs`: how many rows are shown, how far the chat box stays from the screen's left, right and bottom edges, the thickness and colour of the frame, the colour behind what was said and behind the row being typed, the colours of the person's and the kernel's letters, the size of the letters, how far the text stays from the frame, and the gap between rows. Changing the look means changing these values and nothing else. They are fixed when the kernel is built; nothing can change them while it runs.
@@ -161,4 +169,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question, or asks for a name, a key, which it tries, and a password, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question or for an app, which it runs once, or asks for a name, a key, which it tries, and a password, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.

@@ -14,7 +14,7 @@ use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
 use crate::errand::{Answer, Errand, errand_answer, errand_network_ready, errand_take};
-use crate::model::{KeyVerdict, model_tell};
+use crate::model::{KeyVerdict, model_app, model_tell};
 use crate::page::{page_fetch, page_tell};
 use crate::processor::time_stamp;
 use crate::serial::serial_print;
@@ -258,19 +258,28 @@ fn network_task() {
         // the answer for the main loop to pick up. While an errand runs, this
         // task does nothing else.
         if let Some(errand) = errand_take() {
-            let (sentence, key) = match errand {
-                Errand::ExamplePage if has_address => (page_tell(&mut interface, &mut card, &mut sockets, name_server), KeyVerdict::NotTold),
-                Errand::ExamplePage => ("no page came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold),
+            let (sentence, key, script) = match &errand {
+                Errand::ExamplePage if has_address => (page_tell(&mut interface, &mut card, &mut sockets, name_server), KeyVerdict::NotTold, None),
+                Errand::ExamplePage => ("no page came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold, None),
                 // The try of a key asks the same question as "ask", with the
                 // key being tried instead of the one kept.
                 Errand::ModelQuestion | Errand::KeyTry if has_address => {
-                    model_tell(&mut interface, &mut card, &mut sockets, name_server, errand == Errand::KeyTry)
+                    let (sentence, key) = model_tell(&mut interface, &mut card, &mut sockets, name_server, errand == Errand::KeyTry);
+                    (sentence, key, None)
                 }
                 Errand::ModelQuestion | Errand::KeyTry => {
-                    ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold)
+                    ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold, None)
+                }
+                // An app is asked for with the key that is kept, like "ask".
+                Errand::AppRequest(wanted) if has_address => {
+                    let (sentence, script) = model_app(&mut interface, &mut card, &mut sockets, name_server, wanted);
+                    (sentence, KeyVerdict::NotTold, script)
+                }
+                Errand::AppRequest(_) => {
+                    ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold, None)
                 }
             };
-            errand_answer(Answer { errand, sentence, key });
+            errand_answer(Answer { errand, sentence, key, script });
         }
 
         // The card sends no signals, so the only way to notice a packet is to

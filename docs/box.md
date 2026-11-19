@@ -52,15 +52,18 @@ Getting an app ready is `box_start(program)`. Its steps:
 
 `box_accepts(program, functions)` uses `box_start` as well and calls nothing. It answers whether the box would take a program that is not an app with a `start`: after the five steps it looks whether the program shows a memory called `memory` and a function under each of the names given, and gives back the reason in words if not (`it shows no function called ...`). It looks for the names only, not at what the functions take and give. The interpreter is checked with it at startup; see [interpreter.md](interpreter.md).
 
-`box_script(program, script)` is the second way to run something in the box, for a program that carries scripts out. Such a program is not run once from a `start`. After the five steps of `box_start` the kernel:
+`box_script(program, script, seed)` is the second way to run something in the box, for a program that carries scripts out. Such a program is not run once from a `start`. After the five steps of `box_start` the kernel:
 
 1. finds `room` and `run` and sees that each takes one whole number of 32 bits and gives one back; a program whose functions have another shape is turned away here;
 2. sets the fuel to `SCRIPT_FUEL`, the budget for a script;
 3. calls `room(length)` with the script's length in bytes, and gets back where in the program's memory the script should go;
 4. writes the script there, through wasmi's `write`, which refuses if any byte of it would lie outside the program's memory. So the place is not taken on trust: a program that names a place outside, or below zero, is stopped with `it gave room for the script outside its own memory`;
-5. calls `run(length)`. 0 back means the script ran to its end; anything else is reported as `the script made a mistake, which is told in the line before`, because the program prints what went wrong itself.
+5. if `seed` holds a number, finds `seed`, which must take one whole number of 64 bits and give nothing back, and calls it with that number, on the same fuel; the interpreter starts the script's random numbers there;
+6. calls `run(length)`. 0 back means the script ran to its end; anything else is reported as `the script made a mistake, which is told in the line before`, because the program prints what went wrong itself.
 
-A script longer than `SCRIPT_LIMIT` is turned away before anything is started. What the script prints goes through `kernel.print` like any app's text, with its limits: 200 bytes a text, 100 texts a run.
+What comes back: how many texts the script showed, when it ran to its end; otherwise a `ScriptStop`, the reason in words as above together with the kind of stop: `Mistake` for that last reason; `OutOfFuel` and `GaveUp` when wasmi reports its own kind of trap for fuel used up and for WebAssembly's `unreachable` (what the interpreter does when it runs out of memory); `Other` for everything else. The kinds come from what wasmi and the program report, not from the words, so that a caller can say them in plainer words (see "Running it" in [apps.md](apps.md)). The script at startup is run without a seed, and says the reason in words as before.
+
+A script longer than `SCRIPT_LIMIT` is turned away before anything is started. A script the model writes is held to the same limit as soon as it comes (see [apps.md](apps.md)). What the script prints goes through `kernel.print` like any app's text, with its limits: 200 bytes a text, 100 texts a run.
 
 That `start` is a function the app shows to the outside under this name. It is not WebAssembly's "start section", a different thing with a similar name: a program may name one function there that runs by itself during step 5. Such a function runs under the same limits and fuel, which are set before that step, but no program with one has been tried.
 
@@ -87,7 +90,7 @@ The text comes from outside the kernel, so `app_text` takes nothing about it on 
 
 - **The app says only what it wants shown.** How the box looks, how large the letters are and where the box sits is the kernel's business, kept in one place, `PANEL_STYLE` in `screen.rs`. An app cannot paint, and cannot say anything about the look.
 - **The rules for the text are the same as for `print`,** with the word "show" in the reasons: the app must show its memory as `memory`, the whole text must lie inside it, and every byte that is not a plain sign becomes a dot.
-- **A shown text is at most 40 bytes long** (`APP_SHOWN_TEXT_LIMIT`), which is what fits on the box's one line. A longer one, or a length below zero, stops the app. With this limit raised to 200 on purpose, a text of 41 signs was accepted. The box itself cuts a text at the 40 signs that fit; see [screen.md](screen.md).
+- **A shown text is at most 40 bytes long** (`APP_SHOWN_TEXT_LIMIT`), which is what fits on the box's one line. A longer one, or a length below zero, stops the app. With this limit raised to 200 on purpose, a text of 41 signs was accepted. The box itself cuts a text at the 40 signs that fit; see [screen.md](screen.md). The interpreter cuts a script's text at 40 bytes before it hands it over, so a script never meets this rule (see [interpreter.md](interpreter.md)).
 - **An app may show 20 texts in one run** (`APP_SHOW_LIMIT`). The next one stops it. Every showing paints the whole box again, about a hundredth of a second, and at startup that happens with device signals off. With this limit taken out on purpose, an app in a loop was still showing after half a minute, 3,457 times, and by a rough count its fuel would have lasted for hours at that pace.
 - **Each showing wipes out the one before.** There is one box, for every app. What it shows last stays on the screen after the app has ended, until something paints over it; the kernel keeps no record of it.
 - **Nothing is printed for a showing.** The terminal gets a line only if the app is stopped.

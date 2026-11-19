@@ -1,0 +1,5 @@
+print("no seed", math.random(1, 6), math.random(1, 6), math.random(1, 6))
+math.randomseed(12345) print("seed 12345", math.random(1, 6), math.random(1, 6), math.random(1, 6))
+math.randomseed(987654321) print("seed 987654321", math.random(1, 6), math.random(1, 6), math.random(1, 6))
+math.randomseed(12345) print("seed 12345 again", math.random(1, 6), math.random(1, 6), math.random(1, 6))
+print("type", type(math.randomseed))
