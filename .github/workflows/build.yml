@@ -1,0 +1,44 @@
+# The build check. GitHub runs it on one of its own Windows computers for every pull request into master,
+# and again when a change lands on master. It builds the interpreter for Lua and then the kernel, the way
+# run.bat does, and sees that the kernel holds the interpreter it just built (test-tools/build_all.py).
+# It does not boot the kernel. See docs/testing.md, "The build check on GitHub".
+
+name: Build
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# The check only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # The same Rust as on the computer the kernel is built on, with the two targets the project needs.
+      # Change the version here when that computer's Rust changes.
+      # One command a step, so that a failing one fails its step; the last step refuses any other version.
+      - name: Install Rust 1.100.0
+        run: rustup toolchain install 1.100.0 --profile minimal --target x86_64-unknown-uefi --target wasm32-unknown-unknown
+
+      - name: Use Rust 1.100.0
+        run: rustup default 1.100.0
+
+      - name: See that Rust 1.100.0 is the one in use
+        run: |
+          $version = rustc --version
+          Write-Output $version
+          if ($version -notlike "rustc 1.100.0 *") { exit 1 }
+
+      - name: Build the interpreter and the kernel
+        run: python test-tools/build_all.py
+
+      - name: The test tools can be read
+        run: python -m compileall -q test-tools
