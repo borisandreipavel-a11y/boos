@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
+use crate::look::{LOOK_WORD, look, look_answer, look_asking, look_begin, look_paint, look_question};
 use crate::model::QUESTION;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::onboarding::{
@@ -45,27 +46,19 @@ const ASK_WORD: &str = "ask";
 // are shown; behind them the row says how many more signs there are.
 const STARS_SHOWN: usize = 30;
 
-// How the chat box looks. Everything about its look is decided here, in this
-// one place: changing the look means changing these values and nothing else.
-// From top to bottom the chat box is made of: the frame, some empty room,
-// the rows of what was said, the row being typed, and the frame again.
+// How the chat box is laid out. Its sizes are decided here, in this one
+// place, and its colours come from the look in use (`look.rs`): changing how
+// it looks means changing these values or picking another look, and nothing
+// else. From top to bottom the chat box is made of: the frame, some empty
+// room, the rows of what was said, the row being typed, and the frame again.
 struct ChatStyle {
     // How many rows of what was said are shown above the row being typed.
     rows: u32,
     // How far the chat box stays from the left, right and bottom edges of
     // the screen, in dots.
     margin: u32,
-    // How many dots thick the frame round it is, and the frame's colour.
+    // How many dots thick the frame round it is.
     frame: u32,
-    frame_colour: Colour,
-    // The colour behind what was said, and the colour behind the row being
-    // typed.
-    inside_colour: Colour,
-    typing_colour: Colour,
-    // The colour of the letters: of what the person said and types, and of
-    // what the kernel said.
-    person_colour: Colour,
-    kernel_colour: Colour,
     // How large a dot of a letter is painted (see `screen_text`).
     text_size: u32,
     // How far the text stays from the frame, in dots.
@@ -74,18 +67,11 @@ struct ChatStyle {
     row_gap: u32,
 }
 
-// A light chat box with an orange frame, like the box that shows an app's
-// text. What the person says is black, what the kernel says dark blue, and
-// the row being typed is white behind its letters.
+// Six rows of what was said, letters twice the size of their pictures.
 const CHAT_STYLE: ChatStyle = ChatStyle {
     rows: 6,
     margin: 40,
     frame: 3,
-    frame_colour: Colour { red: 255, green: 150, blue: 0 },
-    inside_colour: Colour { red: 232, green: 236, blue: 244 },
-    typing_colour: Colour { red: 255, green: 255, blue: 255 },
-    person_colour: Colour { red: 0, green: 0, blue: 0 },
-    kernel_colour: Colour { red: 0, green: 60, blue: 140 },
     text_size: 2,
     padding: 10,
     row_gap: 4,
@@ -235,6 +221,7 @@ fn chat_paint_rows() {
         return;
     };
     let style = CHAT_STYLE;
+    let look = look();
 
     // The area reaches from just inside the frame down to the row being
     // typed, and from just inside the frame on the left to just inside it
@@ -242,13 +229,13 @@ fn chat_paint_rows() {
     let inside_left = place.left.saturating_add(style.frame);
     let inside_top = place.top.saturating_add(style.frame);
     let inside_width = place.width.saturating_sub(style.frame.saturating_mul(2));
-    screen_rectangle(inside_left, inside_top, inside_width, place.typing_top.saturating_sub(inside_top), style.inside_colour);
+    screen_rectangle(inside_left, inside_top, inside_width, place.typing_top.saturating_sub(inside_top), look.chat_inside);
 
     let mut top = inside_top.saturating_add(style.padding);
     for (speaker, text) in chat_rows().iter() {
         let colour = match speaker {
-            Speaker::Person => style.person_colour,
-            Speaker::Kernel => style.kernel_colour,
+            Speaker::Person => look.chat_person,
+            Speaker::Kernel => look.chat_kernel,
         };
         chat_write(&place, top, text, colour);
         top = top.saturating_add(place.row_height);
@@ -262,6 +249,7 @@ fn chat_paint_typing() {
         return;
     };
     let style = CHAT_STYLE;
+    let look = look();
 
     // The area reaches from the end of the rows above down to the frame at
     // the bottom.
@@ -269,13 +257,13 @@ fn chat_paint_typing() {
     let inside_width = place.width.saturating_sub(style.frame.saturating_mul(2));
     let inside_bottom = place.top.saturating_add(place.height).saturating_sub(style.frame);
     let area_height = inside_bottom.saturating_sub(place.typing_top);
-    screen_rectangle(inside_left, place.typing_top, inside_width, area_height, style.typing_colour);
+    screen_rectangle(inside_left, place.typing_top, inside_width, area_height, look.chat_typing);
 
     // The text goes in the middle between the area's top and bottom.
     let letter_height = style.text_size.saturating_mul(LETTER_HEIGHT);
     let top = place.typing_top.saturating_add(area_height.saturating_sub(letter_height) / 2);
     let text = if stars_wanted() { secret_row() } else { format!("> {}_", chat_line()) };
-    chat_write(&place, top, &text, style.person_colour);
+    chat_write(&place, top, &text, look.chat_person);
 }
 
 // What the row being typed shows while a secret is typed: a star for each
@@ -319,14 +307,19 @@ fn chat_add(speaker: Speaker, text: &str) {
 // Paints the chat box for the first time, with one row from the kernel that
 // says what to do. Call it once at startup, after the screen is set up.
 pub fn chat_setup() {
+    chat_add(Speaker::Kernel, "Kernel: type a line and press Enter.");
+    chat_paint();
+}
+
+// Paints the whole chat box: the frame, the rows of what was said and the row
+// being typed. The look calls it when it paints the whole screen again.
+pub fn chat_paint() {
     let Some(place) = chat_place() else {
         return;
     };
-    chat_add(Speaker::Kernel, "Kernel: type a line and press Enter.");
-
     // The frame: the whole chat box in the frame's colour. The two areas
     // inside it are painted over that, and leave the frame showing.
-    screen_rectangle(place.left, place.top, place.width, place.height, CHAT_STYLE.frame_colour);
+    screen_rectangle(place.left, place.top, place.width, place.height, look().chat_frame);
     chat_paint_rows();
     chat_paint_typing();
 }
@@ -335,27 +328,38 @@ pub fn chat_setup() {
 // the person's name, or, at a start that does not know their name yet, the
 // question for it (see `onboarding.rs`); and the last line that was sent
 // before the machine was switched off, if the notebook on the disk holds one.
-// Call it once at startup, after the notebook is opened.
+// Before that, it puts the look kept in the notebook in use, so that all of
+// it shows in that look. Call it once at startup, after the notebook is
+// opened.
 pub fn chat_begin() {
+    let (look_trouble, look_changed) = look_begin();
     let mut rows = onboarding_begin();
     if !rows.is_empty() {
         // The greeting or the question takes the place of the row that
         // `chat_setup` put up, which says what to do.
         chat_rows().clear();
     }
-    if let Some(row) = recall_row() {
-        // While the kernel waits for an answer, its question stays last.
-        if onboarding_waiting() {
-            rows.insert(0, row);
-        } else {
-            rows.push(row);
-        }
+    // A row about a kept look that cannot be used, and the row of the last
+    // line. While the kernel waits for an answer, its question stays last.
+    let mut more = Vec::new();
+    more.extend(look_trouble);
+    more.extend(recall_row());
+    if onboarding_waiting() {
+        more.extend(rows);
+        rows = more;
+    } else {
+        rows.extend(more);
     }
     for row in rows.iter() {
         serial_print(&format!("{}\r\n", row));
         chat_add(Speaker::Kernel, row);
     }
-    chat_paint_rows();
+    // In another look than the first, the whole screen is painted again.
+    if look_changed {
+        look_paint();
+    } else {
+        chat_paint_rows();
+    }
 }
 
 // The row that says the last line that was sent before the machine was
@@ -424,7 +428,8 @@ fn kernel_rows(rows: &[String]) {
 // being typed, Backspace takes the last one away, and Enter sends the line:
 // it moves up into what was said, and the kernel answers by giving it back.
 // While the kernel waits for the answer to its question (see
-// `onboarding.rs`), the line that is sent is that answer.
+// `onboarding.rs`), or for the number of a look (see `look.rs`), the line
+// that is sent is that answer.
 pub fn chat_key(letter: u8) {
     // While the kernel waits for a secret, a key or a password, the keys go
     // there and nowhere else.
@@ -441,17 +446,19 @@ pub fn chat_key(letter: u8) {
             }
             chat_paint_typing();
         }
-        b'\n' if onboarding_asking() => {
-            // The answer to the question. It may be empty: Enter alone
-            // leaves the name as it is. It is not given back, and it is not
-            // kept as the last line; the onboarding keeps it, and says what
-            // it asks next.
+        b'\n' if onboarding_asking() || look_asking() => {
+            // The answer to a question: the name the onboarding asks for, or
+            // the number of a look. It may be empty: Enter alone leaves the
+            // name or the look as it is. It is not given back, and it is not
+            // kept as the last line; the onboarding or the look keeps what it
+            // needs, and says what comes next.
             let said = core::mem::take(line);
             let mut rows = Vec::new();
             if !said.is_empty() {
                 rows.push((Speaker::Person, format!("{}: {}", person_name(), said)));
             }
-            for row in onboarding_answer(&said) {
+            let (answer, look_changed) = if look_asking() { look_answer(&said) } else { (onboarding_answer(&said), false) };
+            for row in answer {
                 rows.push((Speaker::Kernel, row));
             }
 
@@ -465,8 +472,13 @@ pub fn chat_key(letter: u8) {
             for (speaker, row) in rows.iter() {
                 chat_add(*speaker, row);
             }
-            chat_paint_rows();
-            chat_paint_typing();
+            // A look that was just tried shows on the whole screen at once.
+            if look_changed {
+                look_paint();
+            } else {
+                chat_paint_rows();
+                chat_paint_typing();
+            }
         }
         b'\n' => {
             // An empty line is not sent.
@@ -503,6 +515,11 @@ pub fn chat_key(letter: u8) {
                         Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
                     }
                 }
+            } else if said == LOOK_WORD {
+                // Another line that is not given back: the kernel lists the
+                // looks, and the next line is the number of one (see
+                // `look.rs`).
+                look_question()
             } else if said == SETUP_WORD {
                 // A fourth line that is not given back: the kernel asks for
                 // the person's name again, and the next line is the answer.

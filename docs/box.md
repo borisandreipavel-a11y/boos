@@ -85,11 +85,11 @@ The text comes from outside the kernel, so `app_text` takes nothing about it on 
 
 **`kernel.show(start, length)`** shows a text on the screen. The app hands the text over exactly as for `print`, and nothing comes back. The kernel paints a box in the middle of the screen and writes the text in it; see "The panel" in [screen.md](screen.md).
 
-- **The app says only what it wants shown.** How the box looks, how large the letters are and where the box sits is the kernel's business, kept in one place, `PANEL_STYLE` in `screen.rs`. An app cannot paint, and cannot say anything about the look.
+- **The app says only what it wants shown.** How the box looks, how large the letters are and where the box sits is the kernel's business: the sizes are kept in one place, `PANEL_STYLE` in `screen.rs`, and the colours are those of the look the person at the machine picked (see "The look" in [screen.md](screen.md)). An app cannot paint, and cannot say anything about the look.
 - **The rules for the text are the same as for `print`,** with the word "show" in the reasons: the app must show its memory as `memory`, the whole text must lie inside it, and every byte that is not a plain sign becomes a dot.
 - **A shown text is at most 40 bytes long** (`APP_SHOWN_TEXT_LIMIT`), which is what fits on the box's one line. A longer one, or a length below zero, stops the app. With this limit raised to 200 on purpose, a text of 41 signs was accepted. The box itself cuts a text at the 40 signs that fit; see [screen.md](screen.md).
 - **An app may show 20 texts in one run** (`APP_SHOW_LIMIT`). The next one stops it. Every showing paints the whole box again, about a hundredth of a second, and at startup that happens with device signals off. With this limit taken out on purpose, an app in a loop was still showing after half a minute, 3,457 times, and by a rough count its fuel would have lasted for hours at that pace.
-- **Each showing wipes out the one before.** There is one box, for every app. What it shows last stays on the screen after the app has ended, until something paints over it; the kernel keeps no record of it.
+- **Each showing wipes out the one before.** There is one box, for every app. What it shows last stays on the screen after the app has ended, until something paints over it; the kernel keeps only its text, to paint the box again when the person picks another look.
 - **Nothing is printed for a showing.** The terminal gets a line only if the app is stopped.
 - **On a machine without a usable screen** the text is checked in the same way and then nothing is shown. The app is not stopped for it and cannot tell the difference.
 

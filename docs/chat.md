@@ -2,7 +2,7 @@
 
 Code: `src/chat.rs`, `src/secret.rs`, `src/onboarding.rs`, the calls of `chat_setup` and `chat_begin` in `efi_main`, and the main loop, which hands every typed key to `chat_key`. The drawing is done with the pieces in `src/screen.rs`; see [screen.md](screen.md).
 
-The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but four by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below. The fourth is `setup`, which makes it ask for the person's name and the model's key again; see "The name" and "The key and the password" below. At a start where the kernel does not know the person's name yet, it asks for it before anything else, and then for the key, which it tries with one question to the model before it keeps it; at a start where a key is locked on the disk, it asks for the password that unlocks it.
+The chat box is the place on the screen where the person at the machine types. It lies along the bottom of the screen. Its bottom row shows the line being typed. Above that are the last rows of what was said: the person's lines and the kernel's answers. Today the kernel answers every line but five by giving it back. One is `key`, which makes it ask for a secret; see "A secret" below. Another is `fetch`, which makes it fetch a page from the web; see "Asking the network" below. The third is `ask`, which makes it ask the model one fixed question; see "Asking the model" below. The fourth is `setup`, which makes it ask for the person's name and the model's key again; see "The name" and "The key and the password" below. The fifth is `look`, which makes it list the looks the screen can have and ask for the number of one; see "Picking a look" below. At a start where the kernel does not know the person's name yet, it asks for it before anything else, and then for the key, which it tries with one question to the model before it keeps it; at a start where a key is locked on the disk, it asks for the password that unlocks it.
 
 ## What it does
 
@@ -107,9 +107,9 @@ The word and the page are a demonstration of the road an answer from the network
 
 ## The look
 
-The whole look is one set of values, `CHAT_STYLE` in `chat.rs`: how many rows are shown, how far the chat box stays from the screen's left, right and bottom edges, the thickness and colour of the frame, the colour behind what was said and behind the row being typed, the colours of the person's and the kernel's letters, the size of the letters, how far the text stays from the frame, and the gap between rows. Changing the look means changing these values and nothing else. They are fixed when the kernel is built; nothing can change them while it runs.
+How the chat box is laid out is one set of values, `CHAT_STYLE` in `chat.rs`: how many rows are shown, how far the chat box stays from the screen's left, right and bottom edges, the thickness of the frame, the size of the letters, how far the text stays from the frame, and the gap between rows. They are fixed when the kernel is built. Its colours come from the look in use (see "The look" in [screen.md](screen.md)): the frame's, the colour behind what was said and behind the row being typed, and the colours of the person's and the kernel's letters. Changing how it looks means changing these values or picking another look, and nothing else.
 
-Today's look: six rows, 40 dots from the edges, an orange frame 3 dots thick, a light inside (232, 236, 244), a white row for typing, black letters for the person, dark blue ones (0, 60, 140) for the kernel, letters at size 2, 10 dots between frame and text, 4 dots between rows.
+Its sizes today: six rows, 40 dots from the edges, a frame 3 dots thick, letters at size 2, 10 dots between frame and text, 4 dots between rows. In the first look the frame is orange, the inside light (232, 236, 244), the row for typing white, the person's letters black and the kernel's dark blue (0, 60, 140).
 
 Where the chat box sits and how much fits in it is worked out from the style and the screen's size by `chat_place`, each time it is needed:
 
@@ -120,6 +120,22 @@ Where the chat box sits and how much fits in it is worked out from the style and
 
 The chat box, the box that shows an app's text and the sentence at the top do not touch on screens of 800 by 600 dots and larger. Nothing was tried on a smaller one; there the chat box would be cut off at the screen's edges like everything else, and could lie over the app's box.
 
+## Picking a look
+
+Code: `src/look.rs`. The person at the machine picks the colours of everything on the screen from a short list of looks; see "The look" in [screen.md](screen.md).
+
+- **The line `look`, sent by itself, lists the looks** (`LOOK_WORD`): `Kernel: pick a look by number: 1 Blue, 2 Night, 3 Paper, 4 Contrast. Enter alone keeps this one.`, which is one row of 96 signs on a screen 1280 dots wide. From then on the next line sent is the answer, whatever it says, as with the question for a name. The line `look` itself is kept as the last line, like any other line.
+- **A number from the list shows that look at once.** The whole screen is painted again in it, and the kernel says `Kernel: this is look 2, Night. Enter alone keeps it; another number tries that one.` and waits for the next answer, so that another look can be tried. Only digits make a number. Spaces at either end do not count, and a nought in front does no harm.
+- **Anything else is asked about again:** `Kernel: that is not the number of a look. Type 1 to 4, or Enter alone to keep this one.`
+- **Enter alone ends the question, and the look on the screen stays:**
+  - after a look was tried, it is kept in the notebook under the name `look` (see [notebook.md](notebook.md)): `Kernel: look 2, Night, is kept on the disk. Type a line and press Enter.`
+  - with nothing tried, or with the look that the notebook holds already, nothing is written: `Kernel: look 2, Night, stays. Type a line and press Enter.`
+  - if it cannot be kept, it lasts until the machine is switched off: `Kernel: I could not keep look 2, Night, because the notebook cannot be added to.` and `Kernel: so it lasts only until the machine is switched off. Type a line and press Enter.` That is what a machine without a notebook that can be added to says.
+- **The answers are not given back and not kept as the last line.** The person's row shows each one as it was typed.
+- **At every later start** the kept look is put in use as soon as the notebook is opened, and the whole screen is painted again in it, with the greeting already in the chat box. Until then the start shows look 1. A look kept under a name that the kernel does not know gives `Kernel: the look kept on the disk is not one I know, so the screen keeps look 1, Blue.`, and one it cannot read gives `Kernel: I cannot read the look kept on the disk, because ...`. Either row comes before the row of the last line, and both come before the questions while one waits. An entry that holds no signs counts as no look kept, and nothing is said.
+- **Painting the whole screen again takes about a quarter of a second** in QEMU on the test computer. Keys typed meanwhile wait in the keyboard's line of 16 key numbers, as during locking.
+- **On a machine without a usable screen** nothing is painted, but a look can be picked and kept all the same, and the rows go to the terminal.
+
 ## Nothing lands outside the chat box
 
 - Every row is written by `chat_write`, which writes only as many signs as fit whole on a row, whatever it is handed. `screen_text` itself stops only at the screen's edges.
@@ -128,7 +144,7 @@ The chat box, the box that shows an app's text and the sentence at the top do no
 
 ## How it is painted
 
-- `chat_setup` paints the whole chat box once at startup: all of it in the frame's colour, then the two areas inside, which leave the frame showing. It adds one row from the kernel that says what to do. Once the notebook is opened, `chat_begin` puts the greeting by name with the question for the password or the key, or the question for a name, in that row's place and paints the rows again.
+- `chat_setup` adds one row from the kernel that says what to do, and paints the whole chat box once at startup with `chat_paint`: all of it in the frame's colour, then the two areas inside, which leave the frame showing. `chat_paint` paints it whole again whenever the screen is painted again in another look. Once the notebook is opened, `chat_begin` puts the greeting by name with the question for the password or the key, or the question for a name, in that row's place and paints the rows again.
 - After a key, only the row being typed is painted again (`chat_paint_typing`): its area in its colour, then the text.
 - After Enter, the rows of what was said are painted again as well (`chat_paint_rows`): their whole area in the inside colour, which wipes out what stood there, then each row. A short row in the place of a long one leaves nothing of the long one.
 - This is the first drawing that happens after startup, with device signals on. The timer and the other tasks carry on while the main loop paints.
@@ -148,7 +164,7 @@ Keys wait in the keyboard's line of 16 key numbers while the main loop paints, a
 
 ## Text from outside
 
-What is typed comes from the keyboard, which can only produce plain signs, and the kernel's rows come from its own code. Three texts come from outside the kernel: the line kept on the disk, the name kept there, and the locked key. `chat_begin` takes at most 50 signs of the line, `onboarding.rs` at most 20 of the name, and both turn every byte that is not a plain sign into a dot. The locked key is never shown; `unlock` checks its length and head before it does anything with it (see [lock.md](lock.md)). Any other text that comes from outside the kernel must be cleaned before it is handed to the chat box, as everywhere else (see `plain_text` in `page.rs`). A sign without a picture would show as an empty box on the screen; in the terminal it would go out as it is.
+What is typed comes from the keyboard, which can only produce plain signs, and the kernel's rows come from its own code. Four texts come from outside the kernel: the line kept on the disk, the name kept there, the locked key, and the name of the look kept there. `chat_begin` takes at most 50 signs of the line, `onboarding.rs` at most 20 of the name, and both turn every byte that is not a plain sign into a dot. The locked key is never shown; `unlock` checks its length and head before it does anything with it (see [lock.md](lock.md)). The look's name is never shown either; `look_begin` only compares it with the names of the looks. Any other text that comes from outside the kernel must be cleaned before it is handed to the chat box, as everywhere else (see `plain_text` in `page.rs`). A sign without a picture would show as an empty box on the screen; in the terminal it would go out as it is.
 
 ## How to test it
 
@@ -161,4 +177,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question, or asks for a name, a key, which it tries, and a password, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question, or asks for a name, a key, which it tries, and a password, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the looks to pick from are four, fixed when the kernel is built, which change colours only.

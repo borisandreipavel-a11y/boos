@@ -1,0 +1,256 @@
+//! The look: the colours of everything the kernel draws on the screen, picked
+//! from a short list by the person at the machine. The line `look` lists the
+//! looks and asks for the number of one; the whole screen is painted again in
+//! that look at once, and Enter alone keeps it in the notebook on the disk,
+//! so that every later start shows it too. Sizes and places are not part of
+//! a look: they stay in `CHAT_STYLE` in `chat.rs` and `PANEL_STYLE` in
+//! `screen.rs`. Only the startup code and the main loop may call these
+//! functions. Notes: `docs/screen.md` ("The look") and `docs/chat.md`
+//! ("Picking a look").
+
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use crate::chat::chat_paint;
+use crate::notebook::{notebook_find, notebook_keep};
+use crate::screen::{Colour, screen_background, screen_panel_again};
+
+// The line that, sent by itself, makes the kernel list the looks and ask
+// which one to use.
+pub const LOOK_WORD: &str = "look";
+
+// The name under which the look in use is kept in the notebook. The entry
+// holds the look's name, such as "Night". An entry that holds no signs counts
+// as no look kept.
+const LOOK_ENTRY: &str = "look";
+
+// One look: the colour of everything the kernel draws.
+#[derive(Clone, Copy)]
+pub struct Look {
+    // The name the look is listed by, and kept under in the notebook.
+    pub name: &'static str,
+    // The whole screen behind everything, and the sentence near its top left
+    // corner.
+    pub background: Colour,
+    pub sentence: Colour,
+    // The chat box: its frame, the colour behind what was said and behind
+    // the row being typed, and the letters of what the person and the kernel
+    // said.
+    pub chat_frame: Colour,
+    pub chat_inside: Colour,
+    pub chat_typing: Colour,
+    pub chat_person: Colour,
+    pub chat_kernel: Colour,
+    // The box that shows an app's text (the panel): its frame, the colour
+    // inside it, and its letters.
+    pub panel_frame: Colour,
+    pub panel_inside: Colour,
+    pub panel_text: Colour,
+}
+
+// The looks, in the order of their numbers: the first is number 1, and it is
+// the look every start begins with. In every look, letters stand out from
+// what lies behind them by a contrast ratio of at least 4.5, and the frames
+// from the screen around them by at least 3 (see docs/testing.md).
+const LOOKS: [Look; 4] = [
+    // A dark blue screen, light boxes with orange frames, black and dark
+    // blue letters.
+    Look {
+        name: "Blue",
+        background: Colour { red: 0, green: 40, blue: 90 },
+        sentence: Colour { red: 255, green: 255, blue: 255 },
+        chat_frame: Colour { red: 255, green: 150, blue: 0 },
+        chat_inside: Colour { red: 232, green: 236, blue: 244 },
+        chat_typing: Colour { red: 255, green: 255, blue: 255 },
+        chat_person: Colour { red: 0, green: 0, blue: 0 },
+        chat_kernel: Colour { red: 0, green: 60, blue: 140 },
+        panel_frame: Colour { red: 255, green: 150, blue: 0 },
+        panel_inside: Colour { red: 240, green: 240, blue: 240 },
+        panel_text: Colour { red: 0, green: 0, blue: 0 },
+    },
+    // An almost black screen, dark grey boxes with grey-blue frames, light
+    // letters.
+    Look {
+        name: "Night",
+        background: Colour { red: 18, green: 18, blue: 24 },
+        sentence: Colour { red: 210, green: 210, blue: 220 },
+        chat_frame: Colour { red: 110, green: 125, blue: 170 },
+        chat_inside: Colour { red: 36, green: 38, blue: 48 },
+        chat_typing: Colour { red: 52, green: 55, blue: 68 },
+        chat_person: Colour { red: 240, green: 240, blue: 240 },
+        chat_kernel: Colour { red: 140, green: 190, blue: 255 },
+        panel_frame: Colour { red: 110, green: 125, blue: 170 },
+        panel_inside: Colour { red: 36, green: 38, blue: 48 },
+        panel_text: Colour { red: 240, green: 240, blue: 240 },
+    },
+    // A white screen, white boxes with grey frames, black and dark brown
+    // letters, like a printed page.
+    Look {
+        name: "Paper",
+        background: Colour { red: 246, green: 244, blue: 236 },
+        sentence: Colour { red: 30, green: 30, blue: 30 },
+        chat_frame: Colour { red: 120, green: 120, blue: 120 },
+        chat_inside: Colour { red: 255, green: 255, blue: 255 },
+        chat_typing: Colour { red: 236, green: 236, blue: 230 },
+        chat_person: Colour { red: 0, green: 0, blue: 0 },
+        chat_kernel: Colour { red: 130, green: 40, blue: 20 },
+        panel_frame: Colour { red: 120, green: 120, blue: 120 },
+        panel_inside: Colour { red: 255, green: 255, blue: 255 },
+        panel_text: Colour { red: 0, green: 0, blue: 0 },
+    },
+    // A black screen, black boxes with yellow frames, white and yellow
+    // letters: the easiest to read.
+    Look {
+        name: "Contrast",
+        background: Colour { red: 0, green: 0, blue: 0 },
+        sentence: Colour { red: 255, green: 255, blue: 0 },
+        chat_frame: Colour { red: 255, green: 255, blue: 0 },
+        chat_inside: Colour { red: 0, green: 0, blue: 0 },
+        chat_typing: Colour { red: 40, green: 40, blue: 40 },
+        chat_person: Colour { red: 255, green: 255, blue: 255 },
+        chat_kernel: Colour { red: 255, green: 255, blue: 0 },
+        panel_frame: Colour { red: 255, green: 255, blue: 0 },
+        panel_inside: Colour { red: 0, green: 0, blue: 0 },
+        panel_text: Colour { red: 255, green: 255, blue: 255 },
+    },
+];
+
+// Which look is in use, as its place in the list, counted from 0; whether the
+// kernel waits for the number of a look; whether a look was tried since it
+// asked, so that it is shown but not kept yet; and which look the notebook
+// holds, if it holds one this kernel knows. Nothing protects these against a
+// second task, so only the startup code and the main loop may touch them.
+static mut IN_USE: usize = 0;
+static mut ASKING: bool = false;
+static mut TRIED: bool = false;
+static mut KEPT: Option<usize> = None;
+
+// The look in use. Every piece of drawing asks for it each time it paints.
+pub fn look() -> Look {
+    // `IN_USE` is only ever set to a place in the list. Should that fail,
+    // the first look stands in, rather than the kernel stopping.
+    let in_use = unsafe { IN_USE };
+    *LOOKS.get(in_use).unwrap_or(&LOOKS[0])
+}
+
+// The look in use, named the way the kernel says it: "look 2, Night".
+fn look_named() -> String {
+    format!("look {}, {}", unsafe { IN_USE } + 1, look().name)
+}
+
+// Whether the kernel waits for the number of a look. While it does, the next
+// line that is sent is the answer.
+pub fn look_asking() -> bool {
+    unsafe { ASKING }
+}
+
+// The line `look`: lists the looks and asks for the number of one. Gives back
+// the row that says so. From then on the next line that is sent is the
+// answer (see `look_answer`). With four looks the row fits on one row of the
+// chat box on a screen 1280 dots wide.
+pub fn look_question() -> String {
+    unsafe {
+        ASKING = true;
+        TRIED = false;
+    }
+    let mut list = String::new();
+    for (place, one) in LOOKS.iter().enumerate() {
+        if place > 0 {
+            list.push_str(", ");
+        }
+        list.push_str(&format!("{} {}", place + 1, one.name));
+    }
+    format!("Kernel: pick a look by number: {}. Enter alone keeps this one.", list)
+}
+
+// Takes the answer to the question for a look: the line that was sent, which
+// may be empty. A number from the list puts that look in use at once, and the
+// kernel waits for the next answer, so that another look can be tried. Enter
+// alone ends the question and keeps the look in use (see `look_keep`). Gives
+// back what the kernel says, and whether the look in use changed, in which
+// case the whole screen must be painted again (`look_paint`).
+pub fn look_answer(line: &str) -> (Vec<String>, bool) {
+    // Spaces at either end do not count.
+    let given = line.trim();
+    if given.is_empty() {
+        unsafe { ASKING = false };
+        return (look_keep(), false);
+    }
+    // Only digits make a number here. A number too large for the kernel to
+    // hold is no number of a look either.
+    let number = if given.bytes().all(|byte| byte.is_ascii_digit()) { given.parse::<usize>().ok() } else { None };
+    match number {
+        Some(number) if (1..=LOOKS.len()).contains(&number) => {
+            let changed = unsafe { IN_USE } != number - 1;
+            unsafe {
+                IN_USE = number - 1;
+                TRIED = true;
+            }
+            (vec![format!("Kernel: this is {}. Enter alone keeps it; another number tries that one.", look_named())], changed)
+        }
+        _ => (vec![format!("Kernel: that is not the number of a look. Type 1 to {}, or Enter alone to keep this one.", LOOKS.len())], false),
+    }
+}
+
+// Enter alone at the question for a look: the look in use stays. It is kept
+// in the notebook if it was tried and the notebook does not hold it already;
+// if that fails, it lasts until the machine is switched off. Gives back what
+// the kernel says.
+fn look_keep() -> Vec<String> {
+    let in_use = unsafe { IN_USE };
+    let (tried, kept) = unsafe { (TRIED, KEPT) };
+    if !tried || kept == Some(in_use) {
+        return vec![format!("Kernel: {}, stays. Type a line and press Enter.", look_named())];
+    }
+    match notebook_keep(LOOK_ENTRY, look().name.as_bytes()) {
+        Ok(()) => {
+            unsafe { KEPT = Some(in_use) };
+            vec![format!("Kernel: {}, is kept on the disk. Type a line and press Enter.", look_named())]
+        }
+        Err(reason) => vec![
+            format!("Kernel: I could not keep {}, because {}.", look_named(), reason),
+            String::from("Kernel: so it lasts only until the machine is switched off. Type a line and press Enter."),
+        ],
+    }
+}
+
+// Puts the look kept in the notebook in use. Called once at startup, once the
+// notebook is opened, before the greeting. Gives back a row to say when the
+// kept look cannot be used, and whether the look in use changed, in which
+// case the whole screen must be painted again (`look_paint`).
+pub fn look_begin() -> (Option<String>, bool) {
+    match notebook_find(LOOK_ENTRY) {
+        // Nothing kept, or an entry that holds no signs: the first look
+        // stays.
+        Ok(None) => (None, false),
+        Ok(Some(kept)) if kept.is_empty() => (None, false),
+        Ok(Some(kept)) => {
+            // What comes from the disk comes from outside the kernel. It is
+            // only compared with the names in the list, and never shown.
+            match LOOKS.iter().position(|one| one.name.as_bytes() == kept.as_slice()) {
+                Some(place) => {
+                    let changed = unsafe { IN_USE } != place;
+                    unsafe {
+                        IN_USE = place;
+                        KEPT = Some(place);
+                    }
+                    (None, changed)
+                }
+                None => (Some(format!("Kernel: the look kept on the disk is not one I know, so the screen keeps {}.", look_named())), false),
+            }
+        }
+        Err(reason) => (Some(format!("Kernel: I cannot read the look kept on the disk, because {}.", reason)), false),
+    }
+}
+
+// Paints the whole screen again in the look in use: the background and the
+// sentence, then the chat box with everything in it, then the box with an
+// app's text, if an app has shown one. The background is painted first
+// because it covers everything.
+pub fn look_paint() {
+    screen_background();
+    chat_paint();
+    screen_panel_again();
+}

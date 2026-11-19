@@ -36,6 +36,7 @@ mod tls; // The encrypted link.
 mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
+mod look; // The look: the colours of everything on the screen, picked from a list.
 mod chat; // The chat box: typing on the screen, and what was said.
 mod onboarding; // What the kernel asks at a start where it does not know the person yet.
 mod disk; // The disk: its controller, asking the disk who it is, reading a block.
@@ -81,7 +82,7 @@ use page_tables::{GIGABYTE, page_tables_setup};
 use parts::part_find;
 use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
-use screen::{Colour, screen_fill, screen_setup, screen_text};
+use screen::{screen_background, screen_setup};
 use segments::load_segment_table;
 use starts::start_count;
 use serial::{Serial, serial_print, serial_setup};
@@ -165,15 +166,14 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     }
 
     // What the firmware said about the screen. If there is one, try it:
-    // paint all of it dark blue, write a sentence in white near the top left
-    // corner, and put the chat box along the bottom.
+    // paint all of it in one colour, write a sentence near the top left
+    // corner, and put the chat box along the bottom. The colours are those
+    // of the first look, until the notebook says which look to use.
     match screen {
         Ok(screen) => {
             write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
             screen_setup(screen);
-            screen_fill(Colour { red: 0, green: 40, blue: 90 });
-            // The 2 makes every dot of a letter a block of 2 by 2 dots.
-            screen_text(40, 40, "Hello from my kernel! I draw my own letters now.", 2, Colour { red: 255, green: 255, blue: 255 });
+            screen_background();
             chat_setup();
         }
         Err(reason) => {
@@ -336,6 +336,8 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                                     }
                                 }
 
+                                // Paint the screen again in the look kept in
+                                // the notebook, if one is kept there.
                                 // Greet the person by the name kept in the
                                 // notebook, or ask for it if none is kept;
                                 // ask for the password if a key is locked
