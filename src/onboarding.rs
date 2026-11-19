@@ -1,6 +1,6 @@
 //! The onboarding: what the kernel asks the person at the machine at a start
 //! where it does not know them yet, and what it asks at every start after
-//! that. It asks two things: what to call them, and the key for the model,
+//! that. It asks two things itself: what to call them, and the key for the model,
 //! which is locked with a password they choose (see `lock.rs`). A key that is
 //! typed is first tried with one question to the model, and asked for again
 //! if the provider does not know it. Both answers are kept in the notebook on
@@ -8,7 +8,9 @@
 //! stands in front of the person's rows in the chat box, and every later
 //! start greets them by it. A start where a key is locked on the disk asks
 //! for the password, which unlocks it. The line `setup`, sent by itself, asks
-//! both things again.
+//! both things again. When the questions about the key are over, the
+//! question for the look follows, if the notebook holds no answer about the
+//! look yet, and always after `setup` (see `look.rs`).
 //! Only the chat box calls these functions, so only the main loop may.
 //! Notes: `docs/chat.md`.
 
@@ -19,6 +21,7 @@ use alloc::vec::Vec;
 
 use crate::errand::{Errand, errand_ask};
 use crate::lock::NOT_UNLOCKED;
+use crate::look::{look_due, look_question};
 use crate::model::KeyVerdict;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::random::random_number;
@@ -77,8 +80,10 @@ static mut KEY_ANSWERED: bool = false;
 static mut LOCKED: Vec<u8> = Vec::new();
 static mut SETTING_UP: bool = false;
 
-// The words that say that the chat box is free again.
+// The words that say that the chat box is free again: at the end of a row, or
+// as a row of their own.
 const TYPE_A_LINE: &str = " Type a line and press Enter.";
+const TYPE_A_LINE_ROW: &str = "Kernel: type a line and press Enter.";
 
 // The first row at a start that does not know the person yet: one question
 // when only the name is asked, a few when the key is asked after it.
@@ -117,11 +122,35 @@ fn wait_for(what: Waiting) {
     unsafe { WAITING = what };
 }
 
-// Nothing more is asked: the questions, and a `setup`, are over.
-fn done() {
+// The questions about the name and the key, and a `setup`, are over: nothing
+// more is waited for here. If the look is still to be asked (see `look.rs`),
+// its question follows `rows`, in place of the words that say the chat box is
+// free. Gives back the rows to say.
+fn finish(mut rows: Vec<String>) -> Vec<String> {
+    let setting_up = unsafe { SETTING_UP };
     unsafe {
         WAITING = Waiting::Nothing;
         SETTING_UP = false;
+    }
+    if look_due(setting_up) {
+        free_words_drop(&mut rows);
+        rows.push(look_question());
+    }
+    rows
+}
+
+// Takes away the words that say the chat box is free: the last row that is
+// only those words, or those words at the end of the last row that has them.
+fn free_words_drop(rows: &mut Vec<String>) {
+    for place in (0..rows.len()).rev() {
+        if rows[place] == TYPE_A_LINE_ROW {
+            rows.remove(place);
+            return;
+        }
+        if let Some(kept) = rows[place].strip_suffix(TYPE_A_LINE) {
+            rows[place] = String::from(kept);
+            return;
+        }
     }
 }
 
@@ -188,15 +217,17 @@ fn key_kept() -> KeyKept {
     }
 }
 
-// Whether something about the key will be asked after the name, at a start:
-// the password if a key is locked on the disk, the key if the notebook holds
-// no answer about it yet and a key can be locked and kept.
+// Whether something will be asked after the name, at a start: the password if
+// a key is locked on the disk, the key if the notebook holds no answer about
+// it yet and a key can be locked and kept, or else the look, if the notebook
+// holds no answer about the look yet (see `look.rs`).
 fn more_follows() -> bool {
-    match key_kept() {
+    let key_follows = match key_kept() {
         KeyKept::Locked(_) => true,
         KeyKept::NoKey => false,
         KeyKept::Nothing | KeyKept::Unreadable(_) => notebook_ready() && random_number().is_some(),
-    }
+    };
+    key_follows || look_due(false)
 }
 
 // What the kernel says at startup, once the notebook is opened: if the
@@ -252,7 +283,8 @@ fn then_key(mut rows: Vec<String>) -> Vec<String> {
 // password if a key is locked on the disk, nothing if the notebook says that
 // no key is wanted, and otherwise the key. After `setup`: the key. A key is
 // asked for only if it can be locked and kept: the notebook can be added to,
-// and the machine can make random numbers.
+// and the machine can make random numbers. When nothing is asked about the
+// key, the question for the look may follow (see `finish`).
 fn key_rows() -> Vec<String> {
     let setting_up = unsafe { SETTING_UP };
     let mut rows = Vec::new();
@@ -269,22 +301,19 @@ fn key_rows() -> Vec<String> {
         KeyKept::NoKey => {
             unsafe { KEY_ANSWERED = true };
             if !setting_up {
-                done();
-                return rows;
+                return finish(rows);
             }
         }
         KeyKept::Nothing => {}
         KeyKept::Unreadable(reason) => rows.push(format!("Kernel: I cannot read the key kept on the disk, because {}.", reason)),
     }
     if !notebook_ready() {
-        done();
-        return rows;
+        return finish(rows);
     }
     if random_number().is_none() {
-        done();
         rows.push(String::from("Kernel: I cannot lock a key on this machine, because it cannot make random numbers."));
         rows.push(String::from("Kernel: send \"key\" for a key that lasts until the machine is switched off."));
-        return rows;
+        return finish(rows);
     }
     wait_for(Waiting::Key);
     if !(setting_up && !locked_key().is_empty()) {
@@ -376,13 +405,12 @@ pub fn onboarding_secret(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String>
 // no key is wanted.
 fn key_answer(typed: &[u8]) -> Vec<String> {
     if typed.is_empty() {
-        done();
         if !locked_key().is_empty() {
-            return vec![String::from("Kernel: the key locked on the disk stays as it was. Type a line and press Enter.")];
+            return finish(vec![String::from("Kernel: the key locked on the disk stays as it was. Type a line and press Enter.")]);
         }
         let mut rows = vec![String::from("Kernel: then no key is kept. Send \"setup\" to give one later. Type a line and press Enter.")];
         rows.extend(no_key_noted());
-        return rows;
+        return finish(rows);
     }
     let taken = trial_keep(typed);
     let signs = if taken == 1 { "sign" } else { "signs" };
@@ -479,10 +507,9 @@ fn new_password(typed: &[u8]) -> Vec<String> {
 // yet, it notes that no key is to be kept.
 fn for_this_start() -> Vec<String> {
     password_forget();
-    done();
     let mut rows = vec![String::from("Kernel: then the key is kept for this start only, not on the disk. Type a line and press Enter.")];
     rows.extend(no_key_noted());
-    rows
+    finish(rows)
 }
 
 // The second time the password is typed. If it is the same as the first,
@@ -500,21 +527,21 @@ fn same_password(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
     say("Kernel: locking the key with your password. This takes a second or two.");
     let locked = secret_lock();
     password_forget();
-    done();
-    match locked {
+    let rows = match locked {
         Ok(locked) => match notebook_keep(KEY_ENTRY, &locked) {
             Ok(()) => {
                 *locked_key() = locked;
                 unsafe { KEY_ANSWERED = true };
                 vec![
                     String::from("Kernel: the key is locked and kept on the disk. Each start will ask for the password."),
-                    String::from("Kernel: type a line and press Enter."),
+                    String::from(TYPE_A_LINE_ROW),
                 ]
             }
             Err(reason) => vec![format!("Kernel: I could not keep the locked key, because {}, so the key lasts only until the machine is switched off.", reason)],
         },
         Err(reason) => vec![format!("Kernel: I could not lock the key, because {}, so it lasts only until the machine is switched off.", reason)],
-    }
+    };
+    finish(rows)
 }
 
 // The password typed at a start where a key is locked on the disk. The right
@@ -523,25 +550,18 @@ fn same_password(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
 // leads out.
 fn password_answer(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
     if typed.is_empty() {
-        done();
-        return vec![String::from("Kernel: going on without the key. Send \"setup\" to lock a new one. Type a line and press Enter.")];
+        return finish(vec![String::from("Kernel: going on without the key. Send \"setup\" to lock a new one. Type a line and press Enter.")]);
     }
     say("Kernel: unlocking the key. This takes a second or two.");
     match secret_unlock(typed, locked_key()) {
-        Ok(_) => {
-            done();
-            vec![String::from("Kernel: the key is unlocked, so \"ask\" works. Type a line and press Enter.")]
-        }
+        Ok(_) => finish(vec![String::from("Kernel: the key is unlocked, so \"ask\" works. Type a line and press Enter.")]),
         Err(reason) if reason == NOT_UNLOCKED => vec![
             String::from("Kernel: the key could not be unlocked: the password is wrong, or the locked key was changed."),
             String::from("Kernel: type the password again, or press Enter alone to go on without the key."),
         ],
-        Err(reason) => {
-            done();
-            vec![
-                format!("Kernel: I cannot unlock the key kept on the disk, because {}.", reason),
-                String::from("Kernel: send \"setup\" to lock a new one. Type a line and press Enter."),
-            ]
-        }
+        Err(reason) => finish(vec![
+            format!("Kernel: I cannot unlock the key kept on the disk, because {}.", reason),
+            String::from("Kernel: send \"setup\" to lock a new one. Type a line and press Enter."),
+        ]),
     }
 }

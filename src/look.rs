@@ -2,11 +2,13 @@
 //! from a short list by the person at the machine. The line `look` lists the
 //! looks and asks for the number of one; the whole screen is painted again in
 //! that look at once, and Enter alone keeps it in the notebook on the disk,
-//! so that every later start shows it too. Sizes and places are not part of
-//! a look: they stay in `CHAT_STYLE` in `chat.rs` and `PANEL_STYLE` in
-//! `screen.rs`. Only the startup code and the main loop may call these
-//! functions. Notes: `docs/screen.md` ("The look") and `docs/chat.md`
-//! ("Picking a look").
+//! so that every later start shows it too. The onboarding asks the same
+//! question once its questions about the key are over, if the notebook holds
+//! no answer about the look yet (see `onboarding.rs`). Sizes and places are
+//! not part of a look: they stay in `CHAT_STYLE` in `chat.rs` and
+//! `PANEL_STYLE` in `screen.rs`. Only the startup code and the main loop may
+//! call these functions. Notes: `docs/screen.md` ("The look") and
+//! `docs/chat.md` ("Picking a look").
 
 use alloc::format;
 use alloc::string::String;
@@ -14,7 +16,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::chat::chat_paint;
-use crate::notebook::{notebook_find, notebook_keep};
+use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_background, screen_panel_again};
 
 // The line that, sent by itself, makes the kernel list the looks and ask
@@ -22,8 +24,9 @@ use crate::screen::{Colour, screen_background, screen_panel_again};
 pub const LOOK_WORD: &str = "look";
 
 // The name under which the look in use is kept in the notebook. The entry
-// holds the look's name, such as "Night". An entry that holds no signs counts
-// as no look kept.
+// holds the look's name, such as "Night". An entry that holds no signs means
+// that the question for a look was answered without picking one: the first
+// look stays, and later starts do not ask again.
 const LOOK_ENTRY: &str = "look";
 
 // One look: the colour of everything the kernel draws.
@@ -119,13 +122,16 @@ const LOOKS: [Look; 4] = [
 
 // Which look is in use, as its place in the list, counted from 0; whether the
 // kernel waits for the number of a look; whether a look was tried since it
-// asked, so that it is shown but not kept yet; and which look the notebook
-// holds, if it holds one this kernel knows. Nothing protects these against a
-// second task, so only the startup code and the main loop may touch them.
+// asked, so that it is shown but not kept yet; which look the notebook holds,
+// if it holds one this kernel knows; and whether the notebook holds an
+// answer about the look at all: a look this kernel knows, or an entry with no
+// signs. Nothing protects these against a second task, so only the startup
+// code and the main loop may touch them.
 static mut IN_USE: usize = 0;
 static mut ASKING: bool = false;
 static mut TRIED: bool = false;
 static mut KEPT: Option<usize> = None;
+static mut ANSWERED: bool = false;
 
 // The look in use. Every piece of drawing asks for it each time it paints.
 pub fn look() -> Look {
@@ -146,10 +152,18 @@ pub fn look_asking() -> bool {
     unsafe { ASKING }
 }
 
-// The line `look`: lists the looks and asks for the number of one. Gives back
-// the row that says so. From then on the next line that is sent is the
-// answer (see `look_answer`). With four looks the row fits on one row of the
-// chat box on a screen 1280 dots wide.
+// Whether the onboarding should ask for a look when its questions about the
+// key are over: the answer can be kept, and either the notebook holds none
+// yet or the questions are asked again because of `setup`.
+pub fn look_due(setting_up: bool) -> bool {
+    notebook_ready() && (setting_up || !unsafe { ANSWERED })
+}
+
+// The question for a look, after the line `look` or at the end of the
+// onboarding: lists the looks and asks for the number of one. Gives back the
+// row that says so. From then on the next line that is sent is the answer
+// (see `look_answer`). With four looks the row fits on one row of the chat
+// box on a screen 1280 dots wide.
 pub fn look_question() -> String {
     unsafe {
         ASKING = true;
@@ -196,36 +210,54 @@ pub fn look_answer(line: &str) -> (Vec<String>, bool) {
 
 // Enter alone at the question for a look: the look in use stays. It is kept
 // in the notebook if it was tried and the notebook does not hold it already;
-// if that fails, it lasts until the machine is switched off. Gives back what
-// the kernel says.
+// if that fails, it lasts until the machine is switched off. If nothing is
+// kept and the notebook holds no answer about the look yet, an entry with no
+// signs notes the answer, so that later starts do not ask again. Gives back
+// what the kernel says.
 fn look_keep() -> Vec<String> {
     let in_use = unsafe { IN_USE };
-    let (tried, kept) = unsafe { (TRIED, KEPT) };
-    if !tried || kept == Some(in_use) {
-        return vec![format!("Kernel: {}, stays. Type a line and press Enter.", look_named())];
+    let (tried, kept, answered) = unsafe { (TRIED, KEPT, ANSWERED) };
+    if tried && kept != Some(in_use) {
+        return match notebook_keep(LOOK_ENTRY, look().name.as_bytes()) {
+            Ok(()) => {
+                unsafe {
+                    KEPT = Some(in_use);
+                    ANSWERED = true;
+                }
+                vec![format!("Kernel: {}, is kept on the disk. Type a line and press Enter.", look_named())]
+            }
+            Err(reason) => vec![
+                format!("Kernel: I could not keep {}, because {}.", look_named(), reason),
+                String::from("Kernel: so it lasts only until the machine is switched off. Type a line and press Enter."),
+            ],
+        };
     }
-    match notebook_keep(LOOK_ENTRY, look().name.as_bytes()) {
-        Ok(()) => {
-            unsafe { KEPT = Some(in_use) };
-            vec![format!("Kernel: {}, is kept on the disk. Type a line and press Enter.", look_named())]
+    let mut rows = vec![format!("Kernel: {}, stays. Type a line and press Enter.", look_named())];
+    if !answered && notebook_ready() {
+        match notebook_keep(LOOK_ENTRY, &[]) {
+            Ok(()) => unsafe { ANSWERED = true },
+            Err(reason) => rows.push(format!("Kernel: I could not note that, because {}, so I will ask again at the next start.", reason)),
         }
-        Err(reason) => vec![
-            format!("Kernel: I could not keep {}, because {}.", look_named(), reason),
-            String::from("Kernel: so it lasts only until the machine is switched off. Type a line and press Enter."),
-        ],
     }
+    rows
 }
 
 // Puts the look kept in the notebook in use. Called once at startup, once the
 // notebook is opened, before the greeting. Gives back a row to say when the
 // kept look cannot be used, and whether the look in use changed, in which
-// case the whole screen must be painted again (`look_paint`).
+// case the whole screen must be painted again (`look_paint`). A look that
+// cannot be used counts as no answer, so that the onboarding asks again.
 pub fn look_begin() -> (Option<String>, bool) {
     match notebook_find(LOOK_ENTRY) {
-        // Nothing kept, or an entry that holds no signs: the first look
-        // stays.
+        // Nothing kept: the first look stays, and the question is still to
+        // be asked.
         Ok(None) => (None, false),
-        Ok(Some(kept)) if kept.is_empty() => (None, false),
+        // An entry that holds no signs: the question was answered, and the
+        // first look stays.
+        Ok(Some(kept)) if kept.is_empty() => {
+            unsafe { ANSWERED = true };
+            (None, false)
+        }
         Ok(Some(kept)) => {
             // What comes from the disk comes from outside the kernel. It is
             // only compared with the names in the list, and never shown.
@@ -235,6 +267,7 @@ pub fn look_begin() -> (Option<String>, bool) {
                     unsafe {
                         IN_USE = place;
                         KEPT = Some(place);
+                        ANSWERED = true;
                     }
                     (None, changed)
                 }

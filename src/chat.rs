@@ -344,7 +344,7 @@ pub fn chat_begin() {
     let mut more = Vec::new();
     more.extend(look_trouble);
     more.extend(recall_row());
-    if onboarding_waiting() {
+    if onboarding_waiting() || look_asking() {
         more.extend(rows);
         rows = more;
     } else {
