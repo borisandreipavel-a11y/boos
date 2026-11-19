@@ -91,6 +91,8 @@ When a line is sent with Enter, `chat_key` keeps it under the name `last line`. 
 
 The person's name is kept too, under the name `name`, by `onboarding.rs`: the answer to the question the kernel asks at a start where the notebook holds no name, or after the line `setup`. An entry under `name` that holds no signs means that the answer was to stay `You`. Whether such an entry is there at all is what tells a start whether to ask. See "The name" in [chat.md](chat.md).
 
+The model's key is kept under the name `locked key`, by `onboarding.rs`, and only locked with a password (see [lock.md](lock.md)): at most 250 bytes, a head, the scrambled key and a proof. An entry under `locked key` that holds no signs means that the question for the key was answered without one. Whether such an entry is there, and whether it holds a locked key, is what tells a start whether to ask for the key, for the password, or for nothing. A new key locked after `setup` is a new entry that counts from then on; the one before stays in the notebook, like every entry, and opens with the old password. See "The key and the password" in [chat.md](chat.md).
+
 - If the line was kept, nothing is said about it.
 - If it could not be kept, the kernel says so in a row and in the terminal, `Kernel: I could not keep that line, because ...`, and the chat goes on as before.
 - On a machine with no disk, no part of the kernel's own, or a notebook that cannot be added to, the chat box says nothing about keeping; the lines at startup have said it.

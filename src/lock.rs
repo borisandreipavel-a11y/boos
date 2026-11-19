@@ -51,6 +51,10 @@ const KEY_LENGTH: usize = 32;
 // The longest locked secret: the head, the longest secret, and the proof.
 pub const LOCKED_MOST: usize = HEAD_LENGTH + SECRET_LIMIT + PROOF_LENGTH;
 
+// Why `unlock` refuses when the proof does not fit. A wrong password and a
+// changed locked secret cannot be told apart, so it names both.
+pub const NOT_UNLOCKED: &str = "the password is not the one it was locked with, or the locked secret was changed";
+
 // The scrambler for a key of 32 bytes.
 fn scrambler(key: &[u8; KEY_LENGTH]) -> Option<ChaCha20Poly1305> {
     ChaCha20Poly1305::new_from_slice(key).ok()
@@ -168,7 +172,7 @@ pub fn unlock(password: &[u8], locked: &[u8], room: &mut [u8; SECRET_LIMIT]) -> 
         Ok(length)
     } else {
         wipe(room);
-        Err("the password is not the one it was locked with, or the locked secret was changed")
+        Err(NOT_UNLOCKED)
     }
 }
 

@@ -195,8 +195,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The chat box
 
-- **The kernel gives the typed line back, with four lines set apart.** `key` takes a secret, `fetch` fetches the example page and says how the site answered, `ask` asks the model one fixed question, and `setup` asks for the person's name again. Nothing reads what else is typed: a typed line cannot be the question yet.
-- **The kernel asks one thing of the person at the machine: a name.** It is asked at a start where the notebook holds none, and after `setup`. While the kernel waits, the next line is the answer, whatever it says; there is no way to leave the question but to answer it, Enter alone included.
+- **The kernel gives the typed line back, with four lines set apart.** `key` takes a secret, `fetch` fetches the example page and says how the site answered, `ask` asks the model one fixed question, and `setup` asks for the person's name and a key again. Nothing reads what else is typed: a typed line cannot be the question yet.
+- **The kernel asks the person at the machine for two things: a name, and the model's key with a password to lock it.** The name is asked at a start where the notebook holds none, and after `setup`; the key after the name, at a start where the notebook holds no answer about it, and after `setup`; the password at every start where a key is locked on the disk. While the kernel waits, the next line is the answer, whatever it says; there is no way to leave a question but to answer it, Enter alone included.
 - **A name is one line of at most 20 plain signs.** Nothing checks it further: any signs, a name of one sign, a name that is a command word.
 - **The name is kept on the disk as typed, readable by anyone with the disk,** and nothing takes it out; a new answer only adds an entry that takes its place. Every `setup` answered with a new name adds an entry, like every line sent.
 - **A notebook from before the question was built asks at its next start,** because it holds no name. Its kept lines stay, and the last one is still said, before the question.
@@ -206,7 +206,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **While an errand runs, the network's task does nothing else.** It is the same for its own fetch at startup: no other use of the network gets a turn until the work is done or gives up, which can take a quarter of a minute and more, and a minute and more when the model is asked and its provider stays silent.
 - **An errand's answer is one text.** It cannot say anything but that sentence: not whether the work went well as a yes or no, and not a second piece of data.
 - **Nothing says in the chat box that an answer is still awaited,** except the row that the asking was made. The row of the answer simply appears.
-- **A secret is kept in memory only,** so it has to be typed again after every start. One thing uses it: the question to the model, as its key.
+- **A secret taken with `key` is kept in memory only,** so it has to be typed again after every start. A key given at the onboarding is kept on the disk locked, and needs the password at every start. One thing uses either: the question to the model, as its key.
 - **A secret is typed blind.** The stars and the count are all the person sees; a wrong sign cannot be found except by typing the whole again. There is no way to leave the asking but Enter on nothing.
 - **A secret's signs pass through places that are not wiped:** the processor's registers and the stack of the main loop while a key is handled, a byte at a time. The dump of a test machine's memory held a typed secret exactly once and no further run of six of its signs, which is as far as that was looked into; where in memory the one copy lay was not looked at, and it is the breaks made on purpose that tie the count to the two rooms made for it.
 - **Anything in the kernel can read the secret's room.** The kernel has one memory for all its code; only apps in the box are shut out of it. The compiler lets one file borrow the secret through `secret_lend`; that is a rule for code that keeps to Rust's rules, not a wall.
@@ -222,13 +222,18 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The lock
 
-- **Nothing uses the lock yet but its check at startup.** See [lock.md](lock.md).
+- **One thing uses the lock: the onboarding,** which keeps the model's key on the disk locked with a password. See [lock.md](lock.md) and "The key and the password" in [chat.md](chat.md).
 - **A password protects only as well as it is hard to guess.** Whoever has a locked secret can try passwords on a computer of their own for as long as they like; every try costs 600,000 rounds, and graphics cards make each round cheap. The rounds slow guessing down; they cannot stop it. Argon2id, the way OWASP's advice puts first, would also make every try fill a large table of memory, which graphics cards handle poorly; it was not taken because it is outside code.
+- **The onboarding takes a password of 4 signs.** It is meant to keep out somebody who uses the machine, not somebody who has a copy of the disk. NIST's SP 800-63B (revision 4) and OWASP's advice ask for at least 15 signs when a password stands guard alone, as here. Whoever has a copy of the disk file can try every short password, and a disk file is copied wherever the folder that holds it is copied, by a backup or by a service that keeps folders in step.
+- **A key locked before stays on the disk after `setup`,** and the old password still opens it: the notebook never changes what it wrote. Copies of the disk file made before would hold it anyway. Replacing the key at the provider makes the old locked one useless.
+- **Nothing limits how often a password is tried at the machine.** Each try takes as long as an unlocking, about a second in QEMU.
+- **While a key is locked or unlocked, the main loop does nothing else** for about a second: rows and keys wait, and keys that do not fit into the keyboard's line of 16 key numbers are lost. The other tasks carry on.
+- **The password is typed blind,** twice when it is chosen and once at every start; the stars and the count are all the person sees.
 - **The count of rounds is fixed when a secret is locked,** and travels with it. Raising it later means locking again. A locked secret that asks for more than 10,000,000 rounds is refused.
-- **Locking and unlocking each take about 1.3 seconds in QEMU** on the test computer (the rounds, about 1.1 of them, and the scrambling), and nothing else runs meanwhile when they run in the main loop. A real PC should be many times faster; not measured.
+- **Locking and unlocking each take about a second in QEMU** on the test computer: 1.2 to 1.4 seconds measured on their own, about 0.9 from Enter to the row that says it is done in the onboarding. Nothing else runs in the main loop meanwhile. A real PC should be many times faster; not measured.
 - **Nothing is locked without random numbers.** On a processor that cannot make them, `lock` refuses.
 - **A wrong password and a changed locked secret look alike:** both give the same refusal.
-- **The copies of the keyed fingerprint's state that every round makes are not wiped.** They are made from the password and can stand in for it. The key, the password and the secret were not found in a dump of the whole memory after a lock and an unlock; those states were not looked for.
+- **The copies of the keyed fingerprint's state that every round makes are not wiped.** They are made from the password and can stand in for it, and with one of them guesses at the password can be tested without the 600,000 rounds. The key, the password and the secret were not found in a dump of the whole memory after a lock and an unlock; those states were not looked for. The wiping feature of `hmac` and `sha2` is not switched on (see [lock.md](lock.md)).
 - **One way of locking is known,** version 1, way 1. Another way would need a new way number and both kept readable.
 - **The rounds run in plain kernel code at a sixteenth of the speed** if `password_key` is ever moved into the kernel's own crate: it lives in a crate of its own only to be built fast.
 

@@ -11,7 +11,10 @@ use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::model::QUESTION;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
-use crate::onboarding::{NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, person_name};
+use crate::onboarding::{
+    NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, onboarding_secret, onboarding_waiting,
+    onboarding_wants_secret, person_name,
+};
 use crate::page::SITE;
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
@@ -127,6 +130,14 @@ static mut SECRET_SIGNS: usize = 0;
 
 fn secret_typed() -> &'static mut [u8; SECRET_LIMIT] {
     unsafe { &mut *(&raw mut SECRET_TYPED) }
+}
+
+// Whether what is typed now shows as stars: a secret asked for with the line
+// "key", or a key or a password that the onboarding asks for (see
+// `onboarding.rs`). Both are typed into the room above.
+fn stars_wanted() -> bool {
+    let asked = unsafe { SECRET_ASKED };
+    asked || onboarding_wants_secret()
 }
 
 // Where the chat box sits on this screen and how much fits in it. All of it
@@ -259,7 +270,7 @@ fn chat_paint_typing() {
     // The text goes in the middle between the area's top and bottom.
     let letter_height = style.text_size.saturating_mul(LETTER_HEIGHT);
     let top = place.typing_top.saturating_add(area_height.saturating_sub(letter_height) / 2);
-    let text = if unsafe { SECRET_ASKED } { secret_row() } else { format!("> {}_", chat_line()) };
+    let text = if stars_wanted() { secret_row() } else { format!("> {}_", chat_line()) };
     chat_write(&place, top, &text, style.person_colour);
 }
 
@@ -330,7 +341,7 @@ pub fn chat_begin() {
     }
     if let Some(row) = recall_row() {
         // While the kernel waits for an answer, its question stays last.
-        if onboarding_asking() {
+        if onboarding_waiting() {
             rows.insert(0, row);
         } else {
             rows.push(row);
@@ -378,8 +389,9 @@ pub fn chat_say(text: &str) {
 // While the kernel waits for the answer to its question (see
 // `onboarding.rs`), the line that is sent is that answer.
 pub fn chat_key(letter: u8) {
-    // While the kernel waits for a secret, the keys go there and nowhere else.
-    if unsafe { SECRET_ASKED } {
+    // While the kernel waits for a secret, a key or a password, the keys go
+    // there and nowhere else.
+    if stars_wanted() {
         secret_key(letter);
         return;
     }
@@ -395,13 +407,16 @@ pub fn chat_key(letter: u8) {
         b'\n' if onboarding_asking() => {
             // The answer to the question. It may be empty: Enter alone
             // leaves the name as it is. It is not given back, and it is not
-            // kept as the last line; the onboarding keeps it.
+            // kept as the last line; the onboarding keeps it, and says what
+            // it asks next.
             let said = core::mem::take(line);
             let mut rows = Vec::new();
             if !said.is_empty() {
                 rows.push((Speaker::Person, format!("{}: {}", person_name(), said)));
             }
-            rows.push((Speaker::Kernel, onboarding_answer(&said)));
+            for row in onboarding_answer(&said) {
+                rows.push((Speaker::Kernel, row));
+            }
 
             // Repeated in the terminal in one go, like any other line.
             let mut repeated = String::new();
@@ -493,12 +508,13 @@ pub fn chat_key(letter: u8) {
     }
 }
 
-// Takes one typed key while the kernel waits for a secret. The signs are
-// counted and shown as stars. They are never printed, never put into a row of
-// what was said and never kept on the disk; Enter hands them to the place
-// where the secret is kept in memory, and the room they were typed into is
-// wiped. Enter with nothing typed takes no secret and leaves the one kept
-// before as it was.
+// Takes one typed key while the kernel waits for a secret, or for a key or a
+// password that the onboarding asks for. The signs are counted and shown as
+// stars. They are never printed, never put into a row of what was said and
+// never kept on the disk as they are. Enter hands them over, and the room
+// they were typed into is wiped: a secret goes to the place where it is kept
+// in memory, and a key or a password goes to the onboarding. Enter with
+// nothing typed takes no secret and leaves the one kept before as it was.
 fn secret_key(letter: u8) {
     let typed = secret_typed();
     let signs = unsafe { SECRET_SIGNS };
@@ -512,7 +528,7 @@ fn secret_key(letter: u8) {
             unsafe { SECRET_SIGNS = signs - 1 };
             chat_paint_typing();
         }
-        b'\n' => {
+        b'\n' if unsafe { SECRET_ASKED } => {
             let answer = if signs == 0 {
                 String::from("Kernel: no secret was taken.")
             } else {
@@ -532,6 +548,34 @@ fn secret_key(letter: u8) {
             }
             serial_print(&format!("{}\r\n", answer));
             chat_add(Speaker::Kernel, &answer);
+            chat_paint_rows();
+            chat_paint_typing();
+        }
+        b'\n' => {
+            // A key or a password that the onboarding asked for (see
+            // `onboarding.rs`). The signs go there straight from this room,
+            // which is wiped afterwards. The row being typed is emptied
+            // first, so that it shows no stars while a password is turned
+            // into a key; the onboarding says what it is doing meanwhile.
+            unsafe { SECRET_SIGNS = 0 };
+            let rows = onboarding_secret(&typed[..signs], &mut |row: &str| {
+                serial_print(&format!("{}\r\n", row));
+                chat_add(Speaker::Kernel, row);
+                chat_paint_rows();
+                chat_paint_typing();
+            });
+            wipe(typed);
+
+            // Repeated in the terminal in one go, like any other rows.
+            let mut repeated = String::new();
+            for row in rows.iter() {
+                repeated.push_str(row);
+                repeated.push_str("\r\n");
+            }
+            serial_print(&repeated);
+            for row in rows.iter() {
+                chat_add(Speaker::Kernel, row);
+            }
             chat_paint_rows();
             chat_paint_typing();
         }

@@ -337,9 +337,11 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                                 }
 
                                 // Greet the person by the name kept in the
-                                // notebook, or ask for it if none is kept,
-                                // and say the line that was kept before the
-                                // machine was switched off, if there is one.
+                                // notebook, or ask for it if none is kept;
+                                // ask for the password if a key is locked
+                                // there, or for the key; and say the line
+                                // that was kept before the machine was
+                                // switched off, if there is one.
                                 chat_begin();
                             }
                             Err(reason) => {

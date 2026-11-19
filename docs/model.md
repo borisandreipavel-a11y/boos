@@ -2,7 +2,7 @@
 
 Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the line `ask` in `src/chat.rs`.
 
-A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box (see [chat.md](chat.md)).
+A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box: after the line `key`, for one start, or when the onboarding asks for it, which locks it with a password and keeps it on the disk, and unlocks it again at every start with that password (see [chat.md](chat.md)).
 
 ## What it does today
 
@@ -86,7 +86,7 @@ Connection: close
 
 ## The key
 
-- **Only this file can borrow it.** `secret_lend` in `secret.rs` runs a short piece of code with the key in hand. It asks for a pass, `KeyPass`, whose inside is private to `model.rs`, so no other file can make one: a call from anywhere else does not build. (The disk's `WriteTicket` works the same way; see [disk.md](disk.md).)
+- **Only this file can borrow it.** `secret_lend` in `secret.rs` runs a short piece of code with the key in hand. It asks for a pass, `KeyPass`, whose inside is private to `model.rs`, so no other file can make one: a call from anywhere else does not build. (The disk's `WriteTicket` works the same way; see [disk.md](disk.md).) The one other way the key leaves `secret.rs` is locked, by `secret_lock`, for the onboarding; a key unlocked by `secret_unlock` goes straight into its place there (see "A secret" in [chat.md](chat.md)).
 - **It is borrowed once for each asking.** `model_tell` copies the key into a room of its own, and that copy serves the whole asking: it goes into the request, and it is what is looked for in the answer afterwards. A new key typed while the answer is awaited changes nothing about the asking under way. The room is wiped before `model_tell` ends.
 - **It goes to one site.** `model_tell` is the only borrower, and the request, the site's name for the name question and the site's name for the certificate check are handed to `site_exchange` as one constant. With a certificate made out to another name, the link fails before the request is sent.
 - **The request is wiped.** It is put together in a room that is large enough from the start, so that it never moves and leaves a copy behind, and the room is wiped after the exchange, however it went. After requests whose answers did not repeat the key, a test machine's memory held the key once, in the room where it is kept.

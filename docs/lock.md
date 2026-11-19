@@ -2,7 +2,7 @@
 
 Code: `src/lock.rs`, `src/lock_values.rs`, the crate in the folder `password-key/`, and the check's line in `efi_main`.
 
-The lock takes a secret, such as a text of up to 200 signs, and a password, and scrambles the secret so that only someone who knows the password can read it back. The scrambled form can be kept where others might see it. Today nothing uses the lock but its own check at startup.
+The lock takes a secret, such as a text of up to 200 signs, and a password, and scrambles the secret so that only someone who knows the password can read it back. The scrambled form can be kept where others might see it. The onboarding uses it to keep the model's key on the disk: `secret_lock` and `secret_unlock` in `secret.rs` call `lock` and `unlock` (see "The key and the password" in [chat.md](chat.md)).
 
 ## The words
 
@@ -30,7 +30,7 @@ The lock takes a secret, such as a text of up to 200 signs, and a password, and 
 - another way of locking than 1: `the secret was locked in a way this kernel does not know`;
 - 0 rounds, or more than 10,000,000 (`MOST_ROUNDS`): `the locked secret asks for a count of rounds this kernel does not take`. Without that bound a changed count could hold the kernel up for hours; ten million rounds are about 20 seconds in QEMU (8,388,611 rounds took about 17 seconds by the processor's counter).
 
-Then the key is made with the salt and the count of rounds the head names, and the proof is checked before anything is unscrambled. If it does not fit: `the password is not the one it was locked with, or the locked secret was changed`. The two cannot be told apart. The room is wiped first, and again after a refusal.
+Then the key is made with the salt and the count of rounds the head names, and the proof is checked before anything is unscrambled. If it does not fit: `the password is not the one it was locked with, or the locked secret was changed` (`NOT_UNLOCKED`, which the onboarding compares with to tell this refusal from the others). The two cannot be told apart. The room is wiped first, and again after a refusal.
 
 ## The layout of a locked secret
 
@@ -62,7 +62,8 @@ The first 34 bytes are the head. The count of rounds and the salt travel with th
 
 - The key is wiped by `lock` and `unlock` as soon as the scrambling is done, and so are the last round's result and the running result inside `password_key`.
 - The scrambler keeps its own copy of the key. `chacha20poly1305` is built with its `zeroize` feature, which writes zeros over that copy when the scrambler is thrown away. Without it, a dump of the machine's whole memory after a lock and an unlock held the key once; with it, the key was nowhere, and neither the password nor the secret either. That setting also covers the scramblers of the encrypted link (see [encryption.md](encryption.md)).
-- **Not wiped:** the copies of the keyed fingerprint's state that every round makes on the stack. They are made from the password and can stand in for it: whoever has them can work out the key for any salt without knowing the password. The last of them stay on the stack until something else is written there. The memory search did not look for them.
+- **When the key for the model is locked or unlocked,** `secret_lock` and `secret_unlock` hand `lock` and `unlock` copies made in rooms of their own and wipe those rooms afterwards, and the rooms the password is typed into and kept in are wiped too (see "A secret" in [chat.md](chat.md)). A dump of the whole memory after locking, after unlocking, after a wrong password and after two passwords that differed held no password, the key made from it nowhere, and the model's key only once, in its room, while it was meant to be kept.
+- **Not wiped:** the copies of the keyed fingerprint's state that every round makes on the stack. They are made from the password and can stand in for it: whoever has them can work out the key for any salt without knowing the password, and test guesses at the password quickly. The last of them stay on the stack until something else is written there. The memory search did not look for them. `hmac` and `sha2` have a feature that wipes such states when they are thrown away. It is not switched on: the password is meant to keep out somebody who uses the machine, not somebody who can read its memory, and the key itself lies in memory while the machine runs anyway.
 
 ## The check at startup
 
@@ -91,4 +92,4 @@ If a check fails it reads `Lock: not to be trusted here, only N of 6 checks of l
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: a password protects only as well as it is hard to guess; the count of rounds is fixed when a secret is locked; locking and unlocking take over a second in QEMU and hold everything else up meanwhile; nothing is locked without random numbers; and nothing uses the lock yet but its check.
+See [open-points.md](open-points.md). In short: a password protects only as well as it is hard to guess, and the onboarding takes passwords of 4 signs; the count of rounds is fixed when a secret is locked; locking and unlocking take about a second in QEMU and hold the main loop up meanwhile; and nothing is locked without random numbers.
