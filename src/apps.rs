@@ -2,18 +2,20 @@
 //! app they want, with the line `make` and a few words, and the model writes
 //! the app as a Lua script. This file holds what the model is told about
 //! writing an app for this kernel, what the chat box answers to such a line,
-//! how the script is taken out of the model's words and checked, and how it
-//! is shown in the terminal. The asking itself is done by `model.rs`, the one
-//! file that may borrow the key.
+//! how the script is taken out of the model's words and checked, how it is
+//! shown in the terminal, and how it is run. The asking itself is done by
+//! `model.rs`, the one file that may borrow the key.
 //! Notes: `docs/apps.md`.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::app_box::SCRIPT_LIMIT;
+use crate::app_box::{SCRIPT_LIMIT, StopKind};
 use crate::errand::{Errand, errand_ask};
+use crate::interpreter::script_run_seeded;
 use crate::page::plain_text;
+use crate::random::random_number;
 use crate::secret::secret_length;
 use crate::serial::serial_print;
 
@@ -32,12 +34,12 @@ pub const APP_INSTRUCTIONS: &str = concat!(
     "\n",
     "The script runs once, from its first line to its last, and then ends. It runs in a locked box: it cannot read keys, ",
     "files, the clock or the network, and it cannot wait. Lua's string, table and math libraries are there; io, os, ",
-    "require, debug, coroutine and utf8 are not. math.random works, but gives the same numbers at every run.\n",
+    "require, debug, coroutine and utf8 are not. math.random works.\n",
     "\n",
     "Two functions put out what the app has to say:\n",
     "- show(text) puts one line of at most 40 characters in a box in the middle of the screen. This is what the person ",
     "at the machine sees. Each show replaces the line shown before, and the last one stays on the screen after the ",
-    "script has ended. A text longer than 40 characters stops the script, and so does a 21st show.\n",
+    "script has ended. A longer text is cut at 40 characters, and a 21st show stops the script.\n",
     "- print(...) writes one line to a log beside the screen. A line longer than 200 characters is cut, and a 101st ",
     "print stops the script.\n",
     "\n",
@@ -135,5 +137,33 @@ pub fn app_print_script(script: &str) {
         } else {
             serial_print(&format!("Script {}: {}\r\n", place + 1, shown));
         }
+    }
+}
+
+// Runs a script the model wrote, in the box, and says in one plain sentence
+// how the run went. What the script shows appears in the box in the middle
+// of the screen, and what it prints comes out in the terminal as `App: `
+// lines, as for any app. It runs here, in the main loop, which is the one
+// part of the kernel that paints the screen after startup, so the app's box
+// and the chat box are never painted at the same time. While it runs, keys
+// wait in the keyboard's line (see `docs/apps.md`). Only the main loop may
+// call this.
+pub fn app_run(script: &str) -> String {
+    // A new number to start the script's random numbers from at every run,
+    // from the processor's random numbers. It is halved, so that it stays a
+    // whole number above zero when Lua reads it. A machine without random
+    // numbers would give none, and the script's random numbers would then
+    // start where they always do; but such a machine cannot make the
+    // encrypted link, so no app comes to it.
+    let seed = random_number().map(|number| (number >> 1) as i64);
+    match script_run_seeded(script, seed) {
+        Ok(0) => String::from("the app ran to its end, but it showed nothing on the screen."),
+        Ok(_) => String::from("the app ran to its end."),
+        Err(stop) => match stop.kind {
+            StopKind::Mistake => String::from("the app was stopped, because it has a mistake in it; the terminal says which."),
+            StopKind::OutOfFuel => String::from("the app was stopped, because it did too much work."),
+            StopKind::GaveUp => String::from("the app was stopped, because the interpreter gave up, most likely for lack of memory."),
+            StopKind::Other => format!("the app was stopped, because {}.", stop.reason),
+        },
     }
 }

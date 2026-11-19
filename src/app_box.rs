@@ -9,7 +9,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 
-use wasmi::{Caller, Config, Engine, Error, Extern, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmi::{Caller, Config, Engine, Error, Extern, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode};
 
 use crate::page::plain_text;
 use crate::screen::screen_panel;
@@ -357,39 +357,85 @@ pub fn box_accepts(program: &[u8], functions: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
+// Why a script did not run to its end: the reason in words, as the kernel
+// says it in its own lines, and what kind of stop it was, where the kernel
+// can tell, so that whoever asked for the run can say it in plainer words.
+pub struct ScriptStop {
+    pub reason: String,
+    pub kind: StopKind,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum StopKind {
+    // The script made a mistake, which the interpreter caught and printed
+    // as a line of its own.
+    Mistake,
+    // The script used up its budget of work, its fuel.
+    OutOfFuel,
+    // The interpreter itself gave up (it reached WebAssembly's
+    // `unreachable`), which is what it does when the script has used up its
+    // memory.
+    GaveUp,
+    // Anything else; the reason says what.
+    Other,
+}
+
+// A stop for a reason of the kernel's own.
+fn script_stop(reason: String) -> ScriptStop {
+    ScriptStop { reason, kind: StopKind::Other }
+}
+
+// A stop for an error that came from running the program. wasmi says which
+// kind of trap it was, when it was one.
+fn script_stopped(error: Error) -> ScriptStop {
+    let kind = match error.as_trap_code() {
+        Some(TrapCode::OutOfFuel) => StopKind::OutOfFuel,
+        Some(TrapCode::UnreachableCodeReached) => StopKind::GaveUp,
+        _ => StopKind::Other,
+    };
+    ScriptStop { reason: reason(error), kind }
+}
+
 // Hands a script to a program in the box that can carry scripts out, and has
 // it carried out. Such a program, the interpreter, is not run once from a
-// `start`. It shows the outside two functions instead:
+// `start`. It shows the outside three functions instead:
 //
 // - `room`, which takes the script's length in bytes and gives back where in
 //   the program's own memory the kernel should write the script;
+// - `seed`, which takes a number to start the script's random numbers from;
+//   it is called only when `seed` here holds one;
 // - `run`, which takes the length again, carries the script out, and gives
 //   back 0 if the script ran to its end.
 //
 // The program is got ready exactly as an app is, with the same check, the
 // same limits and the same system API. Nothing it says is taken on trust:
 // the place it names for the script is written to through `write`, which
-// refuses if any byte of it lies outside the program's memory.
-pub fn box_script(program: &[u8], script: &str) -> Result<(), String> {
+// refuses if any byte of it lies outside the program's memory. Gives back
+// how many texts the script showed on the screen.
+pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<usize, ScriptStop> {
     if script.len() > SCRIPT_LIMIT {
-        return Err(String::from("the script is too long"));
+        return Err(script_stop(String::from("the script is too long")));
     }
     let length = script.len() as i32;
 
-    let (mut store, app) = box_start(program)?;
-    let room = app.get_typed_func::<i32, i32>(&store, "room").map_err(reason)?;
-    let run = app.get_typed_func::<i32, i32>(&store, "run").map_err(reason)?;
-    let memory = app.get_memory(&store, "memory").ok_or_else(|| String::from("it shows no memory called `memory`"))?;
+    let (mut store, app) = box_start(program).map_err(script_stop)?;
+    let room = app.get_typed_func::<i32, i32>(&store, "room").map_err(script_stopped)?;
+    let run = app.get_typed_func::<i32, i32>(&store, "run").map_err(script_stopped)?;
+    let memory = app.get_memory(&store, "memory").ok_or_else(|| script_stop(String::from("it shows no memory called `memory`")))?;
 
     // From here on the program's own code runs, on the budget for a script.
-    store.set_fuel(SCRIPT_FUEL).map_err(reason)?;
-    let place = room.call(&mut store, length).map_err(reason)?;
+    store.set_fuel(SCRIPT_FUEL).map_err(script_stopped)?;
+    let place = room.call(&mut store, length).map_err(script_stopped)?;
     memory
         .write(&mut store, place as u32 as usize, script.as_bytes())
-        .map_err(|_| String::from("it gave room for the script outside its own memory"))?;
-    match run.call(&mut store, length).map_err(reason)? {
-        0 => Ok(()),
-        _ => Err(String::from("the script made a mistake, which is told in the line before")),
+        .map_err(|_| script_stop(String::from("it gave room for the script outside its own memory")))?;
+    if let Some(value) = seed {
+        let seed_function = app.get_typed_func::<i64, ()>(&store, "seed").map_err(script_stopped)?;
+        seed_function.call(&mut store, value).map_err(script_stopped)?;
+    }
+    match run.call(&mut store, length).map_err(script_stopped)? {
+        0 => Ok(store.data().texts_shown),
+        _ => Err(ScriptStop { reason: String::from("the script made a mistake, which is told in the line before"), kind: StopKind::Mistake }),
     }
 }
 

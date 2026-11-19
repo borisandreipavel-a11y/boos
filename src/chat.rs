@@ -6,7 +6,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::apps::{app_ask, app_print_script, app_wanted};
+use crate::apps::{app_ask, app_print_script, app_run, app_wanted};
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -391,13 +391,15 @@ fn chat_say(text: &str) {
 // Says the answer to an errand, which the main loop picks up from the
 // network's task. The answer to the try of a key goes to the onboarding,
 // which says what comes of it; any other answer is said as it is. A script
-// that the model wrote comes with its answer, and is shown in the terminal
-// below that row (see `apps.rs`).
+// that the model wrote comes with its answer: it is shown in the terminal
+// below that row, then run, and a second row says how the run went (see
+// `apps.rs`).
 pub fn chat_answer(answer: Answer) {
     if answer.errand != Errand::KeyTry {
         chat_say(&answer.sentence);
         if let Some(script) = &answer.script {
             app_print_script(script);
+            chat_say(&app_run(script));
         }
         return;
     }

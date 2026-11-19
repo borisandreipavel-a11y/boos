@@ -1,17 +1,17 @@
 # The interpreter: a program that understands Lua
 
-Code: the folder `interpreter/` (a program of its own, not part of the kernel), `src/interpreter.rs`, `box_accepts` and `box_script` in `src/app_box.rs`, the check and the script's run in `efi_main`, and the first lines of `run.bat`.
+Code: the folder `interpreter/` (a program of its own, not part of the kernel), `src/interpreter.rs`, `box_accepts` and `box_script` in `src/app_box.rs`, the check and the script's run in `efi_main`, `app_run` in `src/apps.rs`, and the first lines of `run.bat`.
 
-Apps are going to be written as text in the language Lua. The kernel does not understand Lua, and it should not: a program that reads text written by somebody else is a large piece with many places for a mistake. So the understanding is done by a program that itself runs inside the locked box (see [box.md](box.md)), where a mistake in it can harm only the one app it is running. That program is the interpreter.
+Apps are written as text in the language Lua. The kernel does not understand Lua, and it should not: a program that reads text written by somebody else is a large piece with many places for a mistake. So the understanding is done by a program that itself runs inside the locked box (see [box.md](box.md)), where a mistake in it can harm only the one app it is running. That program is the interpreter.
 
-**Today the kernel carries the interpreter, sees at startup that the box would take it, and has it run one script that is written by hand and kept in the kernel.** A script can ask for two things: to print a line, and to show a text on the screen. The model can write a script on request now, but that script is only shown in the terminal, not run (see [apps.md](apps.md)).
+**Today the kernel carries the interpreter, sees at startup that the box would take it, and has it run one script that is written by hand and kept in the kernel.** A script can ask for two things: to print a line, and to show a text on the screen. After startup it also runs the scripts the model writes on request, one at a time, each once (see [apps.md](apps.md)).
 
 ## The words
 
 - A **script** is a program kept as text, as a person would write it: `count = count + 1`.
 - An **interpreter** is a program that reads such text and carries it out.
 - **Lua** is a small language made to be put inside other programs. Its makers are at PUC-Rio, a university in Rio de Janeiro; their own interpreter is written in C.
-- **WebAssembly** is the form of program the box runs; see [box.md](box.md). The interpreter is one such program, 764,429 bytes long.
+- **WebAssembly** is the form of program the box runs; see [box.md](box.md). The interpreter is one such program, 765,037 bytes long.
 
 So three things are stacked: the kernel runs the box, the box runs the interpreter, and the interpreter runs an app's script.
 
@@ -35,14 +35,15 @@ Why this one, from a comparison and a trial made on 2026-11-18:
 
 ## The program
 
-`interpreter/src/lib.rs` is the small piece between omnilua and the kernel, about 140 lines.
+`interpreter/src/lib.rs` is the small piece between omnilua and the kernel, about 160 lines.
 
 - **It asks the kernel for two things,** the whole of the system API: `print` of `kernel`, which prints a text as a line, and `show` of `kernel`, which shows a text on the screen.
-- **It shows the outside three things:** its `memory`, and two functions.
+- **It shows the outside four things:** its `memory`, and three functions.
   - **`room(length)`** makes room for a script of `length` bytes and gives back where in the program's memory the kernel should write it.
+  - **`seed(value)`** takes a whole number of 64 bits to start the script's random numbers from. When the kernel calls it before `run`, the script's random numbers start there (`math.randomseed(value)` is run before the script); when it does not, they start where Lua always starts them, so that every run gives the same numbers. The box has no clock and no random numbers of its own, so only the kernel can give a run numbers of its own. It does so for apps made on request (see [apps.md](apps.md)), and not for the script at startup.
   - **`run(length)`** carries out the script that was written there and gives back a number: 0 if the script ran to its end, 1 if not. A script that cannot be carried out to its end, because of a mistake in how it is written or one that turns up while it runs, is reported as a printed line that begins `Lua stopped:`. Either way `run` itself ends in the ordinary way.
 - **Lua's own `print` is replaced.** The original writes to a screen that a program in the box does not have. The replacement is seven lines of Lua kept in the program: it joins what it is given and hands the line to the kernel's print. The original puts a tab between two values; this one puts a space, because the kernel prints plain signs only and would show a tab as a dot. So `print(1, 2)` gives `1 2`.
-- **`show(value)` is offered to a script,** for the kernel's call that shows a text in the box on the screen (see [box.md](box.md) and [screen.md](screen.md)). The script says only which text; how the box looks is the kernel's business. Like `print`, it turns whatever it is given into text first, so `show(42)` shows `42`; that is four lines of Lua kept in the program, around a function that takes a text and nothing else. The text is handed to the kernel whole. Nothing is cut here: the kernel's rule for a text that is too long is to stop the app, and that rule stays the kernel's.
+- **`show(value)` is offered to a script,** for the kernel's call that shows a text in the box on the screen (see [box.md](box.md) and [screen.md](screen.md)). The script says only which text; how the box looks is the kernel's business. Like `print`, it turns whatever it is given into text first, so `show(42)` shows `42`; that is four lines of Lua kept in the program, around a function that takes a text and nothing else. **A text longer than 40 bytes is cut at 40** (`LONGEST_SHOWN`), the most the kernel shows; the kernel stops a program that hands it a longer one, so the cut keeps a script from being stopped for it. The cut may fall inside a letter of several bytes, whose bytes the kernel shows as dots anyway. (Until apps were made on request, the text was handed over whole and a longer one stopped the script.)
 - A printed line is cut at 200 bytes, the longest the kernel takes; a longer one would get the whole program stopped.
 
 ## How it is built
@@ -62,7 +63,7 @@ That makes `interpreter/target/wasm32-unknown-unknown/release/interpreter.wasm`.
 - **It is built small rather than fast** (`opt-level = "s"`, one unit, `lto`, no unwinding), because the box checks the whole file each time it gets the interpreter ready.
 - **No program made along the way is run**, and the linker for WebAssembly, `wasm-ld`, comes with Rust.
 - **The built file is not in the repository.** It is build output, like the kernel's own file. Two builds of the same source in two different folders gave the same bytes, and so did the source with the other kind of line end; the piece of Lua in the source is written line by line with its line ends spelt out for that reason.
-- **The built file holds folder paths of the computer it was built on:** 22 of them, the places of omnilua's source files in cargo's own folder, which the compiler puts into the messages for mistakes that end a program. So the file's bytes, and its length, can differ from one computer to the next, and the 764,429 in these notes is one computer's figure. It is one more reason to keep the built file out of the repository. The kernel's own file holds such paths in the same way.
+- **The built file holds folder paths of the computer it was built on:** 22 of them, the places of omnilua's source files in cargo's own folder, which the compiler puts into the messages for mistakes that end a program. So the file's bytes, and its length, can differ from one computer to the next, and the 765,037 in these notes is one computer's figure. It is one more reason to keep the built file out of the repository. The kernel's own file holds such paths in the same way.
 
 ## How the kernel carries it
 
@@ -75,16 +76,16 @@ That makes `interpreter/target/wasm32-unknown-unknown/release/interpreter.wasm`.
 
 `efi_main` calls `interpreter_check()` after the three small apps:
 
-- `Interpreter: a program of 764429 bytes that understands Lua is on board, and the box accepts it`
+- `Interpreter: a program of 765037 bytes that understands Lua is on board, and the box accepts it`
 - otherwise: `Interpreter: not usable, because ...` with the reason; no script is run then, and the kernel carries on.
 
-`interpreter_check` hands the program to `box_accepts` (see [box.md](box.md)), which gets it ready exactly as an app is got ready for a run, with the same check against WebAssembly's rules, the same limits and the same system API, and then looks for a memory called `memory` and for the functions `room` and `run`. Neither function is called.
+`interpreter_check` hands the program to `box_accepts` (see [box.md](box.md)), which gets it ready exactly as an app is got ready for a run, with the same check against WebAssembly's rules, the same limits and the same system API, and then looks for a memory called `memory` and for the functions `room`, `seed` and `run`. None of them is called.
 
-What that check proves and what it does not: the file is a whole WebAssembly program, it fits the box's limits at its start, it asks the kernel for nothing the kernel does not offer, and the two functions are there under their names. Whether they take and give what the kernel expects it does not show; the run of a script, which follows, does.
+What that check proves and what it does not: the file is a whole WebAssembly program, it fits the box's limits at its start, it asks the kernel for nothing the kernel does not offer, and the three functions are there under their names. Whether they take and give what the kernel expects it does not show; the run of a script, which follows, does.
 
 ## Running a script
 
-`script_run(script)` in `interpreter.rs` runs a script: it hands the interpreter's program and the script's text to `box_script` (see [box.md](box.md)), which gets the program ready in the box, asks it for room, writes the script there and tells it to run. Each run starts from nothing: the program is checked and translated again, and nothing of one script is left for the next.
+`script_run(script)` in `interpreter.rs` runs a script: it hands the interpreter's program and the script's text to `box_script` (see [box.md](box.md)), which gets the program ready in the box, asks it for room, writes the script there and tells it to run. Each run starts from nothing: the program is checked and translated again, and nothing of one script is left for the next. `script_run_seeded(script, seed)` does the same with a number for `seed` before the run, and gives back how many texts the script showed, or why it was stopped and what kind of stop it was; apps made on request are run with it (see [apps.md](apps.md)).
 
 What comes back:
 
@@ -92,7 +93,7 @@ What comes back:
 - **`the script made a mistake, which is told in the line before`** when the interpreter gave back 1. The line before is the interpreter's own, such as `App: Lua stopped: [string "app"]:2: attempt to index a nil value (local 't')`. The number after the name is the script's line. What the script printed before the mistake stays printed.
 - **`all fuel consumed by WebAssembly`** when the script used up its budget.
 - **`it printed too many texts`** after 100 printed lines.
-- **`it asked to show a text that is too long`** for a shown text of more than 40 bytes, and **`it showed too many texts`** at the 21st showing. These are the kernel's own rules for `show`, and a script cannot get round them: `pcall(show, ...)` does not catch them, because it is the whole interpreter that is stopped, not the script inside it.
+- **`it showed too many texts`** at the 21st showing. This is the kernel's own rule for `show`, and a script cannot get round it: `pcall(show, ...)` does not catch it, because it is the whole interpreter that is stopped, not the script inside it. (The kernel's other rule for `show`, which stops a program that hands it a text of more than 40 bytes, is not reached from a script any more: the interpreter cuts such a text first.)
 - **`wasm `unreachable` instruction executed`** when the interpreter itself gave up, which is what happens when it runs out of memory.
 - **`the script is too long`** for a script of more than 32 KB; nothing is started then.
 
@@ -101,7 +102,8 @@ What a script can count on:
 - **Lua 5.4,** with `string`, `table` and `math`. `io`, `os`, `require`, `debug`, coroutines and `utf8` are not there (their names are `nil`); `load` is.
 - **`print`,** with any number of values, joined by a space. A line longer than 200 bytes is cut at 200 by the interpreter. Every byte that is not a plain sign comes out as a dot: a tab inside a text, a letter with an accent (two dots, because it is two bytes).
 - **`say(text)`,** the function `print` is built on, which hands one text to the kernel.
-- **`show(value)`,** which puts one line of at most 40 bytes into the box on the screen. Each showing wipes out the one before; the last one stays after the script has ended. Bytes are counted, not letters: twenty letters with an accent fill the 40, and each comes out as two dots. On a machine without a usable screen nothing is shown and the script carries on.
+- **`show(value)`,** which puts one line of at most 40 bytes into the box on the screen; a longer text is cut at 40. Each showing wipes out the one before; the last one stays after the script has ended. Bytes are counted, not letters: twenty letters with an accent fill the 40, and each comes out as two dots. On a machine without a usable screen nothing is shown and the script carries on.
+- **`math.random`,** whose numbers start from the same place at every run, unless the kernel gave the run a seed: it does for apps made on request.
 - **Both kinds of line end** in the script's text.
 - **A text with bytes that are no letters at all cannot be printed.** The piece between omnilua and this program wants proper text, and the script is stopped with `Lua stopped: string is not valid UTF-8`.
 
@@ -179,4 +181,4 @@ None of this is in the kernel. It was measured in a copy of the kernel, in the p
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: one script runs, at startup, and it can only print lines and show one line of text; fuel is all that ends a bad script, and it does not bound time; the interpreter is got ready anew for every script, which is most of what a small script costs; the kernel learns that a script made a mistake but not which; the outside code is young and unaudited.
+See [open-points.md](open-points.md). In short: scripts run at startup and when the model has written one, and a script can only print lines and show one line of text; fuel is all that ends a bad script, and it does not bound time; the interpreter is got ready anew for every script, which is most of what a small script costs; the kernel learns that a script made a mistake but not which; the outside code is young and unaudited.

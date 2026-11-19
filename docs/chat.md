@@ -108,7 +108,7 @@ The word and the page are a demonstration of the road an answer from the network
 ## Asking for an app
 
 - **A line that begins with the word `make` and a space asks the model to write an app** (`MAKE_WORD` and `app_ask` in `apps.rs`): `make a dice that rolls`. It needs a kept key, like `ask`, and it is an errand for the network's task, like `ask`; one errand of any kind at a time. The chat box answers at once, `Kernel: I am asking the model to make "a dice that rolls".`, and the answer comes later as a row of its own.
-- **The script the model wrote is not put in the chat box.** The row says how many lines it has, and the terminal shows it, line by line. `chat_answer` hands it to `app_print_script` for that.
+- **The script the model wrote is not put in the chat box.** The row says how many lines it has, and the terminal shows it, line by line. `chat_answer` hands it to `app_print_script` for that, and then runs it with `app_run`, here in the main loop, and says a second row of its own about how the run went, such as `Kernel: the app ran to its end.` While the app runs, nothing is painted in the chat box and keys wait in the keyboard's line; what the app shows appears in the box in the middle of the screen.
 - `make` by itself asks nothing and says how to ask; `makes` and `Make ...` are ordinary lines.
 
 [apps.md](apps.md) has the rest.
@@ -169,4 +169,4 @@ What is typed comes from the keyboard, which can only produce plain signs, and t
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question or for an app it does not run yet, or asks for a name, a key, which it tries, and a password, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
+See [open-points.md](open-points.md). In short: the kernel only gives the line back, takes a secret, fetches one fixed page, asks the model one fixed question or for an app, which it runs once, or asks for a name, a key, which it tries, and a password, one task may use the chat box, six rows are shown and of what was said before a switch-off only the last line is said again, only the last sign of a line can be taken away, and the look is fixed when the kernel is built.
