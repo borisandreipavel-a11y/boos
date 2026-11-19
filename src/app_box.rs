@@ -46,8 +46,9 @@ const SCRIPT_FUEL: u64 = 100_000_000;
 
 // The longest script the kernel hands over, in bytes. The script is copied
 // into the program's memory, which is limited, so a script that could never
-// fit is turned away before anything is started.
-const SCRIPT_LIMIT: usize = 32 * 1024;
+// fit is turned away before anything is started. A script the model writes
+// is held to it as soon as it comes (see `apps.rs`).
+pub const SCRIPT_LIMIT: usize = 32 * 1024;
 
 // The longest text an app may hand to the kernel to print, in bytes, and the
 // most texts it may print in one run. Printing costs the kernel time, and an

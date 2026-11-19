@@ -4,7 +4,7 @@ Code: the folder `interpreter/` (a program of its own, not part of the kernel), 
 
 Apps are going to be written as text in the language Lua. The kernel does not understand Lua, and it should not: a program that reads text written by somebody else is a large piece with many places for a mistake. So the understanding is done by a program that itself runs inside the locked box (see [box.md](box.md)), where a mistake in it can harm only the one app it is running. That program is the interpreter.
 
-**Today the kernel carries the interpreter, sees at startup that the box would take it, and has it run one script that is written by hand and kept in the kernel.** A script can ask for two things: to print a line, and to show a text on the screen. Nothing can hand the kernel a script from outside yet.
+**Today the kernel carries the interpreter, sees at startup that the box would take it, and has it run one script that is written by hand and kept in the kernel.** A script can ask for two things: to print a line, and to show a text on the screen. The model can write a script on request now, but that script is only shown in the terminal, not run (see [apps.md](apps.md)).
 
 ## The words
 

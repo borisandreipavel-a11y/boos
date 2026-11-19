@@ -36,7 +36,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The stack's start number comes from the processor's count of its own steps. It differs between boots but is not secret, and must not be used for encryption. The same count picks this side's port number for the page fetch. The kernel has random numbers now, and neither place uses them yet.
 - The stack's clock is the tick count, in steps of 10 ms, and runs slow when timer signals come late.
 - The stack is looked at once per tick whether or not anything happened, because the card sends no signals. smoltcp can say how long it may be left alone (`poll_delay`); that is not used.
-- Only the stack's own task may touch it. The main loop can ask it for two things, the example page and one question to the model, through an errand (see [tasks.md](tasks.md)); no other task can ask, and nothing else can be asked for.
+- Only the stack's own task may touch it. The main loop can ask it for three things, the example page, one question to the model and a request to the model for an app, through an errand (see [tasks.md](tasks.md)); no other task can ask, and nothing else can be asked for.
 - The copies in `vendor/` do not update by themselves, and smoltcp's limits are fixed in a file; see `vendor/README.md`.
 - Waiting for the gateway's answer is counted in looks, not in time, because it happens at startup with signals off. Tasks can wait for a time now, so network code that runs in a task should use that instead.
 - There is one frame for sending, so packets go out one at a time, each waiting for the card to take the one before. That wait can last up to a million looks with device signals off. The network stack's task sends packets now, so this breaks the rule to keep such stretches short: if the card ever were slow to take a packet, ticks and keys would wait too. In QEMU the card has always taken each packet at once, and the wait was never seen to be long.
@@ -90,7 +90,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The interpreter
 
-- **One script runs, at startup, and it is part of the kernel.** Nothing can hand the kernel a script from outside yet: not the chat box, not the disk, not the network. See [interpreter.md](interpreter.md).
+- **One script runs, at startup, and it is part of the kernel.** The model can now hand the kernel a script, written on request, but nothing runs it yet (see [apps.md](apps.md)); the disk cannot hand one at all. See [interpreter.md](interpreter.md).
 - **A script can print lines and show one line of text, and nothing else.** That is the whole system API. A script cannot read a key, know the time, keep anything, or put more than one thing on the screen.
 - **`print` cuts a line that is too long, and `show` stops the script.** A printed line of more than 200 bytes is cut by the interpreter without a word; a shown text of more than 40 bytes stops the whole run, by the kernel's rule for apps. The two were decided at different times and do not match.
 - **A script's run holds everything else up.** Keys pressed during it are lost. It happens at startup with device signals off, and a start is about half a second longer for the check and the one script. A script run later, when tasks are running, would have to run in a task.
@@ -117,7 +117,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Asking the model
 
-- **One fixed question.** What is asked is a constant; a typed line cannot be the question yet, and the answer is only said, not used.
+- **One fixed question.** What is asked is a constant; a typed line cannot be the question yet, and the answer is only said, not used. A typed line can be a request for an app, which is a question of its own kind (see "Apps made on request" below).
 - **A good answer from the real provider was seen once, and only its row.** In a person's own run with a real key the model's words appeared in the chat box; the raw answer was not seen. Whether the model thinks before it answers, how long a good answer takes, and whether 1000 tokens leave room for longer answers are not known; if they do not, the kernel says so ("the model's answer was empty, because ...") instead of showing nothing. The kernel does not ask for thinking or no thinking, because the provider's documentation names no setting for this model.
 - **The tokens used are not read.** The answer says how many tokens the question and the answer cost (`usage`), but the JSON reader only reads texts, not numbers, so the kernel cannot say what an asking cost.
 - **The model's words are cut at 300 signs** and shown as plain signs only: a letter with an accent becomes dots.
@@ -129,6 +129,16 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **A short key hides much.** A key shorter than six signs is hidden wherever it stands whole in the provider's or the model's words, so a key of one letter turns that letter into a star everywhere in them. A piece of five signs or fewer of a longer key is not hidden.
 - **The request names nothing about this kernel** (no note saying what kind of program asks). A provider that wants one would refuse; this one did not.
 - **Refusals are not told apart.** A wrong key, used-up credit, a model the provider does not know and too many requests all read "the provider turned the question down", with the number and the provider's words. Only the provider's own trouble (500 to 599) reads differently, "the provider could not answer". Nothing asks again by itself.
+
+## Apps made on request
+
+- **The script is shown, not run.** It goes to the terminal, line by line, and is then gone. Nothing keeps it, and nothing hands it to the interpreter. See [apps.md](apps.md).
+- **A request has at most 45 signs,** what is left of the chat box's 50-sign line after `make` and its space.
+- **The model is told the same fixed text every time,** sent with every request. Whether it follows the text is not checked, except that marks around code are taken off: an answer in words is taken as a script, and only the first block between marks is kept.
+- **`math.random` gives the same numbers at every start.** The interpreter's random numbers start from the same place each time, and nothing in the box can start them elsewhere: a script has no clock and no source of random numbers. A dice app rolls the same every time.
+- **One real answer to a request has been seen,** a script of Lua only that kept to the instruction text (see "What the real model wrote" in [apps.md](apps.md)). How many of the 4000 tokens the model spends thinking, and how long a script takes to come, are not known. An answer cut off at the limit is said and not taken; one that takes longer than the minute the kernel waits ends as "the site took too long".
+- **A short key hides much in a script too:** a key shorter than six signs becomes stars wherever it stands in the script, as in the provider's words (see "Asking the model").
+- **A line of the script over 200 signs is cut in the terminal,** and every sign that is not a plain sign shows as a dot, a tab as two spaces.
 
 ## Random numbers and the date
 

@@ -60,7 +60,7 @@ Getting an app ready is `box_start(program)`. Its steps:
 4. writes the script there, through wasmi's `write`, which refuses if any byte of it would lie outside the program's memory. So the place is not taken on trust: a program that names a place outside, or below zero, is stopped with `it gave room for the script outside its own memory`;
 5. calls `run(length)`. 0 back means the script ran to its end; anything else is reported as `the script made a mistake, which is told in the line before`, because the program prints what went wrong itself.
 
-A script longer than `SCRIPT_LIMIT` is turned away before anything is started. What the script prints goes through `kernel.print` like any app's text, with its limits: 200 bytes a text, 100 texts a run.
+A script longer than `SCRIPT_LIMIT` is turned away before anything is started. A script the model writes is held to the same limit as soon as it comes (see [apps.md](apps.md)). What the script prints goes through `kernel.print` like any app's text, with its limits: 200 bytes a text, 100 texts a run.
 
 That `start` is a function the app shows to the outside under this name. It is not WebAssembly's "start section", a different thing with a similar name: a program may name one function there that runs by itself during step 5. Such a function runs under the same limits and fuel, which are set before that step, but no program with one has been tried.
 
