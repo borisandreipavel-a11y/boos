@@ -204,7 +204,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Only the main loop may use the chat box.** Its lists are not protected. Another task can get a text into it in one way only, as the answer to an errand (see [tasks.md](tasks.md)).
 - **There is room for one errand at a time,** and only the main loop may ask. A second asking is turned away until the answer to the first was picked up. Nothing can call an errand off once it is asked for.
 - **While an errand runs, the network's task does nothing else.** It is the same for its own fetch at startup: no other use of the network gets a turn until the work is done or gives up, which can take a quarter of a minute and more, and a minute and more when the model is asked and its provider stays silent.
-- **An errand's answer is one text.** It cannot say anything but that sentence: not whether the work went well as a yes or no, and not a second piece of data.
+- **An errand's answer is one sentence,** and, for a question to the model, how the provider took the key. Nothing else can come back with it.
 - **Nothing says in the chat box that an answer is still awaited,** except the row that the asking was made. The row of the answer simply appears.
 - **A secret taken with `key` is kept in memory only,** so it has to be typed again after every start. A key given at the onboarding is kept on the disk locked, and needs the password at every start. One thing uses either: the question to the model, as its key.
 - **A secret is typed blind.** The stars and the count are all the person sees; a wrong sign cannot be found except by typing the whole again. There is no way to leave the asking but Enter on nothing.
@@ -219,6 +219,16 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **On a machine without a screen the typing is blind:** nothing shows until Enter, when the line appears in the terminal.
 - **On a screen smaller than 800 by 600 dots** the chat box may lie over the box that shows an app's text. Nothing was tried there.
 - The row from the kernel that says what to do, and the answer that gives the line back, are demonstrations.
+
+## Trying the key
+
+- **Only a key typed at the onboarding is tried.** A secret taken with `key` is not.
+- **The verdict rests on the number in the provider's answer,** and on the meanings its documentation gives them (read in November 2026). From the real provider only a 401 for a made-up key has been seen at a try, in a person's run; the other numbers were seen only from the stand-in on the test computer, which was built from that documentation. If the provider gave a 401 for something other than the key, a right key would be asked for again; Enter alone would still lead on.
+- **A key that cannot be judged is kept,** and is locked if a password is chosen: a key typed when the machine has no address yet, or while the answer to an `ask` or a `fetch` is awaited, and a key whose try got any answer but 200, 401, 402 or 403. A mistyped key kept that way shows itself at the first `ask` as a 401; `setup` replaces it.
+- **At a first start a key can come too early.** The machine gets its address a few seconds after it starts; a key typed before that is kept untried.
+- **While a key is tried, nothing typed is taken,** and there is no way to call the try off. With a provider that stays silent that is the minute the kernel waits for any question to the model, and longer by the wall clock in QEMU. Signs typed meanwhile are lost, and a row says so when the answer comes.
+- **Each try is a real question to the provider:** with a key it knows, it is paid for as an `ask` is, and the provider keeps its record of it. A key it does not know is turned down before any model is asked.
+- **The question is the one `ask` asks,** so the try shows the model's answer to it. A cheaper or quicker way to check a key was not found in the provider's documentation: it names no free page that says whether a key is good.
 
 ## The lock
 

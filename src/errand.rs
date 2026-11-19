@@ -10,14 +10,27 @@
 use alloc::string::String;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+use crate::model::KeyVerdict;
 use crate::processor::{signals_back, signals_off};
 
 // What can be asked for.
+#[derive(Clone, Copy, PartialEq)]
 pub enum Errand {
     // Fetch the example page from the web and say how the site answered.
     ExamplePage,
     // Ask the model the one question and say what came back.
     ModelQuestion,
+    // Try a key typed at the onboarding: ask the model the same question
+    // with it, and say what came back and how the provider took the key.
+    KeyTry,
+}
+
+// The answer to an errand: which errand it answers, what came back, in one
+// sentence, and, for a question to the model, how the provider took the key.
+pub struct Answer {
+    pub errand: Errand,
+    pub sentence: String,
+    pub key: KeyVerdict,
 }
 
 // How far the one errand has got. There is room for one at a time.
@@ -31,7 +44,7 @@ static STATE: AtomicU8 = AtomicU8::new(NONE);
 // these, so each is touched only with device signals off: the timer cannot
 // then switch to the other task half-way through.
 static mut ERRAND: Option<Errand> = None;
-static mut ANSWER: String = String::new();
+static mut ANSWER: Option<Answer> = None;
 
 // Whether the network's task is there and this machine has an address. Without
 // that nobody would ever pick an errand up.
@@ -72,20 +85,20 @@ pub fn errand_take() -> Option<Errand> {
 }
 
 // The network's task leaves the answer to the errand it picked up.
-pub fn errand_answer(answer: String) {
+pub fn errand_answer(answer: Answer) {
     let were_on = signals_off();
-    unsafe { ANSWER = answer };
+    unsafe { ANSWER = Some(answer) };
     STATE.store(ANSWERED, Ordering::Relaxed);
     signals_back(were_on);
 }
 
 // The main loop picks up the answer, if one lies ready. After that the next
 // errand can be asked for.
-pub fn errand_answer_take() -> Option<String> {
+pub fn errand_answer_take() -> Option<Answer> {
     let were_on = signals_off();
     let answer = if STATE.load(Ordering::Relaxed) == ANSWERED {
         STATE.store(NONE, Ordering::Relaxed);
-        Some(core::mem::take(unsafe { &mut *(&raw mut ANSWER) }))
+        unsafe { (*(&raw mut ANSWER)).take() }
     } else {
         None
     };

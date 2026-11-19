@@ -16,7 +16,7 @@ use smoltcp::wire::Ipv4Address;
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_text, json_text};
 use crate::network::Card;
 use crate::page::{plain_text, site_exchange};
-use crate::secret::{SECRET_LIMIT, secret_lend, wipe};
+use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
 
 // The provider's site, and the place on it where questions go.
 pub const MODEL_SITE: &str = "api.orcarouter.ai";
@@ -54,15 +54,41 @@ const BEGINNING_SHOWN: usize = 160;
 // repeats it in its answer (see `key_hide`).
 const KEY_PIECE: usize = 6;
 
-// The pass that `secret_lend` asks for. What is inside the brackets is
-// private to this file, so no other file can make one.
+// The pass that `secret_lend` and `trial_lend` ask for. What is inside the
+// brackets is private to this file, so no other file can make one.
 pub struct KeyPass(());
+
+// How the provider took the key, as far as the number in its answer says.
+// The meanings are the provider's own, from its documentation.
+#[derive(Clone, Copy, PartialEq)]
+pub enum KeyVerdict {
+    // It answered the question (200): the key works.
+    Works,
+    // It does not know the key (401): mistyped, or past its expiry date.
+    Unknown,
+    // It knows the key, but did not answer with it: no credit is left (402),
+    // or the key is held back by a limit of its own (403). Only when the
+    // provider's reason can be read; a 403 page from somewhere on the way
+    // says nothing about the key.
+    Known,
+    // The answer does not say: any other number, or no answer at all.
+    NotTold,
+}
 
 // Asks the model the question and says in one sentence how that went: what
 // the model answered, why the provider turned the question down, or why no
-// answer came. Called by the network's task when it runs an errand; the
-// sentence is the errand's answer. Words from outside in it were cleaned.
-pub fn model_tell(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) -> String {
+// answer came; and how the provider took the key. Called by the network's
+// task when it runs an errand; the sentence is the errand's answer. Words
+// from outside in it were cleaned. With `trying`, the key that goes with the
+// question is the one being tried at the onboarding (see `secret.rs`), not
+// the one kept.
+pub fn model_tell(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    trying: bool,
+) -> (String, KeyVerdict) {
     // The key is borrowed once, into a room of this function's own, and that
     // copy serves the whole asking: it goes into the request, and it is what
     // is looked for in the answer afterwards. Borrowing is short that way,
@@ -70,21 +96,32 @@ pub fn model_tell(interface: &mut Interface, card: &mut Card, sockets: &mut Sock
     // this asking. The room is wiped before this function ends.
     let mut key_room = [0u8; SECRET_LIMIT];
     let mut key_length = 0;
-    secret_lend(&KeyPass(()), &mut |key| {
+    let mut borrower = |key: &[u8]| {
         key_length = key.len().min(SECRET_LIMIT);
         key_room[..key_length].copy_from_slice(&key[..key_length]);
-    });
-    let sentence = if key_length == 0 {
-        String::from("no answer came, because no key is kept")
+    };
+    if trying {
+        trial_lend(&KeyPass(()), &mut borrower);
+    } else {
+        secret_lend(&KeyPass(()), &mut borrower);
+    }
+    let told = if key_length == 0 {
+        (String::from("no answer came, because no key is kept"), KeyVerdict::NotTold)
     } else {
         question_ask(interface, card, sockets, name_server, &key_room[..key_length])
     };
     wipe(&mut key_room);
-    sentence
+    told
 }
 
 // The asking itself, with the key in hand.
-fn question_ask(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>, key: &[u8]) -> String {
+fn question_ask(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    key: &[u8],
+) -> (String, KeyVerdict) {
     // What is asked, the JSON way. `json_text` puts each text in quotes and
     // takes care of signs that have a meaning of their own in JSON.
     // `"stream":false` asks for the whole answer in one piece, not word by
@@ -131,8 +168,11 @@ fn question_ask(interface: &mut Interface, card: &mut Card, sockets: &mut Socket
     wipe(&mut request);
 
     match result {
-        Err(reason) => format!("no answer came, because {}", reason),
-        Ok(_) if too_long => String::from("no answer came that I could read, because the provider's answer is larger than the room for it"),
+        Err(reason) => (format!("no answer came, because {}", reason), KeyVerdict::NotTold),
+        Ok(_) if too_long => (
+            String::from("no answer came that I could read, because the provider's answer is larger than the room for it"),
+            KeyVerdict::NotTold,
+        ),
         Ok(whole) => answer_sentence(&answer, whole, key),
     }
 }
@@ -199,21 +239,24 @@ fn answer_parts(answer: &[u8]) -> Option<Parts<'_>> {
     Some(Parts { number, body: answer.get(place..)? })
 }
 
-// Says in one sentence what the provider's answer holds. `whole` says
-// whether the provider said, through the encrypted link, that it had sent
-// everything. `key` is the key that went with the question: it is kept out
-// of the words that are passed on.
-fn answer_sentence(answer: &[u8], whole: bool, key: &[u8]) -> String {
+// Says in one sentence what the provider's answer holds, and how the
+// provider took the key. `whole` says whether the provider said, through the
+// encrypted link, that it had sent everything. `key` is the key that went
+// with the question: it is kept out of the words that are passed on.
+fn answer_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, KeyVerdict) {
     if answer.is_empty() {
-        return "no answer came, because the provider sent nothing".into();
+        return ("no answer came, because the provider sent nothing".into(), KeyVerdict::NotTold);
     }
     let Some(parts) = answer_parts(answer) else {
-        return "no answer came that I could read, because what the provider sent does not begin as an answer on the web does".into();
+        return (
+            "no answer came that I could read, because what the provider sent does not begin as an answer on the web does".into(),
+            KeyVerdict::NotTold,
+        );
     };
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
 
     if parts.number == 200 {
-        return model_sentence(parts.body, key, cut_short);
+        return (model_sentence(parts.body, key, cut_short), KeyVerdict::Works);
     }
 
     // Any other number means the question was not answered. A number from
@@ -224,10 +267,19 @@ fn answer_sentence(answer: &[u8], whole: bool, key: &[u8]) -> String {
     let places: [&[Step]; 3] = [&[Step::Name("error"), Step::Name("message")], &[Step::Name("error")], &[Step::Name("message")]];
     for path in places {
         if let Ok(words) = json_find_text(parts.body, path) {
-            return format!("{} ({}): \"{}\".{}", what, parts.number, words_shown(&words, key), cut_short);
+            let verdict = match parts.number {
+                401 => KeyVerdict::Unknown,
+                402 | 403 => KeyVerdict::Known,
+                _ => KeyVerdict::NotTold,
+            };
+            return (format!("{} ({}): \"{}\".{}", what, parts.number, words_shown(&words, key), cut_short), verdict);
         }
     }
-    format!("{} ({}), and I could not read why.{}", what, parts.number, cut_short)
+    // No reason could be read. A 401 still says that the key is not known;
+    // a 402 or 403 without the provider's reason may come from somewhere on
+    // the way, and says nothing about the key.
+    let verdict = if parts.number == 401 { KeyVerdict::Unknown } else { KeyVerdict::NotTold };
+    (format!("{} ({}), and I could not read why.{}", what, parts.number, cut_short), verdict)
 }
 
 // The places in a good answer's body that are read, from the provider's

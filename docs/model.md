@@ -2,7 +2,7 @@
 
 Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the line `ask` in `src/chat.rs`.
 
-A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box: after the line `key`, for one start, or when the onboarding asks for it, which locks it with a password and keeps it on the disk, and unlocks it again at every start with that password (see [chat.md](chat.md)).
+A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box: after the line `key`, for one start, or when the onboarding asks for it, which tries it with the question below, locks it with a password and keeps it on the disk, and unlocks it again at every start with that password (see [chat.md](chat.md)).
 
 ## What it does today
 
@@ -26,6 +26,19 @@ The line `ask`, sent by itself in the chat box, makes the kernel ask the model o
 | `no answer came, because ...` | Nothing came: no name server, no key, a link that could not be made, a certificate that was refused, a provider that stayed silent |
 
 ` Its answer did not come whole.` is added when the provider did not say, through the encrypted link, that it had sent everything.
+
+## Trying a key
+
+A key typed at the onboarding is tried before it is kept: the network's task runs the errand `Errand::KeyTry`, which calls `model_tell` with `trying` set. The request is the same as for `ask`, byte for byte, with the key being tried in place of the kept one, and the sentence it gives back is the same too. Beside the sentence, `model_tell` says how the provider took the key (`KeyVerdict`), from the number in the first line of its answer only, never from its words:
+
+| `KeyVerdict` | When | What the onboarding does |
+|---|---|---|
+| `Works` | 200: the question was answered | keeps the key |
+| `Unknown` | 401, with or without a reason that can be read. The provider's documentation gives 401 for a key that is missing, wrong or past its expiry date | wipes the key and asks for it again |
+| `Known` | 402 or 403 with the provider's reason in its JSON. Its documentation gives 402 for an account without credit, and 403 for a key held back by a limit of its own (a quota, a spending limit, a model it may not use, the addresses it may come from) | keeps the key |
+| `NotTold` | anything else: another number, a 402 or 403 without the provider's reason (a page from somewhere on the way), no answer, or one that cannot be read | keeps the key |
+
+A 200 whose body the kernel cannot read still counts as `Works`: the answer came from the provider's own site, whose certificate was checked, and it took the key. `ask` gets the verdict too and does nothing with it. What the onboarding says to each is in [chat.md](chat.md).
 
 ## The provider and the model
 
@@ -86,12 +99,12 @@ Connection: close
 
 ## The key
 
-- **Only this file can borrow it.** `secret_lend` in `secret.rs` runs a short piece of code with the key in hand. It asks for a pass, `KeyPass`, whose inside is private to `model.rs`, so no other file can make one: a call from anywhere else does not build. (The disk's `WriteTicket` works the same way; see [disk.md](disk.md).) The one other way the key leaves `secret.rs` is locked, by `secret_lock`, for the onboarding; a key unlocked by `secret_unlock` goes straight into its place there (see "A secret" in [chat.md](chat.md)).
+- **Only this file can borrow it.** `secret_lend` in `secret.rs` runs a short piece of code with the key in hand. It asks for a pass, `KeyPass`, whose inside is private to `model.rs`, so no other file can make one: a call from anywhere else does not build. (The disk's `WriteTicket` works the same way; see [disk.md](disk.md).) A key being tried is lent the same way, by `trial_lend`, from a room of its own beside the kept one. The one other way the key leaves `secret.rs` is locked, by `secret_lock`, for the onboarding; a key unlocked by `secret_unlock` goes straight into its place there (see "A secret" in [chat.md](chat.md)).
 - **It is borrowed once for each asking.** `model_tell` copies the key into a room of its own, and that copy serves the whole asking: it goes into the request, and it is what is looked for in the answer afterwards. A new key typed while the answer is awaited changes nothing about the asking under way. The room is wiped before `model_tell` ends.
 - **It goes to one site.** `model_tell` is the only borrower, and the request, the site's name for the name question and the site's name for the certificate check are handed to `site_exchange` as one constant. With a certificate made out to another name, the link fails before the request is sent.
 - **The request is wiped.** It is put together in a room that is large enough from the start, so that it never moves and leaves a copy behind, and the room is wiped after the exchange, however it went. After requests whose answers did not repeat the key, a test machine's memory held the key once, in the room where it is kept.
-- **The key is kept out of what is said.** A provider may repeat the key in its refusal. Words that came from the provider go through `words_shown` before they are said: cleaned, then `key_hide` writes a star over every run of signs that stands in the key and is six signs long or longer (`KEY_PIECE`), or over the whole key if it is shorter, and only then cut at 300 signs, so that the cut cannot leave the beginning of the key standing. The kernel's own words in the sentence are not searched, so a key that happens to be an ordinary word does not put stars into them.
-- **Two tasks reach the secret now:** the main loop keeps it, the network's task borrows it. Every function of `secret.rs` touches it with device signals off; borrowing is short, because the borrower only copies it.
+- **The key is kept out of what is said.** A provider may repeat the key in its refusal; when a key is tried, the key looked for is the one being tried. Words that came from the provider go through `words_shown` before they are said: cleaned, then `key_hide` writes a star over every run of signs that stands in the key and is six signs long or longer (`KEY_PIECE`), or over the whole key if it is shorter, and only then cut at 300 signs, so that the cut cannot leave the beginning of the key standing. The kernel's own words in the sentence are not searched, so a key that happens to be an ordinary word does not put stars into them.
+- **Two tasks reach the secret now:** the main loop keeps it, the network's task borrows it, and the same holds for a key being tried. Every function of `secret.rs` touches them with device signals off; borrowing is short, because the borrower only copies.
 
 What is not kept out: see "Asking the model" in [open-points.md](open-points.md).
 

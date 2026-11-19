@@ -13,8 +13,8 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
-use crate::errand::{Errand, errand_answer, errand_network_ready, errand_take};
-use crate::model::model_tell;
+use crate::errand::{Answer, Errand, errand_answer, errand_network_ready, errand_take};
+use crate::model::{KeyVerdict, model_tell};
 use crate::page::{page_fetch, page_tell};
 use crate::processor::time_stamp;
 use crate::serial::serial_print;
@@ -258,13 +258,19 @@ fn network_task() {
         // the answer for the main loop to pick up. While an errand runs, this
         // task does nothing else.
         if let Some(errand) = errand_take() {
-            let answer = match errand {
-                Errand::ExamplePage if has_address => page_tell(&mut interface, &mut card, &mut sockets, name_server),
-                Errand::ExamplePage => "no page came, because this machine has lost its address on the network".into(),
-                Errand::ModelQuestion if has_address => model_tell(&mut interface, &mut card, &mut sockets, name_server),
-                Errand::ModelQuestion => "no answer came, because this machine has lost its address on the network".into(),
+            let (sentence, key) = match errand {
+                Errand::ExamplePage if has_address => (page_tell(&mut interface, &mut card, &mut sockets, name_server), KeyVerdict::NotTold),
+                Errand::ExamplePage => ("no page came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold),
+                // The try of a key asks the same question as "ask", with the
+                // key being tried instead of the one kept.
+                Errand::ModelQuestion | Errand::KeyTry if has_address => {
+                    model_tell(&mut interface, &mut card, &mut sockets, name_server, errand == Errand::KeyTry)
+                }
+                Errand::ModelQuestion | Errand::KeyTry => {
+                    ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold)
+                }
             };
-            errand_answer(answer);
+            errand_answer(Answer { errand, sentence, key });
         }
 
         // The card sends no signals, so the only way to notice a packet is to

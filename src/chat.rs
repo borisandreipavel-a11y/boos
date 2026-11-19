@@ -6,14 +6,14 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::errand::{Errand, errand_ask};
+use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::model::QUESTION;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::onboarding::{
-    NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, onboarding_secret, onboarding_waiting,
-    onboarding_wants_secret, person_name,
+    NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, onboarding_secret, onboarding_tried,
+    onboarding_trying, onboarding_waiting, onboarding_wants_secret, person_name,
 };
 use crate::page::SITE;
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
@@ -127,6 +127,10 @@ fn chat_line() -> &'static mut String {
 static mut SECRET_ASKED: bool = false;
 static mut SECRET_TYPED: [u8; SECRET_LIMIT] = [0; SECRET_LIMIT];
 static mut SECRET_SIGNS: usize = 0;
+
+// Whether signs were typed, and not taken, while the onboarding tried a key.
+// The kernel says so when the answer to the try comes.
+static mut TYPED_WHILE_TRYING: bool = false;
 
 fn secret_typed() -> &'static mut [u8; SECRET_LIMIT] {
     unsafe { &mut *(&raw mut SECRET_TYPED) }
@@ -373,14 +377,47 @@ fn recall_row() -> Option<String> {
 
 // Says something in the chat box that is not an answer to the line just
 // sent: adds it to what was said as a row of the kernel's and repeats it in
-// the terminal. The main loop calls this when the answer to an errand has
+// the terminal. `chat_answer` calls this when the answer to an errand has
 // come in. A text that comes from outside the kernel must be cleaned before
 // it is handed over.
-pub fn chat_say(text: &str) {
+fn chat_say(text: &str) {
     let row = format!("Kernel: {}", text);
     serial_print(&format!("{}\r\n", row));
     chat_add(Speaker::Kernel, &row);
     chat_paint_rows();
+}
+
+// Says the answer to an errand, which the main loop picks up from the
+// network's task. The answer to the try of a key goes to the onboarding,
+// which says what comes of it; any other answer is said as it is.
+pub fn chat_answer(answer: Answer) {
+    if answer.errand != Errand::KeyTry {
+        chat_say(&answer.sentence);
+        return;
+    }
+    let mut rows = onboarding_tried(answer.key, &answer.sentence);
+    if unsafe { TYPED_WHILE_TRYING } {
+        unsafe { TYPED_WHILE_TRYING = false };
+        rows.insert(0, String::from("Kernel: what was typed while I tried the key was not taken."));
+    }
+    kernel_rows(&rows);
+}
+
+// Says rows of the kernel's: repeats them in the terminal in one go, so that
+// no other task's line lands in between, adds them to what was said, and
+// paints the chat box again.
+fn kernel_rows(rows: &[String]) {
+    let mut repeated = String::new();
+    for row in rows.iter() {
+        repeated.push_str(row);
+        repeated.push_str("\r\n");
+    }
+    serial_print(&repeated);
+    for row in rows.iter() {
+        chat_add(Speaker::Kernel, row);
+    }
+    chat_paint_rows();
+    chat_paint_typing();
 }
 
 // Takes one typed key, given as its letter. A letter is added to the line
@@ -516,6 +553,14 @@ pub fn chat_key(letter: u8) {
 // in memory, and a key or a password goes to the onboarding. Enter with
 // nothing typed takes no secret and leaves the one kept before as it was.
 fn secret_key(letter: u8) {
+    // While the onboarding tries a key with the provider, nothing typed is
+    // taken: it would stand ready as the answer to a question that is not
+    // asked yet, and could go to the provider as a key. Enter says why, and
+    // the answer to the try says that something was not taken.
+    if onboarding_trying() && letter != b'\n' {
+        unsafe { TYPED_WHILE_TRYING = true };
+        return;
+    }
     let typed = secret_typed();
     let signs = unsafe { SECRET_SIGNS };
     match letter {
@@ -565,19 +610,7 @@ fn secret_key(letter: u8) {
                 chat_paint_typing();
             });
             wipe(typed);
-
-            // Repeated in the terminal in one go, like any other rows.
-            let mut repeated = String::new();
-            for row in rows.iter() {
-                repeated.push_str(row);
-                repeated.push_str("\r\n");
-            }
-            serial_print(&repeated);
-            for row in rows.iter() {
-                chat_add(Speaker::Kernel, row);
-            }
-            chat_paint_rows();
-            chat_paint_typing();
+            kernel_rows(&rows);
         }
         _ => {
             // A secret of the longest size takes no more signs.

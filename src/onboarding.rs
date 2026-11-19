@@ -1,12 +1,14 @@
 //! The onboarding: what the kernel asks the person at the machine at a start
 //! where it does not know them yet, and what it asks at every start after
 //! that. It asks two things: what to call them, and the key for the model,
-//! which is locked with a password they choose (see `lock.rs`). Both answers
-//! are kept in the notebook on the disk, the name as it was given and the key
-//! only locked. The name stands in front of the person's rows in the chat
-//! box, and every later start greets them by it. A start where a key is
-//! locked on the disk asks for the password, which unlocks it. The line
-//! `setup`, sent by itself, asks both things again.
+//! which is locked with a password they choose (see `lock.rs`). A key that is
+//! typed is first tried with one question to the model, and asked for again
+//! if the provider does not know it. Both answers are kept in the notebook on
+//! the disk, the name as it was given and the key only locked. The name
+//! stands in front of the person's rows in the chat box, and every later
+//! start greets them by it. A start where a key is locked on the disk asks
+//! for the password, which unlocks it. The line `setup`, sent by itself, asks
+//! both things again.
 //! Only the chat box calls these functions, so only the main loop may.
 //! Notes: `docs/chat.md`.
 
@@ -15,10 +17,12 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::errand::{Errand, errand_ask};
 use crate::lock::NOT_UNLOCKED;
+use crate::model::KeyVerdict;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::random::random_number;
-use crate::secret::{password_forget, password_keep, password_same, secret_keep, secret_lock, secret_unlock};
+use crate::secret::{password_forget, password_keep, password_same, secret_lock, secret_unlock, trial_forget, trial_keep, trial_take};
 
 // The line that, sent by itself, makes the kernel ask its questions again.
 pub const SETUP_WORD: &str = "setup";
@@ -47,12 +51,15 @@ pub const PASSWORD_LEAST: usize = 4;
 
 // What the kernel waits for. While it waits for a name, the next line that
 // is sent is the name. While it waits for a key or a password, what is typed
-// shows as stars, and Enter hands it to `onboarding_secret`.
+// shows as stars, and Enter hands it to `onboarding_secret`. While it waits
+// for the provider's answer to the try of a key (`Trying`), nothing typed is
+// taken.
 #[derive(Clone, Copy, PartialEq)]
 enum Waiting {
     Nothing,
     Name,
     Key,
+    Trying,
     NewPassword,
     SamePassword,
     Password,
@@ -84,6 +91,11 @@ const KEY_WHY: &str = "Kernel: to ask the model I need your key. I lock it with 
 const KEY_QUESTION: &str = "Kernel: type the key and press Enter. It shows as stars. Enter alone goes on without a key.";
 const KEY_QUESTION_AGAIN: &str = "Kernel: type a new key and press Enter. Enter alone keeps the one locked on the disk.";
 const PASSWORD_QUESTION: &str = "Kernel: type your password and press Enter to unlock the key. Enter alone goes on without it.";
+
+// What the kernel says about the try of a key, when the provider's answer
+// does not say whether the key is right, and while the try is under way.
+const CANNOT_TELL: &str = "Kernel: so I cannot tell whether the key is right. I keep it all the same.";
+const STILL_TRYING: &str = "Kernel: I am still trying the key. Wait for its answer, then type.";
 
 // Rust refuses a plain reference to a `static mut`, so the name and the
 // locked key are reached through their addresses, as the lists in `chat.rs`
@@ -125,10 +137,18 @@ pub fn onboarding_asking() -> bool {
     waiting() == Waiting::Name
 }
 
-// Whether the kernel waits for a key or a password. While it does, what is
-// typed shows as stars and goes to `onboarding_secret`.
+// Whether the kernel waits for a key or a password, or for the answer to the
+// try of a key. While it does, nothing typed goes into an ordinary line: a
+// key or a password shows as stars and goes to `onboarding_secret`, and while
+// a key is tried nothing typed is taken.
 pub fn onboarding_wants_secret() -> bool {
-    matches!(waiting(), Waiting::Key | Waiting::NewPassword | Waiting::SamePassword | Waiting::Password)
+    matches!(waiting(), Waiting::Key | Waiting::Trying | Waiting::NewPassword | Waiting::SamePassword | Waiting::Password)
+}
+
+// Whether the kernel waits for the provider's answer to the try of a key.
+// While it does, nothing typed is taken.
+pub fn onboarding_trying() -> bool {
+    waiting() == Waiting::Trying
 }
 
 // Whether the kernel waits for anything at all.
@@ -267,13 +287,23 @@ fn key_rows() -> Vec<String> {
         return rows;
     }
     wait_for(Waiting::Key);
-    if setting_up && !locked_key().is_empty() {
-        rows.push(String::from(KEY_QUESTION_AGAIN));
-    } else {
+    if !(setting_up && !locked_key().is_empty()) {
         rows.push(String::from(KEY_WHY));
-        rows.push(String::from(KEY_QUESTION));
     }
+    rows.push(key_question());
     rows
+}
+
+// The question for the key: after `setup` with a key locked on the disk,
+// Enter alone keeps that one; otherwise it goes on without a key.
+fn key_question() -> String {
+    let setting_up = unsafe { SETTING_UP };
+    String::from(if setting_up && !locked_key().is_empty() { KEY_QUESTION_AGAIN } else { KEY_QUESTION })
+}
+
+// The row that asks for a password to lock the key with.
+fn choose_password() -> String {
+    format!("Kernel: now choose a password of at least {} signs to lock it with.", PASSWORD_LEAST)
 }
 
 // The line `setup`: the kernel asks for the name again, and then about the
@@ -329,6 +359,7 @@ pub fn onboarding_answer(line: &str) -> Vec<String> {
 pub fn onboarding_secret(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
     match waiting() {
         Waiting::Key => key_answer(typed),
+        Waiting::Trying => vec![String::from(STILL_TRYING)],
         Waiting::NewPassword => new_password(typed),
         Waiting::SamePassword => same_password(typed, say),
         Waiting::Password => password_answer(typed, say),
@@ -336,9 +367,13 @@ pub fn onboarding_secret(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String>
     }
 }
 
-// The answer to the question for the key. A key is kept in memory, and a
-// password to lock it with is asked for. Enter alone keeps a key that is
-// locked on the disk as it is, or else notes that no key is wanted.
+// The answer to the question for the key. A key that is typed is tried with
+// the one question that "ask" asks: it waits apart from the key kept before
+// (see `secret.rs`), and the network's task asks the model with it. Its
+// answer comes later, to `onboarding_tried`. A key that cannot be tried now
+// is kept all the same, and a password to lock it with is asked for. Enter
+// alone keeps a key that is locked on the disk as it is, or else notes that
+// no key is wanted.
 fn key_answer(typed: &[u8]) -> Vec<String> {
     if typed.is_empty() {
         done();
@@ -349,14 +384,59 @@ fn key_answer(typed: &[u8]) -> Vec<String> {
         rows.extend(no_key_noted());
         return rows;
     }
-    let taken = secret_keep(typed);
+    let taken = trial_keep(typed);
+    let signs = if taken == 1 { "sign" } else { "signs" };
+    match errand_ask(Errand::KeyTry) {
+        Ok(()) => {
+            wait_for(Waiting::Trying);
+            vec![format!("Kernel: I took a key of {} {}, and I am trying it with one question to the model.", taken, signs)]
+        }
+        Err(reason) => {
+            trial_take();
+            wait_for(Waiting::NewPassword);
+            vec![
+                format!("Kernel: I took a key of {} {}, but I cannot try it now, because {}.", taken, signs, reason),
+                String::from(CANNOT_TELL),
+                choose_password(),
+            ]
+        }
+    }
+}
+
+// Takes the provider's answer to the try of a key: `sentence` says what came
+// back, as for "ask", and `verdict` how the provider took the key (see
+// `model.rs`). Gives back what the kernel says to it. Only a provider that
+// does not know the key makes the kernel ask for it again; that key is not
+// kept. With any other answer the key is kept, and a password to lock it
+// with is asked for.
+pub fn onboarding_tried(verdict: KeyVerdict, sentence: &str) -> Vec<String> {
+    let mut rows = vec![format!("Kernel: {}", sentence)];
+    if waiting() != Waiting::Trying {
+        // Nothing waits for this answer: the key that was tried is not kept.
+        trial_forget();
+        return rows;
+    }
+    if verdict == KeyVerdict::Unknown {
+        trial_forget();
+        wait_for(Waiting::Key);
+        rows.push(String::from("Kernel: the provider does not know that key, so I did not keep it."));
+        rows.push(key_question());
+        return rows;
+    }
+    trial_take();
     wait_for(Waiting::NewPassword);
-    vec![format!(
-        "Kernel: I took a key of {} {}. Now choose a password of at least {} signs to lock it with.",
-        taken,
-        if taken == 1 { "sign" } else { "signs" },
-        PASSWORD_LEAST
-    )]
+    match verdict {
+        KeyVerdict::Works => rows.push(format!("Kernel: the key works. Now choose a password of at least {} signs to lock it with.", PASSWORD_LEAST)),
+        KeyVerdict::Known => {
+            rows.push(String::from("Kernel: the provider knows the key, so I keep it."));
+            rows.push(choose_password());
+        }
+        KeyVerdict::Unknown | KeyVerdict::NotTold => {
+            rows.push(String::from(CANNOT_TELL));
+            rows.push(choose_password());
+        }
+    }
+    rows
 }
 
 // Notes in the notebook that no key is to be kept, unless it holds an answer

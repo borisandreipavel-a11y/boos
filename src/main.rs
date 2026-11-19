@@ -61,7 +61,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
 use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
-use chat::{chat_begin, chat_key, chat_say, chat_setup};
+use chat::{chat_answer, chat_begin, chat_key, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
 use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
@@ -425,10 +425,11 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             }
         }
 
-        // If the network's task has left the answer to an errand, say it in
-        // the chat box.
+        // If the network's task has left the answer to an errand, hand it to
+        // the chat box, which says it, or hands the answer to the try of a
+        // key to the onboarding.
         if let Some(answer) = errand_answer_take() {
-            chat_say(&answer);
+            chat_answer(answer);
         }
     }
 }

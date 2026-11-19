@@ -7,7 +7,10 @@
 //! (`lock.rs`), which scrambles it so that it can be kept on the disk. A
 //! secret that is unlocked again comes straight back here.
 //! A password chosen to lock the secret with is kept here too, for the short
-//! time between the two times it is typed.
+//! time between the two times it is typed. So is a key being tried: typed at
+//! the onboarding, it waits apart from the secret until the service has said
+//! whether it knows it. It is lent to `model.rs` the same way, and takes the
+//! secret's place only if it is kept.
 //! Notes: `docs/chat.md`, `docs/model.md` and `docs/lock.md`.
 
 use alloc::vec::Vec;
@@ -36,6 +39,15 @@ static mut SECRET_LENGTH: usize = 0;
 // touched with device signals off, and wiped when it is forgotten.
 static mut PASSWORD: [u8; SECRET_LIMIT] = [0; SECRET_LIMIT];
 static mut PASSWORD_LENGTH: usize = 0;
+
+// A key being tried, and how many signs long it is: typed at the onboarding,
+// and not yet known to be right. It waits here, apart from the secret, until
+// the service has said whether it knows the key (see `onboarding.rs`), so
+// that a key the service does not know never takes the place of the secret
+// kept before. Both tasks reach it, like the secret: the network's task
+// borrows it for the try.
+static mut TRIAL: [u8; SECRET_LIMIT] = [0; SECRET_LIMIT];
+static mut TRIAL_LENGTH: usize = 0;
 
 // Writes zeros over a stretch of memory that held a secret. `write_volatile`
 // tells the compiler that these writes matter: it may otherwise leave out a
@@ -109,6 +121,53 @@ pub fn password_forget() {
     let were_on = signals_off();
     wipe(unsafe { &mut *(&raw mut PASSWORD) });
     unsafe { PASSWORD_LENGTH = 0 };
+    signals_back(were_on);
+}
+
+// Keeps a key to be tried, in place of one kept for that before, and gives
+// back how many signs of it were taken.
+pub fn trial_keep(signs: &[u8]) -> usize {
+    let were_on = signals_off();
+    let room = unsafe { &mut *(&raw mut TRIAL) };
+    wipe(room);
+    let length = signs.len().min(SECRET_LIMIT);
+    room[..length].copy_from_slice(&signs[..length]);
+    unsafe { TRIAL_LENGTH = length };
+    signals_back(were_on);
+    length
+}
+
+// Lends the key being tried, as `secret_lend` lends the secret, and to the
+// same one file.
+pub fn trial_lend(_pass: &KeyPass, borrower: &mut dyn FnMut(&[u8])) {
+    let were_on = signals_off();
+    let room = unsafe { &*(&raw const TRIAL) };
+    let length = unsafe { TRIAL_LENGTH };
+    borrower(&room[..length]);
+    signals_back(were_on);
+}
+
+// The key that was tried is kept: it takes the secret's place, and its own
+// room is wiped. It goes straight from one room to the other, so no copy of
+// it is made on the way.
+pub fn trial_take() {
+    let were_on = signals_off();
+    let secret = unsafe { &mut *(&raw mut SECRET) };
+    let trial = unsafe { &mut *(&raw mut TRIAL) };
+    let length = unsafe { TRIAL_LENGTH };
+    wipe(secret);
+    secret[..length].copy_from_slice(&trial[..length]);
+    unsafe { SECRET_LENGTH = length };
+    wipe(trial);
+    unsafe { TRIAL_LENGTH = 0 };
+    signals_back(were_on);
+}
+
+// The key that was tried is not kept: its room is wiped.
+pub fn trial_forget() {
+    let were_on = signals_off();
+    wipe(unsafe { &mut *(&raw mut TRIAL) });
+    unsafe { TRIAL_LENGTH = 0 };
     signals_back(were_on);
 }
 
