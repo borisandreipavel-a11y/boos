@@ -1,6 +1,6 @@
 # Building, running and verifying
 
-There are no automated tests. The kernel is verified by booting it in QEMU, reading what it prints, and comparing a saved picture of the screen with the picture that is meant. This file says how, what has been verified so far, and which traps cost time before.
+The kernel is verified by booting it in QEMU, reading what it prints, and comparing a saved picture of the screen with the picture that is meant. The scripts that do this are in [test-tools/](../test-tools/README.md); GitHub only builds the kernel (see "The build check on GitHub" at the end). This file says how, what has been verified so far, and which traps cost time before.
 
 **Rule:** if you can run commands on the machine, build and boot to verify each change before calling it done. Say plainly what was tested and what was not.
 
@@ -1035,3 +1035,16 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 - **Two test boots at once.** Each windowless boot gives QEMU a port for its monitor. Two tests started at the same time with the same port: the second QEMU ends at once with `Failed to find an available port`, and its test reports a kernel that printed nothing. Run tests one after another, or give each its own port.
 
 - **One silent boot.** One boot out of roughly two hundred printed "Hello from my kernel!" and then nothing, with QEMU still running. It was the first boot of the build that added the heap, it stopped before any memory code runs, and it did not come back in 56 further boots, 20 of them with the compiler running alongside. Unexplained. If it comes back, `info registers` tells the two candidates apart: a processor asleep in the main loop (`HLT=1`) means the serial port test failed and the kernel is only mute; anything else means it is stuck.
+
+## The test tools in the repository
+
+- `test-tools/` holds the scripts for the chat box, Shift, the name, the key and the password, the secret line, the start, asking the model and trying a key against the stand-in for the provider, with their helpers and the breaks on purpose for the key, the try and the model's answers; its README lists them. They run from there against the kernel of the folder they sit in. Not there: the earlier tests of the disk, the box, the network and the encrypted fetch (with its server and certificate chains), and the lock's test cases. Their work (disk files, pictures, copies of the project, test certificates) goes to a folder under the computer's temporary folder, never into the project. Test certificates are made fresh with OpenSSL on each computer and are not in the repository. Every name, key and password in them is made up.
+- Run from there, on the kernel of `2d6f6dc` with the tools only moved: the key's ten scenarios, the name's, the memory test, the secret line, the chat box with its long rows, Shift, the start (35 lines, "Free memory" 198 MB, the lock's line 6 of 6), the 39 kinds of answer to `ask`, the try of a key, and the locked key against the stand-in: all as meant. One of the name's scenarios once found a typed line cut short while two other builds ran on the computer; alone it passed.
+- A break on purpose showed that the tools test the kernel of their own folder: the chat box's answer changed in that folder's source, the Shift test failed on its rows and pictures; put back, it passed.
+- Of the breaks on purpose, one of the key's was run from the repository (no least length for a password, caught by the key's test in a copy of the project); the others of the key, the try and the model's answers were not run again.
+- The clean export of `2d6f6dc` (`git archive`, both builds from nothing, a boot) was done and passed.
+
+## The build check on GitHub
+
+- `.github/workflows/build.yml` has GitHub build the interpreter and the kernel on one of its Windows computers, with the same Rust as the computer the kernel is made on, for every pull request into `master` and for every change that lands there. It runs `test-tools/build_all.py`, which also sees that the kernel holds the interpreter just built, and sees that every script in `test-tools/` can be read. It boots nothing. Not yet seen running on GitHub.
+- A run uses the copy of that file in the commit it checks; for a pull request that is a trial merge into `master`, so a pull request from a branch without the file should be checked with `master`'s copy (read from GitHub's documentation, not yet seen). A pull request whose merge has a conflict gets no run until the conflict is sorted out.
