@@ -21,6 +21,7 @@ None of it was written for this kernel. `Cargo.toml` names ten crates:
 - **`webpki-roots` 1.0.12** is the list of roots that the Firefox browser trusts, as data: 112 of them.
 - **The arithmetic:** `sha2` and `hmac` (fingerprints), `chacha20poly1305` and `aes-gcm` (scrambling), `p256` and `p384` (agreeing on a key, and signatures on two curves), `rsa` (signatures of the RSA sort).
 - **`der`** reads the fixed form in which certificates write numbers. The arithmetic crates use it already; the provider uses it directly, so it has a line of its own.
+- **`chacha20poly1305` is built with its `zeroize` feature:** its scrambler writes zeros over its copy of the key when it is thrown away. It was switched on for the lock, where a key made from a password otherwise stayed behind in memory (see [lock.md](lock.md)), and it holds for the scramblers of the encrypted link too. It brings no new crate: `zeroize` was compiled already, for other crates.
 
 What cargo makes of that:
 

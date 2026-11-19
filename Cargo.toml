@@ -19,7 +19,10 @@ rustls = { version = "0.23.46", default-features = false }
 webpki-roots = "1.0.12"
 sha2 = { version = "0.11.1", default-features = false }
 hmac = { version = "0.13.0", default-features = false }
-chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
+# "zeroize": the scrambler writes zeros over its copy of the key when it is
+# thrown away. Without it the key made from a password stayed behind in
+# memory after a secret was locked or unlocked (see docs/lock.md).
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc"] }
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "ecdh"] }
 p384 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
@@ -34,6 +37,13 @@ der = { version = "0.8.3", default-features = false }
 # the line after it needs a helper program at build time. See docs/box.md.
 wasmi = { version = "=1.1.0", default-features = false }
 
+# Code of this project's own that has to run fast: turning a password into a
+# key, 600,000 rounds of a keyed fingerprint. It is written for this kernel
+# and kept in a crate of its own, in the folder password-key/, only so that it
+# is built like the outside crates (see the end of this file). See
+# docs/lock.md.
+password-key = { path = "password-key" }
+
 # Seven crates are not fetched from the internet. Cargo is told to use the
 # copies kept in vendor/ instead, which need no helper program at build time.
 # See vendor/README.md.
@@ -46,12 +56,14 @@ num-traits = { path = "vendor/num-traits" }
 wasmparser = { path = "vendor/wasmparser" }
 libm = { path = "vendor/libm" }
 
-# Every crate that was not written for this kernel is built to run fast
-# (the compiler takes more time over it and makes quicker code). The kernel's
-# own code is still built the plain way, which builds quickly and is the
-# easiest to follow when something goes wrong. The outside code does the
-# heavy work: the arithmetic of encryption, and carrying out apps step by
-# step. Built plain it was many times slower. The checks that stop on a
-# number too large for its type stay switched on for all of it.
+# Every crate other than the kernel itself is built to run fast (the
+# compiler takes more time over it and makes quicker code): the outside
+# crates, and the one crate of this project's own in password-key/. The
+# kernel's own code is still built the plain way, which builds quickly and is
+# the easiest to follow when something goes wrong. The other crates do the
+# heavy work: the arithmetic of encryption, carrying out apps step by step,
+# and the rounds that turn a password into a key. Built plain they were many
+# times slower. The checks that stop on a number too large for its type stay
+# switched on for all of it.
 [profile.dev.package."*"]
 opt-level = 2

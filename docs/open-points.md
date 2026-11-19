@@ -220,6 +220,18 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **On a screen smaller than 800 by 600 dots** the chat box may lie over the box that shows an app's text. Nothing was tried there.
 - The row from the kernel that says what to do, and the answer that gives the line back, are demonstrations.
 
+## The lock
+
+- **Nothing uses the lock yet but its check at startup.** See [lock.md](lock.md).
+- **A password protects only as well as it is hard to guess.** Whoever has a locked secret can try passwords on a computer of their own for as long as they like; every try costs 600,000 rounds, and graphics cards make each round cheap. The rounds slow guessing down; they cannot stop it. Argon2id, the way OWASP's advice puts first, would also make every try fill a large table of memory, which graphics cards handle poorly; it was not taken because it is outside code.
+- **The count of rounds is fixed when a secret is locked,** and travels with it. Raising it later means locking again. A locked secret that asks for more than 10,000,000 rounds is refused.
+- **Locking and unlocking each take about 1.3 seconds in QEMU** on the test computer (the rounds, about 1.1 of them, and the scrambling), and nothing else runs meanwhile when they run in the main loop. A real PC should be many times faster; not measured.
+- **Nothing is locked without random numbers.** On a processor that cannot make them, `lock` refuses.
+- **A wrong password and a changed locked secret look alike:** both give the same refusal.
+- **The copies of the keyed fingerprint's state that every round makes are not wiped.** They are made from the password and can stand in for it. The key, the password and the secret were not found in a dump of the whole memory after a lock and an unlock; those states were not looked for.
+- **One way of locking is known,** version 1, way 1. Another way would need a new way number and both kept readable.
+- **The rounds run in plain kernel code at a sixteenth of the speed** if `password_key` is ever moved into the kernel's own crate: it lives in a crate of its own only to be built fast.
+
 ## The screen
 
 - **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures. An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).

@@ -204,6 +204,7 @@ Seven crates are kept as copies in `vendor/`. Six of them came with a build scri
 | --- | --- |
 | `src/` | The kernel, one topic per file. The map is in [docs/README.md](docs/README.md) |
 | `interpreter/` | The interpreter for Lua, a program of its own, built for WebAssembly before the kernel |
+| `password-key/` | A small crate of the project's own that turns a password into a key, kept apart so that it is built to run fast |
 | `docs/` | The notes, from the takeover to the question to the model |
 | `vendor/` | The copies of outside code |
 | `run.bat` | Builds both, makes the disk file the first time, starts QEMU |

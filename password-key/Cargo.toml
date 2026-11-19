@@ -1,0 +1,15 @@
+[package]
+name = "password-key"
+version = "0.1.0"
+edition = "2024"
+
+# Code of this project's own, written for the kernel: it turns a password into
+# a key. It is a crate of its own only so that it is built to run fast, like
+# the outside crates; see the kernel's Cargo.toml and docs/lock.md.
+
+[dependencies]
+# The same two crates, in the same versions, that the kernel's encryption
+# already uses. Default features are off because they need an operating
+# system underneath.
+hmac = { version = "0.13.0", default-features = false }
+sha2 = { version = "0.11.1", default-features = false }

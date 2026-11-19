@@ -48,6 +48,8 @@ mod errand; // Errands: work the main loop hands to the network's task.
 mod json; // JSON: writing a text that way, and finding a text in it.
 mod json_values; // The values the check of JSON is made against.
 mod model; // Asking the model a question through its provider.
+mod lock; // The lock: a secret locked with a password.
+mod lock_values; // The values the check of the lock is made against.
 
 use alloc::format;
 use alloc::string::String;
@@ -69,6 +71,7 @@ use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interpreter::{GREETING_SCRIPT, interpreter_check, script_run};
 use json::json_check;
+use lock::lock_check;
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
 use network::{gateway_ask, network_start};
@@ -265,6 +268,16 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "JSON: {} of {} checks of making and reading it are right\r\n", right, all).ok();
     } else {
         write!(serial, "JSON: not to be trusted here, only {} of {} checks of making and reading it are right\r\n", right, all).ok();
+    }
+
+    // The kernel can lock a secret with a password (see lock.rs). See that
+    // the lock computes here what others compute: two published values, and
+    // a secret locked by another implementation of the same steps.
+    let (right, all) = lock_check();
+    if right == all {
+        write!(serial, "Lock: {} of {} checks of locking a secret with a password are right\r\n", right, all).ok();
+    } else {
+        write!(serial, "Lock: not to be trusted here, only {} of {} checks of locking a secret with a password are right\r\n", right, all).ok();
     }
 
     // Look for the controller that the machine's disks are plugged into.

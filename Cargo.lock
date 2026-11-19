@@ -75,6 +75,7 @@ dependencies = [
  "hmac",
  "p256",
  "p384",
+ "password-key",
  "rsa",
  "rustls",
  "sha2",
@@ -104,6 +105,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures",
+ "zeroize",
 ]
 
 [[package]]
@@ -116,6 +118,7 @@ dependencies = [
  "chacha20",
  "cipher",
  "poly1305",
+ "zeroize",
 ]
 
 [[package]]
@@ -409,6 +412,14 @@ dependencies = [
  "fiat-crypto",
  "primefield",
  "primeorder",
+ "sha2",
+]
+
+[[package]]
+name = "password-key"
+version = "0.1.0"
+dependencies = [
+ "hmac",
  "sha2",
 ]
 
