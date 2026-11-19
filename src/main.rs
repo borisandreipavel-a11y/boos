@@ -51,6 +51,7 @@ mod json_values; // The values the check of JSON is made against.
 mod model; // Asking the model a question through its provider.
 mod lock; // The lock: a secret locked with a password.
 mod lock_values; // The values the check of the lock is made against.
+mod apps; // Apps made on request: what the model is told, and the script it writes.
 
 use alloc::format;
 use alloc::string::String;

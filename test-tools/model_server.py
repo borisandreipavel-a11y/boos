@@ -5,12 +5,16 @@ It checks every POST with Python's own JSON code and writes down what it saw as 
 Usage: python model_server.py <port> <chain.pem> <key.pem> <log file> <behaviour,behaviour,...>
 
 Behaviours: wrongkey, credit, echo, echopart, good, goodlong, chunked, page, nothttp, harmful, huge, cutoff,
-silent, empty, flaterror, nobody, keepopen."""
+silent, empty, flaterror, nobody, keepopen, and more below; for a request for an app, the kinds of app_cases.py
+(app..., run...) and slowapp."""
 import json
 import socket
 import ssl
 import sys
 import time
+
+# The answers to a request for an app, which test_app.py shares (in this folder).
+import app_cases
 
 port, chain, key, log_path = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 behaviours = sys.argv[5].split(",") if len(sys.argv) > 5 and sys.argv[5] else []
@@ -142,6 +146,14 @@ def answer_for(kind, bearer):
     if kind == "keepopen":
         # The whole answer, and then the connection is left open, as a server does that expects more requests.
         return with_length(b"HTTP/1.1 401 Unauthorized", json.dumps(REFUSAL).encode()).replace(b"Connection: close", b"Connection: keep-alive"), "hold"
+    if kind == "slowapp":
+        # A good app, nine seconds late, so that a test can ask again while it is awaited.
+        time.sleep(9)
+        message, ending = app_cases.answer("app", bearer)
+        return made(message, ending), "goodbye"
+    if app_cases.answer(kind, bearer) is not None:
+        message, ending = app_cases.answer(kind, bearer)
+        return made(message, ending), "goodbye"
     raise SystemExit("unknown behaviour " + kind)
 
 
@@ -201,7 +213,11 @@ with open(log_path, "a") as log:
                 note["body bytes"] = len(body)
                 note["length note right"] = len(body) == length
                 try:
-                    note["body as meant"] = json.loads(body.decode()) == MEANT
+                    parsed = json.loads(body.decode())
+                    note["body as meant"] = parsed == MEANT
+                    # The whole body as Python's JSON reader read it, so that a test can check a request
+                    # that is not the fixed question (test_app.py).
+                    note["body"] = parsed
                 except ValueError as problem:
                     note["body as meant"] = False
                     note["body problem"] = str(problem)

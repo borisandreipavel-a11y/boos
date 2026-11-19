@@ -1,9 +1,11 @@
 //! Asking the model: one question goes to the provider, a service on the
 //! internet that passes it on to a model, and the answer comes back as text.
-//! The provider wants a key with every question, which is the secret that the
-//! person at the machine typed. This is the one file that may borrow that
-//! secret, and it sends it to one site only, over an encrypted link.
-//! Notes: `docs/model.md`.
+//! The question is either the one fixed question, or a request for an app,
+//! whose answer is a script (see `apps.rs`). The provider wants a key with
+//! every question, which is the secret that the person at the machine typed.
+//! This is the one file that may borrow that secret, and it sends it to one
+//! site only, over an encrypted link.
+//! Notes: `docs/model.md`, `docs/apps.md`.
 
 use alloc::format;
 use alloc::string::String;
@@ -13,6 +15,7 @@ use alloc::vec::Vec;
 use smoltcp::iface::{Interface, SocketSet};
 use smoltcp::wire::Ipv4Address;
 
+use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_text, json_text};
 use crate::network::Card;
 use crate::page::{plain_text, site_exchange};
@@ -34,6 +37,12 @@ pub const QUESTION: &str = "Say hello in five words.";
 // for far more than a short answer needs. The provider is paid by the token
 // used, not by this limit.
 const ANSWER_TOKENS: usize = 1000;
+
+// The longest answer the model may give when it is asked for an app. A script
+// is longer than a greeting, and a model that thinks first pays its thinking
+// out of the same tokens. 4000 tokens are about 16 KB of text, so the thoughts
+// and the script together stay well inside the room for the answer below.
+const APP_TOKENS: usize = 4000;
 
 // How many seconds the greeting and the answer together may take. A model
 // needs longer for its answer than a site needs for a page.
@@ -95,16 +104,7 @@ pub fn model_tell(
     // and a new key typed while the answer is awaited changes nothing about
     // this asking. The room is wiped before this function ends.
     let mut key_room = [0u8; SECRET_LIMIT];
-    let mut key_length = 0;
-    let mut borrower = |key: &[u8]| {
-        key_length = key.len().min(SECRET_LIMIT);
-        key_room[..key_length].copy_from_slice(&key[..key_length]);
-    };
-    if trying {
-        trial_lend(&KeyPass(()), &mut borrower);
-    } else {
-        secret_lend(&KeyPass(()), &mut borrower);
-    }
+    let key_length = key_copy(trying, &mut key_room);
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), KeyVerdict::NotTold)
     } else {
@@ -114,7 +114,49 @@ pub fn model_tell(
     told
 }
 
-// The asking itself, with the key in hand.
+// Asks the model to write an app, and says in one sentence how that went:
+// what the model wrote, or why it is no app, why the provider turned the
+// question down, or why no answer came. Beside the sentence it gives back the
+// script, if the model wrote one that passed the checks (see `apps.rs`).
+// `wanted` is what was typed after the word `make`. The key is the one that
+// is kept, borrowed as for the fixed question. Called by the network's task
+// when it runs an errand.
+pub fn model_app(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    wanted: &str,
+) -> (String, Option<String>) {
+    let mut key_room = [0u8; SECRET_LIMIT];
+    let key_length = key_copy(false, &mut key_room);
+    let told = if key_length == 0 {
+        (String::from("no answer came, because no key is kept"), None)
+    } else {
+        app_question_ask(interface, card, sockets, name_server, &key_room[..key_length], wanted)
+    };
+    wipe(&mut key_room);
+    told
+}
+
+// Borrows the key into `room`, a room of the caller's own, and says how many
+// signs it has: none when no key is kept. With `trying`, the key is the one
+// being tried at the onboarding. The caller wipes the room when it is done.
+fn key_copy(trying: bool, room: &mut [u8; SECRET_LIMIT]) -> usize {
+    let mut length = 0;
+    let mut borrower = |key: &[u8]| {
+        length = key.len().min(SECRET_LIMIT);
+        room[..length].copy_from_slice(&key[..length]);
+    };
+    if trying {
+        trial_lend(&KeyPass(()), &mut borrower);
+    } else {
+        secret_lend(&KeyPass(()), &mut borrower);
+    }
+    length
+}
+
+// The fixed question, with the key in hand.
 fn question_ask(
     interface: &mut Interface,
     card: &mut Card,
@@ -132,7 +174,49 @@ fn question_ask(
         json_text(QUESTION),
         ANSWER_TOKENS
     );
+    match provider_exchange(interface, card, sockets, name_server, key, &body) {
+        Err(sentence) => (sentence, KeyVerdict::NotTold),
+        Ok((answer, whole)) => answer_sentence(&answer, whole, key),
+    }
+}
 
+// The request for an app, with the key in hand. It holds two messages: first
+// the instruction text, as the "system" message, which tells a model how to
+// behave before it reads what it is asked; then the request, as the "user"
+// message, with `APP_LEAD` in front of the words that were typed.
+fn app_question_ask(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    key: &[u8],
+    wanted: &str,
+) -> (String, Option<String>) {
+    let body = format!(
+        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
+        json_text(MODEL_NAME),
+        json_text(APP_INSTRUCTIONS),
+        json_text(&format!("{}{}", APP_LEAD, wanted)),
+        APP_TOKENS
+    );
+    match provider_exchange(interface, card, sockets, name_server, key, &body) {
+        Err(sentence) => (sentence, None),
+        Ok((answer, whole)) => app_sentence(&answer, whole, key),
+    }
+}
+
+// One exchange with the provider: the request is put together around `body`
+// with the key, sent, and the answer collected whole. Gives back the answer
+// and whether the provider said, through the encrypted link, that it had sent
+// everything; or the sentence that says why no answer came that can be read.
+fn provider_exchange(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    key: &[u8],
+    body: &str,
+) -> Result<(Vec<u8>, bool), String> {
     // The request, in the web's own language: "POST" hands something in, at
     // the place named behind it. Then come lines of notes: which site is
     // meant, what form the body has, how many bytes long it is, that the
@@ -168,12 +252,9 @@ fn question_ask(
     wipe(&mut request);
 
     match result {
-        Err(reason) => (format!("no answer came, because {}", reason), KeyVerdict::NotTold),
-        Ok(_) if too_long => (
-            String::from("no answer came that I could read, because the provider's answer is larger than the room for it"),
-            KeyVerdict::NotTold,
-        ),
-        Ok(whole) => answer_sentence(&answer, whole, key),
+        Err(reason) => Err(format!("no answer came, because {}", reason)),
+        Ok(_) if too_long => Err(String::from("no answer came that I could read, because the provider's answer is larger than the room for it")),
+        Ok(whole) => Ok((answer, whole)),
     }
 }
 
@@ -312,10 +393,7 @@ fn model_sentence(body: &[u8], key: &[u8], cut_short: &str) -> String {
     let held_back = ending.as_deref() == Some("content_filter");
 
     // The model's words, without the spaces and line ends before and after.
-    let found = match json_find_text(body, WORDS) {
-        Err(NOT_A_TEXT) => json_find_text(body, FIRST_PIECE).map_err(|_| NOT_A_TEXT),
-        other => other,
-    };
+    let found = model_words(body);
     let words = match &found {
         Ok(words) => Ok(words.trim()),
         Err(reason) => Err(*reason),
@@ -333,32 +411,96 @@ fn model_sentence(body: &[u8], key: &[u8], cut_short: &str) -> String {
             }
         }
         // No words: an empty text, or a text of nothing but spaces.
-        Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short),
+        Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),
         // Something else where the words belong (`null`, say), or nothing
         // there at all. That counts as an answer with no words only if the
         // answer also says how it ended: that text is read with the check
         // that the rest of the answer closes properly, which finding
         // something that is not a text does not make.
-        Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short),
-        // The answer has another shape than the provider's documentation
-        // describes. Its beginning is said too, cleaned and with the key
-        // hidden, so that the shape can be seen without asking again.
-        Err(reason) => {
-            let beginning = words_cut(&String::from_utf8_lossy(body), key, BEGINNING_SHOWN);
-            let shown = if beginning.is_empty() { String::new() } else { format!(" It begins \"{}\".", beginning) };
-            format!("the provider answered, but I could not find the model's words in its answer, because {}.{}{}", reason, shown, cut_short)
-        }
+        Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),
+        Err(reason) => words_not_found(body, key, reason, cut_short),
     }
 }
 
+// Says in one sentence what the answer to the request for an app holds, and
+// gives back the script if the model wrote one that can be used: one that
+// came whole, that `app_script` in `apps.rs` takes out of the model's words
+// and accepts, and in which the key is hidden like in every other word from
+// the provider. Any answer but a good one (the number 200) is said exactly as
+// for the fixed question.
+fn app_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<String>) {
+    let Some(parts) = answer_parts(answer).filter(|parts| parts.number == 200) else {
+        return (answer_sentence(answer, whole, key).0, None);
+    };
+    let body = parts.body;
+    let cut_short = if whole { "" } else { " Its answer did not come whole." };
+
+    // How the answer ended, read as for the fixed question.
+    let ending = json_find_text(body, ENDING).ok();
+    let out_of_room = ending.as_deref() == Some("length");
+    let held_back = ending.as_deref() == Some("content_filter");
+
+    let found = model_words(body);
+    let words = match &found {
+        Ok(words) => Ok(words.trim()),
+        Err(reason) => Err(*reason),
+    };
+    match words {
+        // A script that was cut off at the limit, or held back in part by
+        // the provider, is not whole, and is not taken.
+        Ok(words) if !words.is_empty() && out_of_room => {
+            (format!("the model's app was cut off at the limit of {} tokens, so it is not whole.{}", APP_TOKENS, cut_short), None)
+        }
+        Ok(words) if !words.is_empty() && held_back => {
+            (format!("the provider held part of the model's app back, so it is not whole.{}", cut_short), None)
+        }
+        Ok(words) if !words.is_empty() => match app_script(words) {
+            Ok(script) => {
+                let mut signs = script.into_bytes();
+                key_hide(&mut signs, key);
+                // Only signs of the key, which are plain signs, became stars,
+                // so the text is still proper text.
+                let script = String::from_utf8_lossy(&signs).into_owned();
+                let lines = script.lines().count();
+                let sentence =
+                    format!("the model wrote an app of {} {}. It is shown in the terminal.{}", lines, if lines == 1 { "line" } else { "lines" }, cut_short);
+                (sentence, Some(script))
+            }
+            Err(reason) => (format!("the model's answer is no app, because {}.{}", reason, cut_short), None),
+        },
+        Ok(_) => (empty_sentence(body, out_of_room, held_back, cut_short, APP_TOKENS), None),
+        Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => (empty_sentence(body, out_of_room, held_back, cut_short, APP_TOKENS), None),
+        Err(reason) => (words_not_found(body, key, reason, cut_short), None),
+    }
+}
+
+// The model's words in the body of a good answer: the text at `WORDS`, or
+// the first piece of a list there.
+fn model_words(body: &[u8]) -> Result<String, &'static str> {
+    match json_find_text(body, WORDS) {
+        Err(NOT_A_TEXT) => json_find_text(body, FIRST_PIECE).map_err(|_| NOT_A_TEXT),
+        other => other,
+    }
+}
+
+// The sentence for a good answer in which the model's words cannot be found:
+// the answer has another shape than the provider's documentation describes.
+// Its beginning is said too, cleaned and with the key hidden, so that the
+// shape can be seen without asking again.
+fn words_not_found(body: &[u8], key: &[u8], reason: &str, cut_short: &str) -> String {
+    let beginning = words_cut(&String::from_utf8_lossy(body), key, BEGINNING_SHOWN);
+    let shown = if beginning.is_empty() { String::new() } else { format!(" It begins \"{}\".", beginning) };
+    format!("the provider answered, but I could not find the model's words in its answer, because {}.{}{}", reason, shown, cut_short)
+}
+
 // The sentence for a good answer that holds no words, with the reason if
-// the answer gives one.
-fn empty_sentence(body: &[u8], out_of_room: bool, held_back: bool, cut_short: &str) -> String {
+// the answer gives one. `tokens` is the limit the question was asked with.
+fn empty_sentence(body: &[u8], out_of_room: bool, held_back: bool, cut_short: &str, tokens: usize) -> String {
     let thought = THOUGHTS.iter().any(|path| json_find_text(body, path).map(|text| !text.trim().is_empty()).unwrap_or(false));
     let why = if out_of_room && thought {
-        format!(", because it spent all of its {} tokens thinking", ANSWER_TOKENS)
+        format!(", because it spent all of its {} tokens thinking", tokens)
     } else if out_of_room {
-        format!(", because it reached the limit of {} tokens", ANSWER_TOKENS)
+        format!(", because it reached the limit of {} tokens", tokens)
     } else if held_back {
         String::from(", because the provider held it back")
     } else {

@@ -60,7 +60,7 @@ An app can ask the kernel to show a text on the screen (`kernel.show`, see [box.
 - Nothing protects the screen against two tasks drawing at once. Each dot is written in one step and no state is shared, so the worst that can happen is a mixed picture: some dots from one task, some from the other. Nothing is damaged.
 - `SCREEN` is written once, at startup, before any task runs. After that it is only read.
 - Most drawing happens at startup, before device signals are let through: `efi_main` draws once, and so does the app that shows a text, which runs there.
-- The chat box is drawn after startup, with device signals on: the main loop paints it again whenever a key is typed, and the whole screen when a look is tried (see "The look" below). The main loop is the only task that draws then, so nothing mixes. See [chat.md](chat.md).
+- The chat box is drawn after startup, with device signals on: the main loop paints it again whenever a key is typed, and the whole screen when a look is tried (see "The look" below). So is the panel, when an app made on request runs and shows a text: it runs in the main loop too (see [apps.md](apps.md)). The main loop is the only task that draws then, so nothing mixes. See [chat.md](chat.md).
 - The panel's remembered text is written by `screen_panel` and read by `screen_panel_again`, and nothing protects it either: both may be called at startup or from the main loop only.
 
 ## What a boot shows

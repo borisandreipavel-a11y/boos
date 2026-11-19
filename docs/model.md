@@ -1,12 +1,12 @@
 # Asking the model
 
-Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the line `ask` in `src/chat.rs`.
+Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the line `ask` in `src/chat.rs`. The request for an app goes through the same file; see [apps.md](apps.md).
 
 A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box: after the line `key`, for one start, or when the onboarding asks for it, which tries it with the question below, locks it with a password and keeps it on the disk, and unlocks it again at every start with that password (see [chat.md](chat.md)).
 
 ## What it does today
 
-The line `ask`, sent by itself in the chat box, makes the kernel ask the model one fixed question, `Say hello in five words.` (`QUESTION`), with the kept secret as the key, and say in the chat box what came back. Nothing else can be asked yet.
+The line `ask`, sent by itself in the chat box, makes the kernel ask the model one fixed question, `Say hello in five words.` (`QUESTION`), with the kept secret as the key, and say in the chat box what came back. The one other thing the model can be asked for is an app, with the line `make` (see "Asking for an app" below).
 
 - Without a kept secret the chat box says `Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.` and nothing is sent.
 - Otherwise it leaves an errand for the network's task (see "Errands" in [tasks.md](tasks.md)) and says `Kernel: I am asking the model "Say hello in five words."`. The answer comes later, as a row of its own.
@@ -128,3 +128,7 @@ The real question was then asked with a real key, in a person's own run, and the
 
 - So a good answer comes through the kernel's link too, within the minute the kernel waits, and the model's words lie where the provider's documentation says.
 - Nothing more of that run is known: not the words, not how long the answer took, not whether the model thought first or how many tokens it used. A run with a real key is not watched, and the raw answer is not printed, so its exact shape was not seen.
+
+## Asking for an app
+
+`model_app` asks the model to write an app, through the same exchange (`provider_exchange`) with the kept key, borrowed in the same way (`key_copy`). The request differs from the fixed question's in two places: the body holds two messages, a fixed instruction text first as the `system` message and then the request, and `max_tokens` is 4000 (`APP_TOKENS`). An answer that is not a good one is said word for word as for the fixed question. A good one is read as a script (`app_sentence`). [apps.md](apps.md) has the whole of it.

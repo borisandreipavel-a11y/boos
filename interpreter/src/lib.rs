@@ -3,7 +3,8 @@
 //! script out. The work of understanding Lua is done by the outside library
 //! omnilua; this file is the small piece between that library and the
 //! kernel. A script can ask the kernel for two things so far: to print a
-//! line, and to show a text on the screen.
+//! line, and to show a text on the screen. The kernel can also hand it a
+//! number to start the script's random numbers from.
 //! Notes: `docs/interpreter.md`.
 
 use omnilua::Lua;
@@ -22,6 +23,11 @@ unsafe extern "C" {
 // whole program stopped, so it is cut here.
 const LONGEST_LINE: usize = 200;
 
+// The longest text the kernel shows for an app: one line of the box on the
+// screen. A longer one would get the whole program stopped as well, so it is
+// cut here too, like a printed line.
+const LONGEST_SHOWN: usize = 40;
+
 // Hands a text to the kernel's print.
 fn say(text: &str) {
     let bytes = text.as_bytes();
@@ -29,13 +35,26 @@ fn say(text: &str) {
     unsafe { print(bytes.as_ptr(), length) };
 }
 
-// Hands a text to the kernel's show, whole. The kernel shows one line of at
-// most 40 signs and stops an app that asks for more. That rule is the
-// kernel's, so nothing is cut here: a script that shows a longer text is
-// stopped, and the kernel says why.
+// Hands a text to the kernel's show, cut at `LONGEST_SHOWN` bytes. The cut
+// may fall inside a letter that takes several bytes; the kernel shows such
+// bytes as dots anyway.
 fn show_text(text: &str) {
     let bytes = text.as_bytes();
-    unsafe { show(bytes.as_ptr(), bytes.len()) };
+    let length = bytes.len().min(LONGEST_SHOWN);
+    unsafe { show(bytes.as_ptr(), length) };
+}
+
+// The number the kernel handed over to start the script's random numbers
+// from, if it handed one (see `seed` below).
+static mut SEED: Option<i64> = None;
+
+// The kernel can call this before `run`, with a number to start the
+// script's random numbers from. Lua starts them from the same number every
+// time otherwise, and the box has no clock and no random numbers of its own
+// to start them elsewhere: a dice app would roll the same at every run.
+#[unsafe(no_mangle)]
+pub extern "C" fn seed(value: i64) {
+    unsafe { SEED = Some(value) };
 }
 
 // Where the kernel puts a script's text before it calls `run`.
@@ -105,6 +124,12 @@ fn run_script(text: &str) -> Result<(), String> {
 
     lua.load(PRINT_IN_LUA).exec().map_err(|problem| problem.to_string())?;
     lua.load(SHOW_IN_LUA).exec().map_err(|problem| problem.to_string())?;
+
+    // The random numbers start from the number the kernel handed over, if
+    // it handed one.
+    if let Some(value) = unsafe { SEED } {
+        lua.load(format!("math.randomseed({})", value)).exec().map_err(|problem| problem.to_string())?;
+    }
     lua.load(text).set_name("app").exec().map_err(|problem| problem.to_string())
 }
 

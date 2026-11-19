@@ -14,7 +14,7 @@ use crate::model::KeyVerdict;
 use crate::processor::{signals_back, signals_off};
 
 // What can be asked for.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Errand {
     // Fetch the example page from the web and say how the site answered.
     ExamplePage,
@@ -23,14 +23,19 @@ pub enum Errand {
     // Try a key typed at the onboarding: ask the model the same question
     // with it, and say what came back and how the provider took the key.
     KeyTry,
+    // Ask the model to write an app. The text says which app: the words
+    // typed after `make` in the chat box (see `apps.rs`).
+    AppRequest(String),
 }
 
 // The answer to an errand: which errand it answers, what came back, in one
-// sentence, and, for a question to the model, how the provider took the key.
+// sentence, for a question to the model how the provider took the key, and
+// for an app the script the model wrote, if it passed the checks.
 pub struct Answer {
     pub errand: Errand,
     pub sentence: String,
     pub key: KeyVerdict,
+    pub script: Option<String>,
 }
 
 // How far the one errand has got. There is room for one at a time.
