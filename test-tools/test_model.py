@@ -122,7 +122,9 @@ def press(machine, chat, text):
 
 
 def answers(machine):
-    return [l for l in machine.serial().decode(errors="replace").split(chr(13) + chr(10))
+    # Only whole lines: the last piece after the last line end may be a row the kernel is still printing,
+    # and a row read before it was whole once looked wrong.
+    return [l for l in machine.serial().decode(errors="replace").split(chr(13) + chr(10))[:-1]
             if l.startswith(("Kernel: the provider", "Kernel: the model", "Kernel: no answer came"))]
 
 
