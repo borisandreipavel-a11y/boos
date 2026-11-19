@@ -24,11 +24,11 @@
 - **A model does the slow, clever work:** it writes the app you asked for. It is not part of the kernel. It is reached over the internet.
 - **What the model writes is a script, plain text.** It runs locked in a box, where it can ask the kernel for a few things and touch nothing else. A clumsy app, one that never ends or eats its memory, is stopped, and the kernel carries on.
 
-**The last step is not built yet: no app is written on request.** The kernel can ask a model one fixed question and say what comes back, and that is all it asks a model for. What is built is the ground under the idea, and the rest of this page is about that: the kernel itself, an encrypted link to the outside, a first question to a model, the box, an interpreter that runs scripts, a screen to show things on, a chat box to type into, and a disk to keep things on.
+**The last step is built, in its first and simplest form: an app is written on request.** Type `make` and what you want into the chat box, such as `make a dice that rolls`, and the model writes the app as a script, which the kernel runs once in the box; what the app shows appears on the screen. The app is not kept, and it can do little: show one line and print to the terminal. Most of this page is about the ground under the idea: the kernel itself, an encrypted link to the outside, the questions to a model, the box, an interpreter that runs scripts, a screen to show things on, a chat box to type into, and a disk to keep things on.
 
 ## What is there
 
-boos starts as a UEFI application, takes the machine over from the firmware, and from then on does everything itself: memory, tasks, the keyboard, the screen, a disk, the network. It can run small programs that are not part of it, **apps**, locked in a box where each one gets a block of memory of its own and can touch nothing else. Apps are going to be written as text, as scripts in the language Lua, and the kernel already carries the interpreter that runs them.
+boos starts as a UEFI application, takes the machine over from the firmware, and from then on does everything itself: memory, tasks, the keyboard, the screen, a disk, the network. It can run small programs that are not part of it, **apps**, locked in a box where each one gets a block of memory of its own and can touch nothing else. Apps are written as text, as scripts in the language Lua: the model writes them when asked, and the kernel carries the interpreter that runs them.
 
 It runs in QEMU. It has never run on real hardware.
 
@@ -36,7 +36,7 @@ It runs in QEMU. It has never run on real hardware.
 kernel                      shares the processor and the memory, talks to devices
 └─ the box                  WebAssembly: keeps everything inside locked in
    └─ the interpreter       understands Lua
-      └─ an app             a script, as a person would write it
+      └─ an app             a script, plain text, written by the model
 ```
 
 ## What it does today
@@ -58,14 +58,15 @@ kernel                      shares the processor and the memory, talks to device
 **The model**
 
 - Asks a model one fixed question, "Say hello in five words.", and says in the chat box what came back. The model is `deepseek/deepseek-v4.1-flash-1017`, reached through the provider OrcaRouter, a service on the internet that passes questions on to models.
+- Asks the model for an app: a line that begins with `make` sends the words after it, together with a fixed text that tells the model how an app for this kernel is written (the language, the two things an app can ask for, and their limits). The text is in [docs/apps.md](docs/apps.md).
 - Sends the key that the provider asks for, which you type yourself, to that one site only, over a link whose certificate was checked. If the provider repeats the key in its answer, stars are shown in its place.
-- The real provider has answered it: in a run with a real key, the model's answer appeared in the chat box. The tests use a stand-in for the provider and a made-up key.
+- The real provider has answered it: in runs with a real key, the model's answer appeared in the chat box, and an app the real model wrote ran and its text appeared on the screen. The tests use a stand-in for the provider and a made-up key.
 
 **Apps**
 
 - Runs an app as a WebAssembly program in a locked box, checked against WebAssembly's rules before it runs, with a limit on its memory and a budget of steps (fuel), so that an app that never ends is stopped and the kernel carries on.
 - Offers an app two things so far: `print`, a line in the terminal, and `show`, a text on the screen.
-- Carries an interpreter for Lua that itself runs inside the box, and hands it a script:
+- Carries an interpreter for Lua that itself runs inside the box. At every start it hands it a script written by hand:
 
   ```lua
   local greeting = "Hello from a Lua script"
@@ -75,6 +76,8 @@ kernel                      shares the processor and the memory, talks to device
   print(greeting)
   show(greeting)
   ```
+
+- Runs the app the model wrote: the kernel takes the script out of the model's answer, checks that the answer came whole and that the script fits the box, lists the script in the terminal line by line, and runs it once. What the app shows appears in the box in the middle of the screen, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went, or why the app was stopped.
 
 **The screen and the chat box**
 
@@ -93,7 +96,7 @@ kernel                      shares the processor and the memory, talks to device
   ```
 
 - Shows an app's text in a box. The app only says which text; the kernel decides how the box looks.
-- Has a chat box along the bottom of the screen: type a line, press Enter, and the kernel answers. The line `fetch` makes it fetch the web page again and say how the site answered. The line `key` makes it take a secret, which shows as stars and is kept in memory only. The line `ask` makes it ask the model, with that secret as the key.
+- Has a chat box along the bottom of the screen: type a line, press Enter, and the kernel answers. The line `fetch` makes it fetch the web page again and say how the site answered. The line `key` makes it take a secret, which shows as stars and is kept in memory only. The line `ask` makes it ask the model, with that secret as the key. A line that begins with `make`, such as `make a dice that rolls`, asks the model, with the same key, to write that app, and runs it.
 
 **The disk**
 
@@ -114,7 +117,7 @@ Screen: found, 1280 dots wide and 800 dots high, its memory starts at 0x80000000
 Encryption: 8 of 8 checks of the arithmetic are right, and 112 trusted roots are on board
 Box: a program of 41 bytes ran inside it and answered 2 + 3 = 5
 App: Hello from inside the box
-Interpreter: a program of 764429 bytes that understands Lua is on board, and the box accepts it
+Interpreter: a program of 765037 bytes that understands Lua is on board, and the box accepts it
 App: Hello from a Lua script!!!
 Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller
 Disk: my own part is 14 MB, from block 2048 to block 32734
@@ -176,7 +179,7 @@ It builds the interpreter, then the kernel, and starts QEMU. Read the kernel's l
 Three things to know before the first run:
 
 - **The first build needs the internet** to fetch the outside crates. After that, building works without it.
-- **Every start reaches the internet.** The kernel looks up one name and fetches the page of example.com over an encrypted link, and it does so again when you type `fetch`. The line `ask` sends the secret you typed, the model's name and the one question to the provider's site, `api.orcarouter.ai`, and to nobody else.
+- **Every start reaches the internet.** The kernel looks up one name and fetches the page of example.com over an encrypted link, and it does so again when you type `fetch`. The line `ask` sends the secret you typed, the model's name and the one question to the provider's site, `api.orcarouter.ai`, and to nobody else. A line that begins with `make` sends the same secret and the model's name to the same site, with the fixed text about apps and the words you typed after `make`, which the provider passes on to the model.
 - **The first run makes a file, `disk.img`**, 16 MB, in the project's root. It is the machine's disk. The kernel writes to it at every start and at every line you send, and to nothing else: inside QEMU it can reach only the files QEMU is given. A PowerShell script divides the new file into parts; on a computer whose settings refuse to run script files, `run.bat` stops there and says that the disk file could not be divided.
 
 [docs/testing.md](docs/testing.md) says how to build by hand and how to boot without a window.
@@ -205,7 +208,7 @@ Seven crates are kept as copies in `vendor/`. Six of them came with a build scri
 | `src/` | The kernel, one topic per file. The map is in [docs/README.md](docs/README.md) |
 | `interpreter/` | The interpreter for Lua, a program of its own, built for WebAssembly before the kernel |
 | `password-key/` | A small crate of the project's own that turns a password into a key, kept apart so that it is built to run fast |
-| `docs/` | The notes, from the takeover to the question to the model |
+| `docs/` | The notes, from the takeover to the apps the model writes |
 | `vendor/` | The copies of outside code |
 | `run.bat` | Builds both, makes the disk file the first time, starts QEMU |
 | `make-disk.ps1` | Divides a new disk file into parts, with one part for the kernel |
@@ -214,11 +217,12 @@ Seven crates are kept as copies in `vendor/`. Six of them came with a build scri
 
 Said plainly, because a list of what works is only half the picture:
 
-- No app is made on request. The model can be asked one fixed question, and its answer is only said, not used.
+- An app runs once and is gone. Nothing keeps it, so the same app asked for again is written again by the model.
+- An app can show one line of 40 signs and print to the terminal, and nothing else. It cannot wait, read a key or be run again. A request for one has at most 45 signs.
+- The model is told the same fixed text with every request for an app, and whether it keeps to it is not checked: an answer in words instead of a script is taken as the script. Apart from apps, the model can be asked one fixed question, and its answer is only said, not used.
 - It has run in QEMU only. What a real PC may do differently is collected in [docs/open-points.md](docs/open-points.md).
 - Its network card is a virtio card, a kind that exists only in virtual machines.
-- Nothing can hand the kernel a script from outside yet. The one script it runs is written by hand and kept inside it.
-- The kernel answers a typed line by giving it back. Only `fetch`, `key` and `ask` do more.
+- The kernel answers a typed line by giving it back. Only a few words do more, such as `fetch`, `key`, `ask` and `make`.
 - The mouse is switched off, and the look of the screen is fixed when the kernel is built.
 
 Start with [docs/README.md](docs/README.md) if you want to read the code or change it.
