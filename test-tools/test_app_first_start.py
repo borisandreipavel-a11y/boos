@@ -53,6 +53,16 @@ def wait_line(machine, start, seconds=60):
     return False
 
 
+def answer_the_look(machine, failures):
+    """When the questions about the key are over, a first start asks for a look (docs/chat.md, "Picking a look"):
+    Enter alone keeps the first one, so that the next lines go where they did before that question came."""
+    if not wait_line(machine, "Kernel: pick a look by number"):
+        failures.append("no question for a look")
+    press(machine, ENTER)
+    if not wait_line(machine, "Kernel: look 1, Blue, stays."):
+        failures.append("the question for a look was not answered")
+
+
 def main():
     scenario = sys.argv[1]
     kernel = build(PORT, roots=["a"])
@@ -78,6 +88,7 @@ def main():
         if scenario == "keylater":
             press(machine, ENTER)
             wait_line(machine, "Kernel: then no key is kept.")
+            answer_the_look(machine, failures)
             press(machine, "key" + ENTER)
             press(machine, KEY + ENTER)
             wait_line(machine, "Kernel: I took a secret of")
@@ -90,6 +101,7 @@ def main():
             press(machine, PASSWORD + ENTER)
             if not wait_line(machine, "Kernel: the key is locked and kept on the disk."):
                 failures.append("the key was not locked")
+            answer_the_look(machine, failures)
             time.sleep(1.0)
         # The text so far ends in a line end, which leaves an empty piece behind the last line: the next line
         # will stand in that piece's place.

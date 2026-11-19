@@ -59,6 +59,10 @@ try:
     assert wait_row(m, "choose a password"), rows(m)[-5:]
     press(m, PW + "\n" + PW + "\n")
     assert wait_row(m, "the key is locked and kept"), rows(m)[-5:]
+    # The question for a look follows the onboarding's questions: Enter alone answers it.
+    assert wait_row(m, "pick a look by number"), rows(m)[-5:]
+    press(m, "\n")
+    assert wait_row(m, "look 1, Blue, stays"), rows(m)[-5:]
     press(m, "ask\n")
     ok = wait_row(m, "the model answered")
     serial = m.quit()

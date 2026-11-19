@@ -1,11 +1,22 @@
-"""A model of what the chat box should hold and say with the onboarding's two questions, the name and the key with
-its password, written from the design in docs/chat.md (not from the kernel's code), on top of picture.Chat."""
+"""A model of what the chat box should hold and say with the onboarding's questions, the name, the key with its
+password, and the look, written from the design in docs/chat.md (not from the kernel's code), on top of picture.Chat.
+
+The look: when the questions about the key are over, the question for a look follows if the notebook holds no answer
+about the look yet (an entry under "look": a name from the list, or no signs), and always after `setup`. The line
+`look` asks the same question at any time. kept_look is what the notebook holds under "look" before the start (None:
+nothing); the default, DISK, lets start_helper.Start read it from the disk file before the machine starts. With
+auto_look, start_helper.Start answers the question with Enter alone as soon as it appears, so that tests about other
+things go on as they were written."""
+import re
+
+from look_values import ORDER
 from picture import Chat, CHAT_LINE_LIMIT, STARS_SHOWN, SECRET_LIMIT
 
 NAME_LIMIT = 20
 PASSWORD_LEAST = 4
 LOCKED = "<a locked key>"   # stands for the bytes of a locked key, which hold random numbers
 TYPE_A_LINE = " Type a line and press Enter."
+TYPE_A_LINE_ROW = "Kernel: type a line and press Enter."
 HELLO_ONE = "Kernel: hello! I do not know your name yet, so I have one question before we begin."
 HELLO_FEW = "Kernel: hello! I do not know you yet, so I have a few questions before we begin."
 KEY_WHY = "Kernel: to ask the model I need your key. I lock it with a password and keep it on the disk."
@@ -41,6 +52,38 @@ KNOWN_KEY = "Kernel: the provider knows the key, so I keep it."
 WORKS = "Kernel: the key works. Now choose a password of at least %d signs to lock it with." % PASSWORD_LEAST
 CHOOSE = "Kernel: now choose a password of at least %d signs to lock it with." % PASSWORD_LEAST
 NOT_TAKEN = "Kernel: what was typed while I tried the key was not taken."
+
+# The look (docs/chat.md, "Picking a look").
+DISK = "<what the disk holds under look>"
+LOOK_QUESTION = "Kernel: pick a look by number: %s. Enter alone keeps this one." % ", ".join(
+    "%d %s" % (number, name) for number, name in enumerate(ORDER, 1))
+NOT_A_NUMBER = "Kernel: that is not the number of a look. Type 1 to %d, or Enter alone to keep this one." % len(ORDER)
+SO_IT_LASTS = "Kernel: so it lasts only until the machine is switched off. Type a line and press Enter."
+CANNOT_ADD = "the notebook cannot be added to"
+
+
+def look_named(name):
+    return "look %d, %s" % (ORDER.index(name) + 1, name)
+
+
+def this_is(name):
+    return "Kernel: this is %s. Enter alone keeps it; another number tries that one." % look_named(name)
+
+
+def stays(name):
+    return "Kernel: %s, stays." % look_named(name) + TYPE_A_LINE
+
+
+def kept_row(name):
+    return "Kernel: %s, is kept on the disk." % look_named(name) + TYPE_A_LINE
+
+
+def not_kept(name, reason=CANNOT_ADD):
+    return "Kernel: I could not keep %s, because %s." % (look_named(name), reason)
+
+
+def unknown_kept(name="Blue"):
+    return "Kernel: the look kept on the disk is not one I know, so the screen keeps %s." % look_named(name)
 
 
 def signs(count):
@@ -90,7 +133,7 @@ class KeyedChat(Chat):
     random: whether the machine can make random numbers."""
 
     def __init__(self, screen_width, notebook="ready", kept_name=None, last_line=None, key_entry=None, password=None,
-                 random=True, trouble=None, tries=None, instant=True):
+                 random=True, trouble=None, tries=None, instant=True, kept_look=DISK, auto_look=True):
         super().__init__(screen_width)
         self.trouble = trouble         # why the locked key on the disk is refused before any password is tried
         self.tries = list(tries) if tries is not None else None   # outcomes of the tries, in turn; None: always TRY_FENCED
@@ -109,8 +152,38 @@ class KeyedChat(Chat):
         self.key_in_memory = None      # the key this start holds, as far as the model knows it
         self.kept = []                 # entries this start should add to the notebook, in order
         self.start_said = []           # the kernel's rows at startup, in the terminal before the hint
+        self.notebook = notebook
+        self.kept_name = kept_name
+        self.last_line = last_line
+        self.look = "Blue"             # the look in use
+        self.look_kept = None          # the look the notebook holds, if it is one of the list
+        self.look_answered = False     # whether the notebook holds an answer about the look
+        self.look_asking = False
+        self.look_tried = False
+        self.auto_look = auto_look
+        self.begun = False
+        if kept_look is not DISK:
+            self.begin(kept_look)
+
+    def begin(self, kept_look):
+        """The rows at startup, once it is known what the notebook holds under "look" (bytes, or None)."""
+        if self.begun:
+            return
+        self.begun = True
+        notebook, kept_name, last_line = self.notebook, self.kept_name, self.last_line
         if notebook is None:
             return                     # nothing is opened, nothing is said: as before
+        look_row = None
+        if kept_look == b"":
+            self.look_answered = True
+        elif kept_look is not None:
+            # Only an exact name from the list counts; anything else is never shown, and counts as no answer.
+            name = next((n for n in ORDER if n.encode() == kept_look), None)
+            if name:
+                self.look = self.look_kept = name
+                self.look_answered = True
+            else:
+                look_row = unknown_kept()
         start = []
         if kept_name is not None:
             self.name = clean_name(kept_name)
@@ -125,12 +198,14 @@ class KeyedChat(Chat):
             start = self.key_rows()
         if start:
             self.rows = []             # the onboarding's rows take the place of GREETING; the recall row alone does not
+        # A row about a kept look that cannot be used (look_row, from look_model.py), then the row of the last line:
+        # in front of the questions while the kernel waits for an answer, behind the greeting otherwise.
         recall_row = recall(clean_line(last_line)) if last_line is not None else None
-        if recall_row:
-            if self.waiting:
-                start.insert(0, recall_row)
-            else:
-                start.append(recall_row)
+        more = [row for row in (look_row, recall_row) if row]
+        if self.waiting or self.look_asking:
+            start = more + start
+        else:
+            start = start + more
         for row in start:
             self.start_said.append(row)
             self.add("kernel", row)
@@ -146,10 +221,54 @@ class KeyedChat(Chat):
 
     def more_follows(self):
         if self.key_entry == LOCKED:
-            return True
-        if self.key_entry == b"":
-            return False
-        return self.can_keep and self.random
+            key_follows = True
+        elif self.key_entry == b"":
+            key_follows = False
+        else:
+            key_follows = self.can_keep and self.random
+        return key_follows or self.look_due(False)
+
+    def look_due(self, setting_up):
+        return self.can_keep and (setting_up or not self.look_answered)
+
+    def finish(self, rows):
+        """The questions about the name and the key are over; the question for a look may follow."""
+        setting_up = self.setting_up
+        self.done()
+        rows = list(rows)
+        if self.look_due(setting_up):
+            for place in range(len(rows) - 1, -1, -1):
+                if rows[place] == TYPE_A_LINE_ROW:
+                    del rows[place]
+                    break
+                if rows[place].endswith(TYPE_A_LINE):
+                    rows[place] = rows[place][:-len(TYPE_A_LINE)]
+                    break
+            rows.append(LOOK_QUESTION)
+            self.look_asking = True
+            self.look_tried = False
+        return rows
+
+    def look_answer(self, said):
+        given = said.strip(" ")
+        if given == "":
+            self.look_asking = False
+            if self.look_tried and self.look_kept != self.look:
+                if self.can_keep:
+                    self.look_kept = self.look
+                    self.look_answered = True
+                    self.kept.append(("look", self.look.encode()))
+                    return [kept_row(self.look)]
+                return [not_kept(self.look), SO_IT_LASTS]
+            if not self.look_answered and self.can_keep:
+                self.look_answered = True
+                self.kept.append(("look", b""))
+            return [stays(self.look)]
+        if re.fullmatch(r"[0-9]+", given) and 1 <= int(given) <= len(ORDER):
+            self.look = ORDER[int(given) - 1]
+            self.look_tried = True
+            return [this_is(self.look)]
+        return [NOT_A_NUMBER]
 
     def then_key(self, rows):
         following = self.key_rows()
@@ -162,14 +281,11 @@ class KeyedChat(Chat):
             self.waiting = "password"
             return [PASSWORD_QUESTION]
         if self.key_entry == b"" and not self.setting_up:
-            self.done()
-            return []
+            return self.finish([])
         if not self.can_keep:
-            self.done()
-            return []
+            return self.finish([])
         if not self.random:
-            self.done()
-            return list(NO_RANDOM)
+            return self.finish(list(NO_RANDOM))
         self.waiting = "key"
         if self.setting_up and self.key_entry == LOCKED:
             return [KEY_QUESTION_AGAIN]
@@ -237,17 +353,15 @@ class KeyedChat(Chat):
 
     def for_this_start(self):
         self.first = None
-        self.done()
-        return [FOR_THIS_START] + self.no_key_noted()
+        return self.finish([FOR_THIS_START] + self.no_key_noted())
 
     def answer_secret(self, typed):
         step = self.waiting
         if step == "key":
             if typed == "":
-                self.done()
                 if self.key_entry == LOCKED:
-                    return [KEY_STAYS]
-                return [NO_KEY] + self.no_key_noted()
+                    return self.finish([KEY_STAYS])
+                return self.finish([NO_KEY] + self.no_key_noted())
             outcome = self.next_try()
             if outcome[0] == "away":
                 self.key_in_memory = typed
@@ -279,25 +393,21 @@ class KeyedChat(Chat):
                 return [DIFFER]
             self.tell(LOCKING)
             self.first = None
-            self.done()
             self.key_entry = LOCKED
             self.password = typed
             self.locked_key_text = self.key_in_memory
             self.kept.append(("locked key", LOCKED))
-            return list(LOCKED_ROWS)
+            return self.finish(list(LOCKED_ROWS))
         if step == "password":
             if typed == "":
-                self.done()
-                return [WITHOUT_KEY]
+                return self.finish([WITHOUT_KEY])
             self.tell(UNLOCKING)
             if self.trouble:
-                self.done()
-                return ["Kernel: I cannot unlock the key kept on the disk, because %s." % self.trouble,
-                        'Kernel: send "setup" to lock a new one. Type a line and press Enter.']
+                return self.finish(["Kernel: I cannot unlock the key kept on the disk, because %s." % self.trouble,
+                                    'Kernel: send "setup" to lock a new one. Type a line and press Enter.'])
             if typed == self.password:
-                self.done()
                 self.secret_held = True
-                return [UNLOCKED]
+                return self.finish([UNLOCKED])
             return list(WRONG)
         return []
 
@@ -349,6 +459,14 @@ class KeyedChat(Chat):
                 self.said.append(row)
                 self.add(speaker, row)
             return
+        if sign == "\n" and self.look_asking:
+            said, self.line = self.line, ""
+            rows = [("person", "%s: %s" % (self.person(), said))] if said else []
+            rows += [("kernel", row) for row in self.look_answer(said)]
+            for speaker, row in rows:
+                self.said.append(row)
+                self.add(speaker, row)
+            return
         if sign == "\n" and self.line:
             line = self.line
             if line == "setup":
@@ -359,6 +477,14 @@ class KeyedChat(Chat):
                 self.said += [mine, answer]
                 self.add("person", mine)
                 self.add("kernel", answer)
+                self.line = ""
+            elif line == "look":
+                mine = "%s: look" % self.person()
+                self.look_asking = True
+                self.look_tried = False
+                self.said += [mine, LOOK_QUESTION]
+                self.add("person", mine)
+                self.add("kernel", LOOK_QUESTION)
                 self.line = ""
             else:
                 super().key(sign)

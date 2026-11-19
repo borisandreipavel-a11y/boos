@@ -1,9 +1,11 @@
-//! Drawing on the screen: filling it, filled rectangles, text, and the box
-//! in which an app's text is shown. Notes: `docs/screen.md`. (The chat box
-//! is drawn with these pieces by `chat.rs`.)
+//! Drawing on the screen: filling it, filled rectangles, text, the background
+//! with its sentence, and the box in which an app's text is shown. Their
+//! colours come from the look in use (`look.rs`). Notes: `docs/screen.md`.
+//! (The chat box is drawn with these pieces by `chat.rs`.)
 
 use crate::firmware::{ColourOrder, Screen};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH, letter_shape};
+use crate::look::look;
 use crate::page_tables::map_device_memory;
 use crate::processor::device_write_32;
 
@@ -110,19 +112,16 @@ pub fn screen_text(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
 
 // How the box looks in which an app's text is shown. The code calls that box
 // a "panel", because "box" already means the locked box that apps run in.
-// An app only says which text it wants shown. Everything about the look is
-// decided here, in this one place, so that changing the look of every app
-// means changing these values and nothing else.
+// An app only says which text it wants shown. Its sizes are decided here, in
+// this one place, and its colours come from the look in use (`look.rs`), so
+// that changing the look of every app means changing these values or picking
+// another look, and nothing else.
 struct PanelStyle {
     // How many dots the panel is across and down.
     width: u32,
     height: u32,
-    // How many dots thick the frame round it is, and the frame's colour.
+    // How many dots thick the frame round it is.
     frame: u32,
-    frame_colour: Colour,
-    // The colour inside the frame, and the colour of the letters.
-    inside_colour: Colour,
-    text_colour: Colour,
     // How large a dot of a letter is painted (see `screen_text`).
     text_size: u32,
     // How far the text begins from the panel's left and top edges.
@@ -130,29 +129,68 @@ struct PanelStyle {
     text_top: u32,
 }
 
-// A light panel with an orange frame and black letters. At this width and
-// letter size it holds one line of 40 signs.
+// A panel that holds one line of 40 signs at this width and letter size.
 const PANEL_STYLE: PanelStyle = PanelStyle {
     width: 520,
     height: 60,
     frame: 3,
-    frame_colour: Colour { red: 255, green: 150, blue: 0 },
-    inside_colour: Colour { red: 240, green: 240, blue: 240 },
-    text_colour: Colour { red: 0, green: 0, blue: 0 },
     text_size: 2,
     text_left: 20,
     text_top: 21,
 };
 
+// What the panel shows, so that it can be painted again in another look:
+// whether an app has shown a text since the start, and the signs it shows, as
+// many as fit on the panel's line. The room holds 160 bytes, enough for 40
+// signs of any kind. Only the startup code and the main loop may touch these.
+const PANEL_TEXT_MOST: usize = 160;
+static mut PANEL_SHOWN: bool = false;
+static mut PANEL_TEXT: [u8; PANEL_TEXT_MOST] = [0; PANEL_TEXT_MOST];
+static mut PANEL_TEXT_LENGTH: usize = 0;
+
 // Shows a text in the panel: paints the panel and writes the text in it, on
-// one line. Painting the whole panel each time wipes out what it showed
-// before. Where the panel sits is part of the look as well: in the middle of
-// the screen.
+// one line, and remembers what it wrote. Painting the whole panel each time
+// wipes out what it showed before. Where the panel sits is decided here as
+// well: in the middle of the screen.
 pub fn screen_panel(text: &str) {
-    let Some(screen) = (unsafe { SCREEN }) else {
+    if (unsafe { SCREEN }).is_none() {
         return;
+    }
+    let shown = panel_paint(text);
+
+    // Remember the signs that were written, cut at the end of a whole sign
+    // if they do not fit the room.
+    let mut length = shown.len().min(PANEL_TEXT_MOST);
+    while !shown.is_char_boundary(length) {
+        length -= 1;
+    }
+    let mut room = [0u8; PANEL_TEXT_MOST];
+    room[..length].copy_from_slice(&shown.as_bytes()[..length]);
+    unsafe {
+        PANEL_TEXT = room;
+        PANEL_TEXT_LENGTH = length;
+        PANEL_SHOWN = true;
+    }
+}
+
+// Paints the panel again with the text it showed last, in the look in use.
+// Does nothing if no app has shown a text since the start.
+pub fn screen_panel_again() {
+    let (shown, room, length) = unsafe { (PANEL_SHOWN, PANEL_TEXT, PANEL_TEXT_LENGTH) };
+    if !shown {
+        return;
+    }
+    panel_paint(core::str::from_utf8(&room[..length.min(PANEL_TEXT_MOST)]).unwrap_or(""));
+}
+
+// Paints the panel and the text in it, and gives back the part of the text
+// that was written: as many signs as fit.
+fn panel_paint(text: &str) -> &str {
+    let Some(screen) = (unsafe { SCREEN }) else {
+        return "";
     };
     let style = PANEL_STYLE;
+    let look = look();
 
     // Half the screen's width less half the panel's puts it in the middle.
     let left = (screen.width / 2).saturating_sub(style.width / 2);
@@ -160,13 +198,13 @@ pub fn screen_panel(text: &str) {
 
     // The frame: the whole panel in the frame's colour first, then the
     // inside painted over it, smaller by the frame's thickness on each side.
-    screen_rectangle(left, top, style.width, style.height, style.frame_colour);
+    screen_rectangle(left, top, style.width, style.height, look.panel_frame);
     screen_rectangle(
         left.saturating_add(style.frame),
         top.saturating_add(style.frame),
         style.width.saturating_sub(style.frame.saturating_mul(2)),
         style.height.saturating_sub(style.frame.saturating_mul(2)),
-        style.inside_colour,
+        look.panel_inside,
     );
 
     // Nothing an app shows may land outside the panel. `screen_text` stops
@@ -176,14 +214,15 @@ pub fn screen_panel(text: &str) {
     let sign_width = style.text_size.saturating_mul(LETTER_WIDTH + 1);
     let line_height = style.text_size.saturating_mul(LETTER_HEIGHT);
     if sign_width == 0 || style.text_top.saturating_add(line_height) > style.height {
-        return;
+        return "";
     }
     let room = style.width.saturating_sub(style.text_left.saturating_mul(2)) / sign_width;
     let shown = match text.char_indices().nth(room as usize) {
         Some((cut, _)) => &text[..cut],
         None => text,
     };
-    screen_text(left.saturating_add(style.text_left), top.saturating_add(style.text_top), shown, style.text_size, style.text_colour);
+    screen_text(left.saturating_add(style.text_left), top.saturating_add(style.text_top), shown, style.text_size, look.panel_text);
+    shown
 }
 
 // Paints the whole screen in one colour.
@@ -192,4 +231,18 @@ pub fn screen_fill(colour: Colour) {
         return;
     };
     screen_rectangle(0, 0, screen.width, screen.height, colour);
+}
+
+// The sentence near the top left corner of the screen, which shows that the
+// kernel draws its own letters.
+const SENTENCE: &str = "Hello from my kernel! I draw my own letters now.";
+
+// Paints the background: the whole screen in the look's colour for it, and
+// the sentence, 40 dots from the left and from the top, with every dot of a
+// letter a block of 2 by 2 dots. It covers everything that was on the
+// screen, so whatever stands in front of it is painted after it.
+pub fn screen_background() {
+    let look = look();
+    screen_fill(look.background);
+    screen_text(40, 40, SENTENCE, 2, look.sentence);
 }

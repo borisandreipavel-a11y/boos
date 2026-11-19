@@ -46,6 +46,14 @@ GREETING = "Kernel: type a line and press Enter."
 LETTER_WIDTH = 5
 LETTER_HEIGHT = 9
 
+# The looks a person can pick (look_values.py, typed in by hand from the design). A model of the chat box may say
+# which one is in use with an attribute `look` (its name); without one, the first look, "Blue", is meant.
+from look_values import LOOKS as LOOK_COLOURS
+
+
+def look_of(chat):
+    return LOOK_COLOURS[getattr(chat, "look", "Blue")]
+
 
 def read_shapes():
     rows = re.findall(r'\*b"([#.]{5})"', open(LETTERS, encoding="utf-8").read())
@@ -93,13 +101,14 @@ class Picture:
                         self.rectangle(sign_left + size * column, top + size * row, size, size, colour)
             sign_left += size * (LETTER_WIDTH + 1)
 
-    def panel(self, text):
+    def panel(self, text, look=None):
+        look = look or LOOK_COLOURS["Blue"]
         width, height, frame = 520, 60, 3
         left = self.width // 2 - width // 2
         top = self.height // 2 - height // 2
-        self.rectangle(left, top, width, height, ORANGE)
-        self.rectangle(left + frame, top + frame, width - 2 * frame, height - 2 * frame, PANEL_INSIDE)
-        self.text(left + 20, top + 21, text[:40], 2, BLACK)
+        self.rectangle(left, top, width, height, look["panel_frame"])
+        self.rectangle(left + frame, top + frame, width - 2 * frame, height - 2 * frame, look["panel_inside"])
+        self.text(left + 20, top + 21, text[:40], 2, look["panel_text"])
 
 
 def chat_room(screen_width):
@@ -207,33 +216,41 @@ class Chat:
 
 
 def chat_box(picture, chat):
+    # The chat box's colours: those of the look in use, or the other look of an old test (CHAT_LOOK=other).
+    if os.environ.get("CHAT_LOOK") == "other":
+        frame_colour, inside, typing, person, kernel = CHAT_FRAME_COLOUR, CHAT_INSIDE, CHAT_TYPING, CHAT_PERSON, CHAT_KERNEL
+    else:
+        look = look_of(chat)
+        frame_colour, inside, typing, person, kernel = (look["chat_frame"], look["chat_inside"], look["chat_typing"],
+                                                        look["chat_person"], look["chat_kernel"])
     row_height = CHAT_SIZE * LETTER_HEIGHT + CHAT_ROW_GAP
     width = picture.width - 2 * CHAT_MARGIN
     height = 2 * CHAT_FRAME + 2 * CHAT_PADDING + (CHAT_ROWS + 1) * row_height
     left = CHAT_MARGIN
     top = picture.height - CHAT_MARGIN - height
-    picture.rectangle(left, top, width, height, CHAT_FRAME_COLOUR)
+    picture.rectangle(left, top, width, height, frame_colour)
     typing_top = top + CHAT_FRAME + CHAT_PADDING + CHAT_ROWS * row_height
-    picture.rectangle(left + CHAT_FRAME, top + CHAT_FRAME, width - 2 * CHAT_FRAME, typing_top - top - CHAT_FRAME, CHAT_INSIDE)
+    picture.rectangle(left + CHAT_FRAME, top + CHAT_FRAME, width - 2 * CHAT_FRAME, typing_top - top - CHAT_FRAME, inside)
     bottom = top + height - CHAT_FRAME
-    picture.rectangle(left + CHAT_FRAME, typing_top, width - 2 * CHAT_FRAME, bottom - typing_top, CHAT_TYPING)
+    picture.rectangle(left + CHAT_FRAME, typing_top, width - 2 * CHAT_FRAME, bottom - typing_top, typing)
     text_left = left + CHAT_FRAME + CHAT_PADDING
     y = top + CHAT_FRAME + CHAT_PADDING
     for speaker, text in chat.rows:
-        picture.text(text_left, y, text[:chat.room], CHAT_SIZE, CHAT_PERSON if speaker == "person" else CHAT_KERNEL)
+        picture.text(text_left, y, text[:chat.room], CHAT_SIZE, person if speaker == "person" else kernel)
         y += row_height
     typing_text_top = typing_top + (bottom - typing_top - CHAT_SIZE * LETTER_HEIGHT) // 2
-    picture.text(text_left, typing_text_top, chat.typing_text()[:chat.room], CHAT_SIZE, CHAT_PERSON)
+    picture.text(text_left, typing_text_top, chat.typing_text()[:chat.room], CHAT_SIZE, person)
     return (left, top, width, height)
 
 
 def expected(width, height, chat, panel_text="Hello from a Lua script!!!"):
     picture = Picture(width, height)
-    picture.fill(BLUE)
-    picture.text(40, 40, "Hello from my kernel! I draw my own letters now.", 2, WHITE)
+    look = look_of(chat)
+    picture.fill(look["background"])
+    picture.text(40, 40, "Hello from my kernel! I draw my own letters now.", 2, look["sentence"])
     box = chat_box(picture, chat)
     if panel_text is not None:
-        picture.panel(panel_text)
+        picture.panel(panel_text, look)
         # The parts must not lie on top of each other on this screen.
         panel_bottom = height // 2 - 30 + 60
         assert panel_bottom <= box[1], "the panel and the chat box overlap"

@@ -93,6 +93,8 @@ The person's name is kept too, under the name `name`, by `onboarding.rs`: the an
 
 The model's key is kept under the name `locked key`, by `onboarding.rs`, and only locked with a password (see [lock.md](lock.md)): at most 250 bytes, a head, the scrambled key and a proof. An entry under `locked key` that holds no signs means that the question for the key was answered without one. Whether such an entry is there, and whether it holds a locked key, is what tells a start whether to ask for the key, for the password, or for nothing. A new key locked after `setup` is a new entry that counts from then on; the one before stays in the notebook, like every entry, and opens with the old password. See "The key and the password" in [chat.md](chat.md).
 
+The look the person picked, with the line `look` or at the onboarding's question, is kept under the name `look`, by `look.rs`, as the look's name (`Night`), not locked: a new entry each time a look is kept, and none while looks are only tried. An entry under `look` that holds no signs means that the question was answered without a pick. At startup the newest entry under `look` decides which look the screen shows, and whether the question is asked: with no entry, or with a name the kernel does not know (which leaves the first look), it is asked; an entry that holds no signs leaves the first look and asks nothing. See "Picking a look" in [chat.md](chat.md).
+
 - If the line was kept, nothing is said about it.
 - If it could not be kept, the kernel says so in a row and in the terminal, `Kernel: I could not keep that line, because ...`, and the chat goes on as before.
 - On a machine with no disk, no part of the kernel's own, or a notebook that cannot be added to, the chat box says nothing about keeping; the lines at startup have said it.
@@ -109,7 +111,7 @@ One line, after the line about the kernel's own part and before the count of sta
 | `Disk: the notebook holds 2 entries and is damaged behind that; nothing is added to it` | Something lies behind the notebook's end |
 | `Disk: nothing is kept on it, because ...` | The part holds something the kernel does not know. No count of starts follows |
 
-And, after the count of starts, the chat box's rows from the notebook: the greeting by the kept name, or the question for a name, and `Kernel: last time you said "..."` if a line was kept. See [chat.md](chat.md).
+And, after the count of starts, the chat box's rows from the notebook: the greeting by the kept name, or the question for a name, and `Kernel: last time you said "..."` if a line was kept. See [chat.md](chat.md). If a look is kept that the kernel cannot use, a row says so; see "Picking a look" there.
 
 ## How long it takes
 

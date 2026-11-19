@@ -28,6 +28,11 @@ class Start:
         self.tag, self.disk, self.chat, self.width, self.height = tag, disk, chat, width, height
         self.before = read_notebook(disk)["entries"] if disk else []
         self.raw_before = open(disk, "rb").read() if disk else None
+        # A model that leaves the look to the disk learns, from the notebook read from outside, what it holds
+        # under "look" before this start.
+        if not getattr(chat, "begun", True):
+            looks = [data for name, data in self.before if name == "look"]
+            chat.begin(looks[-1] if looks else None)
         options = {"kernel": kernel} if kernel else {}
         self.m = Machine(tag, extra=(one_disk(disk) if disk else []) + (extra or []), disk=False, network=network, **options)
         if not self.m.wait_for(b"repeated here:", 150):
@@ -40,6 +45,9 @@ class Start:
         if network and not self.m.wait_for(b"Network: this machine was given the address", 60):
             print(tag, "NO ADDRESS")
             failures.append(tag + " address")
+        # A test about other things answers the question for a look with Enter alone (see keyed_model.py).
+        if getattr(chat, "auto_look", False) and getattr(chat, "look_asking", False):
+            self.keys("\n")
 
     def mark(self):
         """Remembers how much the kernel has printed, for wait_text."""
@@ -69,18 +77,37 @@ class Start:
             self.m.command("sendkey %s 20" % name_of(sign))
             # Keys with Shift are four key numbers each and pile up inside QEMU when sent quickly.
             time.sleep(pause + (0.05 if name_of(sign).startswith("shift-") else 0))
-        self.chat.keys(text)
+            asking = getattr(self.chat, "look_asking", False)
+            self.chat.key(sign)
+            # The question for a look has just appeared: a test about other things answers it with Enter alone.
+            if getattr(self.chat, "auto_look", False) and self.chat.look_asking and not asking:
+                self.keys("\n", pause)
 
     def wait(self, seconds):
-        """For work the kernel does after Enter, such as turning a password into a key."""
+        """For work the kernel does after Enter, such as turning a password into a key. Waits `seconds`, and then,
+        for at most a minute more, until the last row the model expects has come in the terminal: such work takes
+        longer while other work runs on the computer."""
         time.sleep(seconds)
+        if self.chat.said:
+            last = self.chat.said[-1].encode()
+            end = time.time() + 60
+            while time.time() < end and last not in self.m.serial():
+                time.sleep(0.2)
 
     def look(self, name):
         if self.width is None:
             return
         time.sleep(0.7)
-        path = self.m.shot(name)
-        wrong, places = compare(path, expected(self.width, self.height, self.chat))
+        meant = expected(self.width, self.height, self.chat)
+        # Painting the whole screen again in another look takes a quarter of a second, and longer while other work
+        # runs on the computer: a picture saved in the middle of it is saved again, up to four more times, half a
+        # second apart, before it counts as wrong.
+        for _ in range(5):
+            path = self.m.shot(name)
+            wrong, places = compare(path, meant)
+            if wrong == 0:
+                break
+            time.sleep(0.5)
         print("  %-38s %s" % (self.tag + " " + name, "every dot right" if wrong == 0 else "%d dots wrong %s" % (wrong, places[:2])))
         if wrong:
             failures.append(self.tag + " " + name)

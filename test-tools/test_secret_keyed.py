@@ -20,7 +20,7 @@ tag = sys.argv[1] if len(sys.argv) > 1 else "usual"
 width, height, extra = {"usual": (1280, 800, []), "cirrus": (800, 600, ["-vga", "cirrus"]), "nodisplay": (None, None, ["-vga", "none"])}[tag]
 kernel = os.environ.get("KERNEL_FILE")
 machine = Machine("secret-" + tag, extra, **({"kernel": kernel} if kernel else {}))
-chat = NamedChat(width)
+chat = NamedChat(width, kept_look=None)  # a fresh disk: nothing under "look" either
 failures = []
 NAMES = {"-": "minus", "=": "equal", "/": "slash", "+": "shift-equal", "_": "shift-minus", "#": "shift-3", " ": "spc", chr(10): "ret", chr(8): "backspace"}
 ENTER, BACK = chr(10), chr(8)
@@ -94,6 +94,7 @@ try:
     look("0 before anything", [("secret", SECRET, 0, 0), ("second", OTHER, 0, 0)])
     press(ENTER)  # the answer to the name question: Enter alone, so the name stays "You"
     press(ENTER)  # the question for the key: Enter alone, so no key is kept
+    press(ENTER)  # the question for a look: Enter alone, so the first look stays
     look("0b the question answered", [("secret", SECRET, 0, 0)], check_memory=False)
     press("key" + ENTER)
     look("1 asked", [("secret", SECRET, 0, 0)], check_memory=False)
