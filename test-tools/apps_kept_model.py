@@ -11,6 +11,7 @@ import zlib
 
 from app_cases import answer, hide, script_meant
 from keyed_model import KeyedChat
+from chat_tools_model import ToolsChat
 from look_values import LOOKS
 from nb import BLOCK, ENTRY_LETTERS, FIRST, LAST, head, put_block
 from picture import LETTER_HEIGHT, LETTER_WIDTH, expected
@@ -254,36 +255,8 @@ def screen(width, height, chat, requests, page=0, panel_text="Hello from a Lua s
     return picture
 
 
-# ---------- The chat box with the line `make` ----------
+# ---------- The chat box ----------
 
-def wanted_of(line):
-    """The rule for a request: the word alone, or the word, a space and what to make."""
-    if not line.startswith("make"):
-        return None
-    rest = line[4:]
-    return rest.strip() if rest == "" or rest.startswith(" ") else None
-
-
-class MakeChat(KeyedChat):
-    """keyed_model.KeyedChat with the line `make` (docs/apps.md): the row it answers at once; the rows that come
-    later are added with say()."""
-
-    def key(self, sign):
-        busy = self.secret_asked or self.waiting or self.look_asking
-        if not busy and sign == "\n" and self.line and wanted_of(self.line) is not None:
-            wanted = wanted_of(self.line)
-            mine = self.person() + ": " + self.line
-            if wanted == "":
-                reply = 'Kernel: write what app to make after the word, such as "make a dice".'
-            elif not self.secret_held:
-                reply = 'Kernel: I cannot ask the model for an app, because no key is kept. Send the line "key" first.'
-            else:
-                reply = 'Kernel: I am asking the model to make "%s".' % wanted
-            self.said += [mine, reply]
-            self.add("person", mine)
-            self.add("kernel", reply)
-            if self.can_keep:
-                self.kept.append(("last line", self.line.encode()))
-            self.line = ""
-            return
-        super().key(sign)
+# Every line but `key` and `setup` goes to the model (docs/chat.md); the tests of apps kept use the chat box of
+# chat_tools_model.py under the name they had.
+MakeChat = ToolsChat
