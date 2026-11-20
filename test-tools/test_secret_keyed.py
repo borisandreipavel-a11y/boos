@@ -3,15 +3,18 @@ that goes into the kernel. After each step the picture is compared dot by dot, a
 terminal's bytes, the whole disk file and a dump of the machine's whole memory are searched for the secret and
 for pieces of it.
 Usage: python test_secret_keyed.py [tag]   (tag: usual, cirrus, nodisplay)"""
+import contextlib
 import os
 import sys
 import time
 
 from interp_helpers import odd_bytes  # sets the divided disk
 from boot import Machine
+from boot_count import start_report
 from picture import compare, expected
 from keyed_model import KeyedChat as NamedChat
 from nb import read_notebook
+from verdict import Failures
 
 # Made up, and chosen so that no piece of six signs occurs in a machine's memory by accident.
 SECRET = "sk-orca-TEST_Qm7x/Zp4+Lw9vKd2Rb8nHt5Yc3=="
@@ -21,7 +24,7 @@ width, height, extra = {"usual": (1280, 800, []), "cirrus": (800, 600, ["-vga", 
 kernel = os.environ.get("KERNEL_FILE")
 machine = Machine("secret-" + tag, extra, **({"kernel": kernel} if kernel else {}))
 chat = NamedChat(width, kept_look=None)  # a fresh disk: nothing under "look" either
-failures = []
+failures = Failures()
 NAMES = {"-": "minus", "=": "equal", "/": "slash", "+": "shift-equal", "_": "shift-minus", "#": "shift-3", " ": "spc", chr(10): "ret", chr(8): "backspace"}
 ENTER, BACK = chr(10), chr(8)
 
@@ -45,21 +48,6 @@ def pieces(secret):
     return [secret[i:i + 6].encode() for i in range(0, len(secret) - 5)]
 
 
-def memory(name):
-    path = os.path.join(machine.folder, name.replace(" ", "-") + ".mem")
-    machine.command("pmemsave 0 0x10000000 " + path.replace(chr(92), "/"))
-    last = -1
-    for _ in range(100):
-        time.sleep(0.3)
-        size = os.path.getsize(path) if os.path.exists(path) else 0
-        if size == 0x10000000 and size == last:
-            break
-        last = size
-    data = open(path, "rb").read()
-    os.remove(path)
-    return data
-
-
 def look(name, secrets, check_memory=True):
     """`secrets` is a list of (label, secret, whole copies meant in memory, loose pieces meant in memory)."""
     time.sleep(0.6)
@@ -71,21 +59,21 @@ def look(name, secrets, check_memory=True):
             failures.append(name + ": picture")
     serial = machine.serial()
     disk = open(machine.disk_path, "rb").read()
-    dump = memory(name) if check_memory else None
-    for label, secret, whole_meant, loose_meant in secrets:
-        in_serial = sum(serial.count(p) for p in pieces(secret))
-        in_disk = sum(disk.count(p) for p in pieces(secret))
-        text = "%s: terminal %d, disk %d" % (label, in_serial, in_disk)
-        if in_serial or in_disk:
-            failures.append("%s: %s leaked" % (name, label))
-        if dump is not None:
-            whole = dump.count(secret.encode())
-            # A whole copy holds every 6-sign piece once; what is found beyond that is loose.
-            loose = sum(dump.count(p) for p in pieces(secret)) - whole * len(pieces(secret))
-            text += ", memory whole %d (meant %d), loose pieces %d (meant %d)" % (whole, whole_meant, loose, loose_meant)
-            if whole != whole_meant or loose != loose_meant:
-                failures.append("%s: %s memory" % (name, label))
-        report.append(text)
+    with (machine.memory(name.replace(" ", "-")) if check_memory else contextlib.nullcontext()) as dump:
+        for label, secret, whole_meant, loose_meant in secrets:
+            in_serial = sum(serial.count(p) for p in pieces(secret))
+            in_disk = sum(disk.count(p) for p in pieces(secret))
+            text = "%s: terminal %d, disk %d" % (label, in_serial, in_disk)
+            if in_serial or in_disk:
+                failures.append("%s: %s leaked" % (name, label))
+            if dump is not None:
+                whole = dump.count(secret.encode())
+                # A whole copy holds every 6-sign piece once; what is found beyond that is loose.
+                loose = sum(dump.count(p) for p in pieces(secret)) - whole * len(pieces(secret))
+                text += ", memory whole %d (meant %d), loose pieces %d (meant %d)" % (whole, whole_meant, loose, loose_meant)
+                if whole != whole_meant or loose != loose_meant:
+                    failures.append("%s: %s memory" % (name, label))
+            report.append(text)
     print("%-36s %s" % (name, " | ".join(report)))
 
 
@@ -124,6 +112,12 @@ try:
     look("11 lines that only look like the word", [("second", OTHER, 0, 0)], check_memory=False)
 finally:
     raw = machine.quit()
+# The start itself, as boot_count.py reports it: this start is the same kind (a fresh divided disk), so one boot
+# serves both checks.
+start, wrong = start_report(raw)
+print("the start: " + " | ".join(start[:2]))
+for what in wrong:
+    failures.append("the start: " + what)
 raw = raw[raw.find(b"repeated here:"):]
 lines = [l for l in raw.decode(errors="replace").split(chr(13) + chr(10)) if l.startswith(("You:", "Kernel:"))]
 print("the terminal after the prompt:")

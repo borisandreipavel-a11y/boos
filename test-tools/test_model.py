@@ -20,6 +20,7 @@ from picture import Chat, compare, expected
 from raw_print import with_raw_print
 
 from ports import standin_port
+from verdict import Failures
 PORT = standin_port(1)  # 44301 unless BOOS_PORT_BASE says otherwise
 ENTER = chr(10)
 Q = chr(34)
@@ -153,7 +154,7 @@ def main():
     assert server.stdout.readline().strip() == "ready"
     machine = Machine("model", network="open", kernel=kernel)
     chat = Chat(1280)
-    failures = []
+    failures = Failures()
     print("the made-up key is %d signs long" % len(KEY))
     try:
         machine.wait_for(b"repeated here:")
@@ -184,31 +185,21 @@ def main():
             if meant and said != meant:
                 print("   meant: " + meant[:150])
         if dump:
-            path = os.path.join(machine.folder, "after.mem")
-            machine.command("pmemsave 0 0x10000000 " + path.replace(chr(92), "/"))
-            last = -1
-            for _ in range(100):
-                time.sleep(0.3)
-                size = os.path.getsize(path) if os.path.exists(path) else 0
-                if size == 0x10000000 and size == last:
-                    break
-                last = size
-            data = open(path, "rb").read()
-            os.remove(path)
-            whole = data.count(KEY.encode())
-            pieces = [KEY[i:i + 6].encode() for i in range(len(KEY) - 5)]
-            places = sorted(set(place for piece in pieces for place in find_all(data, piece)))
-            runs = []
-            for place in places:
-                if runs and place <= runs[-1][1] + 1:
-                    runs[-1][1] = place
-                else:
-                    runs.append([place, place])
-            print("memory after the last answer: the key whole %d times; runs of key pieces at %d places: %s" % (
-                whole, len(runs), ", ".join("0x%x(+%d)" % (a, b - a + 6) for a, b in runs[:12])))
-            for a, b in runs[:6]:
-                around = data[max(a - 60, 0):b + 6 + 40]
-                print("   at 0x%x: %s" % (a, "".join(chr(c) if 32 <= c < 127 else "." for c in around)))
+            with machine.memory("after") as data:
+                whole = data.count(KEY.encode())
+                pieces = [KEY[i:i + 6].encode() for i in range(len(KEY) - 5)]
+                places = sorted(set(place for piece in pieces for place in find_all(data, piece)))
+                runs = []
+                for place in places:
+                    if runs and place <= runs[-1][1] + 1:
+                        runs[-1][1] = place
+                    else:
+                        runs.append([place, place])
+                print("memory after the last answer: the key whole %d times; runs of key pieces at %d places: %s" % (
+                    whole, len(runs), ", ".join("0x%x(+%d)" % (a, b - a + 6) for a, b in runs[:12])))
+                for a, b in runs[:6]:
+                    around = data[max(a - 60, 0):b + 6 + 40]
+                    print("   at 0x%x: %s" % (a, "".join(chr(c) if 32 <= c < 127 else "." for c in around)))
     finally:
         raw = machine.quit()
         server.kill()
@@ -218,10 +209,15 @@ def main():
     print("said lines as meant: %s | bytes in the terminal that are not plain text: %d | pieces of the key in the terminal: %s" % (
         lines == chat.said, odd_bytes(whole), key_in_terminal if key_in_terminal >= 0 else "(key too short to search for)"))
     if lines != chat.said:
+        failures.append("said lines")
         for a, b in zip(lines, chat.said):
             if a != b:
                 print("   kernel: " + a[:200])
                 print("   meant:  " + b[:200])
+    if odd_bytes(whole):
+        failures.append("odd bytes in the terminal")
+    if key_in_terminal > 0:
+        failures.append("the key in the terminal")
     print("the stand-in's notes:")
     seen = {}
     for line in open(log).read().splitlines():
@@ -233,6 +229,14 @@ def main():
             note.get("length note right"), note.get("key came as") == "Bearer " + KEY,
             ", ".join(sorted(k for k in note.get("notes", {}))), " | problem: " + note["problem"] if "problem" in note else "")
         seen[summary] = seen.get(summary, 0) + 1
+        # What the stand-in noted counts as well: a request that came not as meant is a failure, even when the row
+        # the kernel said was right (the length note one too small, say).
+        for what, right in (("body as meant", note.get("body as meant") is True),
+                            ("length note right", note.get("length note right") is True),
+                            ("key came whole", note.get("key came as") == "Bearer " + KEY),
+                            ("no problem", "problem" not in note)):
+            if not right and "stand-in: " + what not in failures:
+                failures.append("stand-in: " + what)
     for summary, count in seen.items():
         print("   %d times: %s" % (count, summary))
     print("FAILURES: %s" % failures if failures else "all as meant")

@@ -21,6 +21,7 @@ from boot import HERE, RUNS, Machine
 from certs import test_keys
 from net_copy import build
 from ports import standin_port
+from verdict import Failures
 
 PORT = standin_port(4)
 ENTER = chr(10)
@@ -76,7 +77,7 @@ def main():
                               cwd=HERE)
     assert server.stdout.readline().strip() == "ready"
     machine = Machine("app-first-start-" + scenario, network="open", kernel=kernel)
-    failures = []
+    failures = Failures()
     try:
         machine.wait_for(b"repeated here:")
         # The machine's address comes from the network's task; wait for it before anything that needs it.

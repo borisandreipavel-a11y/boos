@@ -114,33 +114,18 @@ def seen(tag, meant):
         failures.append(tag + " stand-in")
 
 
-def dump(s, name):
-    path = os.path.join(s.m.folder, name + ".mem")
-    s.m.command("pmemsave 0 0x10000000 " + path.replace(chr(92), "/"))
-    last = -1
-    for _ in range(100):
-        time.sleep(0.3)
-        size = os.path.getsize(path) if os.path.exists(path) else 0
-        if size == 0x10000000 and size == last:
-            break
-        last = size
-    data = open(path, "rb").read()
-    os.remove(path)
-    return data
-
-
 def memory(s, name, meant):
     """`meant`: text -> whole copies meant in memory. No loose piece of six signs of any of them anywhere."""
     time.sleep(0.6)
-    data = dump(s, name)
     report, wrong = [], False
-    for text, want in meant.items():
-        pieces = [text[i:i + 6].encode() for i in range(len(text) - 5)]
-        whole = data.count(text.encode())
-        loose = sum(data.count(p) for p in pieces) - whole * len(pieces)
-        report.append("%s.. %d%s" % (text[:3], whole, "" if not loose else " +%d loose" % loose))
-        if whole != want or loose:
-            wrong = True
+    with s.m.memory(name) as data:
+        for text, want in meant.items():
+            pieces = [text[i:i + 6].encode() for i in range(len(text) - 5)]
+            whole = data.count(text.encode())
+            loose = sum(data.count(p) for p in pieces) - whole * len(pieces)
+            report.append("%s.. %d%s" % (text[:3], whole, "" if not loose else " +%d loose" % loose))
+            if whole != want or loose:
+                wrong = True
     print("  %-38s %s" % (s.tag + " " + name, ", ".join(report) + (" NOT AS MEANT" if wrong else "")))
     if wrong:
         failures.append(s.tag + " " + name)
