@@ -1,7 +1,10 @@
-# The boot tests. GitHub boots the kernel in QEMU on one of its own Windows computers and runs tests of
-# test-tools/ there, for every pull request into master. For now it runs the whole set once, every suite and
-# every break on purpose (run_tests.py all), to see how long each job takes on GitHub's computer and how much of
-# its disk the tests use. See docs/testing.md, "Boot tests on GitHub".
+# The boot tests. GitHub boots the kernel in QEMU on one of its own Windows computers and runs the tests of
+# test-tools/ there through test-tools/run_tests.py:
+# - for a pull request into master, what its changes need (the runner's own pick, as on any other computer), on
+#   the pull request merged with master as master is when the run starts. A pull request that changes this file
+#   gets the whole set, since the runner's table boots nothing for a change under .github/;
+# - after each change that lands on master, the whole set: every suite and every break on purpose.
+# See docs/testing.md, "Boot tests on GitHub".
 #
 # QEMU comes from the installer for 64-bit Windows that qemu.org names (qemu.weilnetz.de), version 11.1.0. The
 # installer is refused unless its SHA-512 is the one written below, which is the one the site gives beside it.
@@ -14,21 +17,24 @@ name: Boot tests
 on:
   pull_request:
     branches: [master]
+  push:
+    branches: [master]
 
 # The tests only read the repository.
 permissions:
   contents: read
 
-# A newer push to the same pull request stops the run for the older one.
+# A newer push to the same pull request stops the run for the older one. On master a run is never stopped: a newer
+# change waits for it, and of several waiting only the newest runs.
 concurrency:
   group: boot-tests-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   boot:
     runs-on: windows-latest
-    # About twice what the whole set is expected to take here.
-    timeout-minutes: 210
+    # About twice what the whole set took here (85 minutes); what a pull request needs is the whole set at most.
+    timeout-minutes: 180
     env:
       QEMU_INSTALLER: qemu-w64-setup-20260811.exe
       QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
@@ -107,13 +113,25 @@ jobs:
             "{0}: {1:N1} GB free of {2:N1} GB" -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB)
           }
 
-      # Through the same runner as on any other computer (test-tools/run_tests.py), with two test machines side by
-      # side. What the tests make (disk files, pictures, logs, copies of the project) goes to the runner's
-      # temporary folder.
-      - name: Boot the kernel and run every test
+      # Two test machines side by side. What the tests make (disk files, pictures, logs, copies of the project) goes
+      # to the runner's temporary folder. In a pull request's trial merge, HEAD^1 is master as the merge took it.
+      - name: Boot the kernel and run the tests
         env:
           BOOS_TEST_WORK: ${{ runner.temp }}\boos-tests
-        run: python test-tools/run_tests.py all --workers 2
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne "pull_request") {
+            Write-Output "A change on master: the whole set."
+            python test-tools/run_tests.py all --workers 2
+          } else {
+            $changed = git diff --name-only HEAD^1 HEAD
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            if ($changed -contains ".github/workflows/boot-tests.yml") {
+              Write-Output "This pull request changes the boot tests themselves: the whole set."
+              python test-tools/run_tests.py all --workers 2
+            } else {
+              python test-tools/run_tests.py --base HEAD^1 --workers 2
+            }
+          }
 
       # Also after a run that did not pass: what the tests and the builds left on the disk.
       - name: How much disk the tests used
