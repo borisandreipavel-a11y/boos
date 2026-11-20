@@ -112,6 +112,7 @@ The word and the page are a demonstration of the road an answer from the network
 - **A line that begins with the word `make` and a space asks the model to write an app** (`MAKE_WORD` and `app_ask` in `apps.rs`): `make a dice that rolls`. It needs a kept key, like `ask`, and it is an errand for the network's task, like `ask`; one errand of any kind at a time. The chat box answers at once, `Kernel: I am asking the model to make "a dice that rolls".`, and the answer comes later as a row of its own.
 - **The script the model wrote is not put in the chat box.** The row says how many lines it has, and the terminal shows it, line by line. `chat_answer` hands it to `app_print_script` for that, and then runs it with `app_run`, here in the main loop, and says a second row of its own about how the run went, such as `Kernel: the app ran to its end.` While the app runs, nothing is painted in the chat box and keys wait in the keyboard's line; what the app shows appears in the box in the middle of the screen.
 - `make` by itself asks nothing and says how to ask; `makes` and `Make ...` are ordinary lines.
+- **An app that ran to its end is kept on the disk** (`app_keep` in `apps_kept.rs`), and the panel of apps near the top left of the screen lists it. Nothing is said in the chat box when it is kept; a third row comes only if it could not be, such as `Kernel: I could not keep the app, because the notebook is full.` At every start, `chat_begin` ends by finding the kept apps again and showing the panel, if any app is kept.
 
 [apps.md](apps.md) has the rest.
 

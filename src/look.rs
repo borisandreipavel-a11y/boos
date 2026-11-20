@@ -16,6 +16,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::apps_kept::apps_panel_again;
 use crate::chat::chat_paint;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_background, screen_panel_again};
@@ -340,10 +341,11 @@ pub fn look_reset_trouble() -> Vec<String> {
 
 // Paints the whole screen again in the look in use: the background and the
 // sentence, then the chat box with everything in it, then the box with an
-// app's text, if an app has shown one. The background is painted first
-// because it covers everything.
+// app's text, if an app has shown one, and the panel of apps, if any app is
+// kept. The background is painted first because it covers everything.
 pub fn look_paint() {
     screen_background();
     chat_paint();
     screen_panel_again();
+    apps_panel_again();
 }

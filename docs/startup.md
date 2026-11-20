@@ -92,7 +92,7 @@ State of the processor at handover, as seen in QEMU with its UEFI firmware. The 
 ```
 Hello from my kernel!
 The firmware has stepped aside. This machine is mine.
-Free memory: 198 MB
+Free memory: 197 MB
 Page tables: the kernel's own, covering 4 GB
 Heap: Hello from the heap! [1, 4, 9, 16, 25, 36, 49, 64, 81, 100], kept at 0x400000000020
 Screen: found, 1280 dots wide and 800 dots high, its memory starts at 0x80000000
@@ -139,3 +139,5 @@ That is with QEMU's 256 MB, and with the network card and the processor that `ru
 The lines about the page come from the network stack's task as well. The name line follows the address line within about a tenth of a second. Under two seconds later come the line saying that the site proved who it is, and then the report (the answer line, the page's rows and the length line) in one piece. They land among the task lines: after the second of them in the last run against the real site, after the third in the two runs before the outside crates were built optimized. The way of scrambling named in the first of them is the site's choice between the two the kernel offers. The address in the name line and the page itself belong to the site and can change; the listing shows what came on 2026-11-17, with the page's rows left out. If the page cannot be fetched, one line says why instead, `Network: no page fetched, because ...`, and it can come as late as after the prompt. [network.md](network.md) and [encryption.md](encryption.md) list the reasons. Keys typed in the QEMU window (not in the terminal) appear in the chat box at any time, also while the tasks are still running. When Enter is pressed, the typed line and the kernel's answer are added to the terminal as two lines, `You: ...` (with the person's name in place of `You` once one was given) and `Kernel: you said "..."`, and the line is kept on the disk; see [chat.md](chat.md). While the kernel waits for a name, the line sent is the answer instead.
 
 The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks. The rest count shows that a waiting task uses no processor time. Fetching the page at every start is a demonstration too.
+
+When apps made on request are kept in the notebook, `chat_begin` ends by finding them, and lines that begin with `Apps:` follow the rows of the chat box: how many are kept, and the request each was made for, the one kept last first. The panel of apps appears near the top left of the screen at the same time. Without kept apps there are no such lines and no panel. See "Keeping an app" in [apps.md](apps.md).
