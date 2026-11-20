@@ -7,10 +7,11 @@
 //! the disk, the name as it was given and the key only locked. The name
 //! stands in front of the person's rows in the chat box, and every later
 //! start greets them by it. A start where a key is locked on the disk asks
-//! for the password, which unlocks it. The line `setup`, sent by itself, asks
-//! both things again. When the questions about the key are over, the
-//! question for the look follows, if the notebook holds no answer about the
-//! look yet, and always after `setup` (see `look.rs`).
+//! for the password, which unlocks it. The line `setup`, sent by itself,
+//! brings the first look back at once and asks both things again. When the
+//! questions about the key are over, the question for the look follows, if
+//! the notebook holds no answer about the look yet, and always after `setup`
+//! (see `look.rs`).
 //! Only the chat box calls these functions, so only the main loop may.
 //! Notes: `docs/chat.md`.
 
@@ -21,7 +22,7 @@ use alloc::vec::Vec;
 
 use crate::errand::{Errand, errand_ask};
 use crate::lock::NOT_UNLOCKED;
-use crate::look::{look_due, look_question};
+use crate::look::{look_due, look_question, look_reset, look_reset_trouble};
 use crate::model::KeyVerdict;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::random::random_number;
@@ -125,16 +126,26 @@ fn wait_for(what: Waiting) {
 // The questions about the name and the key, and a `setup`, are over: nothing
 // more is waited for here. If the look is still to be asked (see `look.rs`),
 // its question follows `rows`, in place of the words that say the chat box is
-// free. Gives back the rows to say.
+// free. If `setup` could not keep the first look on the disk, the rows that
+// say so come last, before that question (see `look_reset_trouble`). Gives
+// back the rows to say.
 fn finish(mut rows: Vec<String>) -> Vec<String> {
     let setting_up = unsafe { SETTING_UP };
     unsafe {
         WAITING = Waiting::Nothing;
         SETTING_UP = false;
     }
+    let mut trouble = look_reset_trouble();
     if look_due(setting_up) {
         free_words_drop(&mut rows);
+        rows.append(&mut trouble);
         rows.push(look_question());
+    } else if let Some(last) = trouble.last_mut() {
+        // No question follows. Such rows come here only from a notebook that
+        // cannot be added to, and then nothing in `rows` says that the chat
+        // box is free, so their last row says it.
+        last.push_str(TYPE_A_LINE);
+        rows.append(&mut trouble);
     }
     rows
 }
@@ -335,9 +346,12 @@ fn choose_password() -> String {
     format!("Kernel: now choose a password of at least {} signs to lock it with.", PASSWORD_LEAST)
 }
 
-// The line `setup`: the kernel asks for the name again, and then about the
+// The line `setup`: the first look comes back on the screen at once, so that
+// every question after it can be read whatever look was in use (see
+// `look_reset`); then the kernel asks for the name again, and then about the
 // key. Gives back the question for the name.
 pub fn onboarding_again() -> String {
+    look_reset();
     unsafe { SETTING_UP = true };
     wait_for(Waiting::Name);
     question()
