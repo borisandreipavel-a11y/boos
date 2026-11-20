@@ -4,11 +4,12 @@
 //! that look at once, and Enter alone keeps it in the notebook on the disk,
 //! so that every later start shows it too. The onboarding asks the same
 //! question once its questions about the key are over, if the notebook holds
-//! no answer about the look yet (see `onboarding.rs`). Sizes and places are
-//! not part of a look: they stay in `CHAT_STYLE` in `chat.rs` and
-//! `PANEL_STYLE` in `screen.rs`. Only the startup code and the main loop may
-//! call these functions. Notes: `docs/screen.md` ("The look") and
-//! `docs/chat.md` ("Picking a look").
+//! no answer about the look yet (see `onboarding.rs`). The line `setup`
+//! brings the first look back at once, so that no look can leave the screen
+//! unreadable (see `look_reset`). Sizes and places are not part of a look:
+//! they stay in `CHAT_STYLE` in `chat.rs` and `PANEL_STYLE` in `screen.rs`.
+//! Only the startup code and the main loop may call these functions. Notes:
+//! `docs/screen.md` ("The look") and `docs/chat.md` ("Picking a look").
 
 use alloc::format;
 use alloc::string::String;
@@ -26,7 +27,8 @@ pub const LOOK_WORD: &str = "look";
 // The name under which the look in use is kept in the notebook. The entry
 // holds the look's name, such as "Night". An entry that holds no signs means
 // that the question for a look was answered without picking one: the first
-// look stays, and later starts do not ask again.
+// look stays, and later starts do not ask again. `setup` keeps such an entry
+// when the notebook holds another look (see `look_reset`).
 const LOOK_ENTRY: &str = "look";
 
 // One look: the colour of everything the kernel draws.
@@ -123,15 +125,18 @@ const LOOKS: [Look; 4] = [
 // Which look is in use, as its place in the list, counted from 0; whether the
 // kernel waits for the number of a look; whether a look was tried since it
 // asked, so that it is shown but not kept yet; which look the notebook holds,
-// if it holds one this kernel knows; and whether the notebook holds an
-// answer about the look at all: a look this kernel knows, or an entry with no
-// signs. Nothing protects these against a second task, so only the startup
-// code and the main loop may touch them.
+// if it holds one this kernel knows; whether the notebook holds an answer
+// about the look at all: a look this kernel knows, or an entry with no signs;
+// and, when `setup` could not keep the first look on the disk, why, and the
+// place of the look the notebook still holds, until that is said. Nothing
+// protects these against a second task, so only the startup code and the
+// main loop may touch them.
 static mut IN_USE: usize = 0;
 static mut ASKING: bool = false;
 static mut TRIED: bool = false;
 static mut KEPT: Option<usize> = None;
 static mut ANSWERED: bool = false;
+static mut RESET_TROUBLE: Option<(&'static str, usize)> = None;
 
 // The look in use. Every piece of drawing asks for it each time it paints.
 pub fn look() -> Look {
@@ -143,7 +148,12 @@ pub fn look() -> Look {
 
 // The look in use, named the way the kernel says it: "look 2, Night".
 fn look_named() -> String {
-    format!("look {}, {}", unsafe { IN_USE } + 1, look().name)
+    place_named(unsafe { IN_USE })
+}
+
+// A look of the list, by its place, named the way the kernel says it.
+fn place_named(place: usize) -> String {
+    format!("look {}, {}", place + 1, LOOKS.get(place).unwrap_or(&LOOKS[0]).name)
 }
 
 // Whether the kernel waits for the number of a look. While it does, the next
@@ -276,6 +286,56 @@ pub fn look_begin() -> (Option<String>, bool) {
         }
         Err(reason) => (Some(format!("Kernel: I cannot read the look kept on the disk, because {}.", reason)), false),
     }
+}
+
+// The line `setup`: puts the first look in use at once, before anything is
+// asked, and paints the whole screen again in it, so that every question
+// after it can be read, whatever look was in use. If the notebook holds
+// another look, an entry with no signs is kept under `look` at once, so that
+// the next start shows the first look too, even when the machine is switched
+// off before the questions are over; the question for a look at the end of
+// `setup` can keep another. If that entry cannot be written, the first look
+// lasts until the machine is switched off, and `look_reset_trouble` says so
+// when the questions are over. With the first look in use and no other in the
+// notebook, nothing changes and nothing is written.
+pub fn look_reset() {
+    let changed = unsafe { IN_USE } != 0;
+    unsafe { IN_USE = 0 };
+    if changed {
+        look_paint();
+    }
+    match unsafe { KEPT } {
+        Some(place) if place != 0 => match notebook_keep(LOOK_ENTRY, &[]) {
+            // The notebook now says what Enter alone says at a first start:
+            // no look was picked, so the first look shows. `KEPT` follows
+            // it; otherwise a look picked again at the end of `setup` would
+            // count as kept already, and would not be written.
+            Ok(()) => unsafe {
+                KEPT = None;
+                ANSWERED = true;
+            },
+            Err(reason) => unsafe { RESET_TROUBLE = Some((reason, place)) },
+        },
+        // Nothing kept, an entry with no signs, a name the kernel does not
+        // know, or the first look: the next start shows the first look
+        // already.
+        _ => {}
+    }
+}
+
+// What the kernel says, once the questions of `setup` are over, when the
+// first look could not be kept on the disk there: why, and which look the
+// next start will show instead. Gives back nothing otherwise, and nothing the
+// second time it is asked.
+pub fn look_reset_trouble() -> Vec<String> {
+    let Some((reason, place)) = (unsafe { RESET_TROUBLE }) else {
+        return Vec::new();
+    };
+    unsafe { RESET_TROUBLE = None };
+    vec![
+        format!("Kernel: I could not keep {}, on the disk, because {}.", place_named(0), reason),
+        format!("Kernel: so the next start shows {}, again.", place_named(place)),
+    ]
 }
 
 // Paints the whole screen again in the look in use: the background and the
