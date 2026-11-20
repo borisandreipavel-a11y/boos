@@ -1,17 +1,13 @@
-"""Breaks the look on purpose, one break at a time, in the project's own source, and sees whether test_look.py
-catches each one: the looks and the line `look`, and the question for a look at the end of the onboarding. Every
-changed file is put back byte for byte from what was read before the break, with its time set to now, and the
-kernel is built again at the end. Usage: python run_look_breaks.py [break ...]   (default: all)"""
+"""Breaks the look on purpose, one break at a time, in a copy of the project (copy_break.py), and sees whether
+test_look.py catches each one, booting the copy's kernel: the looks and the line `look`, and the question for a look
+at the end of the onboarding. The project itself is only read, so other tests can run beside these.
+Usage: python run_look_breaks.py [break ...]   (default: all)
+BREAKS is data: run_tests.py runs the same breaks."""
 import os
 import subprocess
 import sys
-import time
-
-from boot import PROJECT
-from build_all import build
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(PROJECT, "src")
 
 # label: (file, old, new, scenarios of test_look.py that must catch it)
 BREAKS = {
@@ -64,37 +60,30 @@ BREAKS = {
         ["locked"]),
 }
 
+def main():
+    from copy_break import NotMade, make
+    from places import RUNS
+    kernel_out = os.path.join(RUNS, "look-break-kernel.efi")
+    results, not_made = [], 0
+    for label in sys.argv[1:] or list(BREAKS):
+        file, old, new, scenarios = BREAKS[label]
+        print("BREAK ON PURPOSE:", label, flush=True)
+        try:
+            kernel = make(file, old, new, kernel_out)
+        except (NotMade, RuntimeError) as reason:
+            not_made += 1
+            print("   THE BREAK WAS NOT MADE |", str(reason)[-400:], flush=True)
+            continue
+        run = subprocess.run([sys.executable, "test_look.py"] + scenarios, cwd=HERE, capture_output=True, text=True,
+                             env=dict(os.environ, KERNEL_FILE=kernel))
+        last = [l for l in run.stdout.splitlines() if l.startswith("FAILURES:")]
+        caught = bool(last) and last[-1] != "FAILURES: none"
+        wrong = [l.strip() for l in run.stdout.splitlines() if ("dots wrong" in l or ("terminal and disk" in l and "as meant" not in l) or "VAIN" in l)]
+        print("   caught" if caught else "   NOT CAUGHT", "|", (wrong[0][:170] if wrong else (run.stdout + run.stderr)[-400:]), flush=True)
+        results.append((label, caught))
+    print("caught %d of %d%s" % (sum(c for _, c in results), len(results), "; %d not made" % not_made if not_made else ""))
+    sys.exit(1 if not_made else 0)
+
+
 if __name__ == "__main__":
-    results = []
-    originals = {}
-    try:
-        for label in sys.argv[1:] or list(BREAKS):
-            file, old, new, scenarios = BREAKS[label]
-            path = os.path.join(SRC, file)
-            if path not in originals:
-                originals[path] = open(path, "rb").read()
-            text = originals[path].decode()
-            if "\r\n" in text:
-                old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
-            assert text.count(old) == 1, (label, text.count(old))
-            open(path, "wb").write(text.replace(old, new).encode())
-            os.utime(path, (time.time(), time.time()))
-            print("BREAK ON PURPOSE:", label, flush=True)
-            build(quiet=True)
-            run = subprocess.run([sys.executable, "test_look.py"] + scenarios, cwd=HERE, capture_output=True, text=True)
-            last = [l for l in run.stdout.splitlines() if l.startswith("FAILURES:")]
-            caught = bool(last) and last[-1] != "FAILURES: none"
-            wrong = [l.strip() for l in run.stdout.splitlines() if ("dots wrong" in l or ("terminal and disk" in l and "as meant" not in l) or "VAIN" in l)]
-            print("   caught" if caught else "   NOT CAUGHT", "|", (wrong[0][:170] if wrong else (run.stdout + run.stderr)[-400:]), flush=True)
-            results.append((label, caught))
-            # Put the file back before the next break.
-            open(path, "wb").write(originals[path])
-            os.utime(path, (time.time(), time.time()))
-    finally:
-        for path, data in originals.items():
-            open(path, "wb").write(data)
-            os.utime(path, (time.time(), time.time()))
-            assert open(path, "rb").read() == data, path
-        build(quiet=True)
-        print("source put back byte for byte and built again", flush=True)
-    print("caught %d of %d" % (sum(c for _, c in results), len(results)))
+    main()

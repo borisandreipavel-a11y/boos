@@ -56,13 +56,14 @@ from onboard_model import name_of
 from picture import compare, to_png
 from places import WASM
 from ports import standin_port
+from verdict import Failures
 
 PORT = standin_port(5)
 KEY = "sk-orca-TEST_Kp4m/Wz7+Qa2Rt8Vc5Nx3=="
 OLDER = "7f3ac2e"          # the kernel from before things in pieces and kept apps
 SCRIPT = app_cases.SCRIPT.strip().encode()
 EXACT = app_cases.EXACT.encode()
-failures = []
+failures = Failures()
 _copy = []
 
 

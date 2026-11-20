@@ -30,6 +30,7 @@ from interp_helpers import odd_bytes
 from net_copy import build
 from picture import Chat, compare, expected
 from ports import standin_port
+from verdict import Failures
 
 PORT = standin_port(3)  # 44303 unless BOOS_PORT_BASE says otherwise
 ENTER = chr(10)
@@ -154,7 +155,7 @@ def no_card():
     machine = Machine("app-nocard", network=False)
     chat = AppChat(1280)
     chat.network = "none"
-    failures = []
+    failures = Failures()
     try:
         machine.wait_for(b"repeated here:")
         time.sleep(1.5)
@@ -197,7 +198,7 @@ def main():
     assert server.stdout.readline().strip() == "ready"
     machine = Machine("app", network="open", kernel=kernel)
     chat = AppChat(1280)
-    failures = []
+    failures = Failures()
     asked = []  # what each request that reached the stand-in asked for, in order
     print("the made-up key is %d signs long" % len(KEY))
     try:
@@ -332,20 +333,10 @@ def main():
         print("%-12s       | row %s | picture: %s" % ("ask", "as meant" if ask_right else "NOT AS MEANT", look(machine, chat, "after-ask", failures, [panel])[0]))
         print("             " + said[:160])
         if dump:
-            path = os.path.join(machine.folder, "after.mem")
-            machine.command("pmemsave 0 0x10000000 " + path.replace(chr(92), "/"))
-            last = -1
-            for _ in range(100):
-                time.sleep(0.3)
-                size = os.path.getsize(path) if os.path.exists(path) else 0
-                if size == 0x10000000 and size == last:
-                    break
-                last = size
-            data = open(path, "rb").read()
-            os.remove(path)
-            pieces = [KEY[i:i + 6].encode() for i in range(len(KEY) - 5)]
-            print("memory after the last answer: the key whole %d times; pieces of it at %d places" % (
-                data.count(KEY.encode()), sum(data.count(piece) for piece in pieces)))
+            with machine.memory("after") as data:
+                pieces = [KEY[i:i + 6].encode() for i in range(len(KEY) - 5)]
+                print("memory after the last answer: the key whole %d times; pieces of it at %d places" % (
+                    data.count(KEY.encode()), sum(data.count(piece) for piece in pieces)))
     finally:
         raw = machine.quit()
         server.kill()

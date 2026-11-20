@@ -5,7 +5,11 @@ real project.
     kernel = build(port, roots=["a", "b"], extra=None)
 
 `roots` names the test authorities (folders under tls/) whose roots are added to the kernel's list; an empty
-list leaves the kernel's own 112. The copy also prints a digest of everything that arrived through the link."""
+list leaves the kernel's own 112. The copy also prints a digest of everything that arrived through the link.
+
+The copy lies in BOOS_COPIES when that is set (run_tests.py shares one copy among the tests it runs at once), and in
+this checkout's work folder otherwise. It is changed and built in the build turn (turns.py), and the kernel that
+build() gives back is a copy of its own in the test's work folder, so the next build cannot change it."""
 import os
 import shutil
 import subprocess
@@ -13,8 +17,9 @@ import sys
 
 from certs import test_keys
 from places import PROJECT, RUNS, WASM
+from turns import build_turn
 
-COPY = os.path.join(RUNS, "net-copy")
+COPY = os.path.join(os.environ.get("BOOS_COPIES") or RUNS, "net-copy")
 
 
 def swap(text, old, new, count=1):
@@ -48,6 +53,15 @@ def fresh():
 
 def build(port, roots=(), more=None, redirect=True):
     """With redirect=False the copy talks to the real sites, as the project's kernel does; only `more` differs."""
+    with build_turn():
+        built = _build(port, roots, more, redirect)
+        kernel = os.path.join(RUNS, "net-copy-kernel.efi")
+        os.makedirs(RUNS, exist_ok=True)
+        shutil.copyfile(built, kernel)
+    return kernel
+
+
+def _build(port, roots, more, redirect):
     fresh()
     path = os.path.join(COPY, "src", "page.rs")
     page = open(path, "rb").read().decode().replace("\r\n", "\n")
@@ -97,9 +111,13 @@ def build(port, roots=(), more=None, redirect=True):
             print(built.stderr[-3000:])
             sys.exit(1)
 
+    kernel = os.path.join(COPY, "target", "x86_64-unknown-uefi", "debug", "boos.efi")
+    # Removed first, so that a failed build can never leave an earlier build's kernel (with a break in it) behind.
+    if os.path.exists(kernel):
+        os.remove(kernel)
     built = subprocess.run(["cargo", "build"], cwd=COPY, capture_output=True, text=True)
-    if built.returncode != 0:
+    if built.returncode != 0 or not os.path.exists(kernel):
         print("THE COPY'S BUILD FAILED")
         print(built.stderr[-3000:])
         sys.exit(1)
-    return os.path.join(COPY, "target", "x86_64-unknown-uefi", "debug", "boos.efi")
+    return kernel

@@ -25,40 +25,25 @@ def pieces(text):
     return [text[i:i + 6].encode() for i in range(0, len(text) - 5)]
 
 
-def dump(s, name):
-    path = os.path.join(s.m.folder, name + ".mem")
-    s.m.command("pmemsave 0 0x10000000 " + path.replace(chr(92), "/"))
-    last = -1
-    for _ in range(100):
-        time.sleep(0.3)
-        size = os.path.getsize(path) if os.path.exists(path) else 0
-        if size == 0x10000000 and size == last:
-            break
-        last = size
-    data = open(path, "rb").read()
-    os.remove(path)
-    return data
-
-
 def check(s, name, meant, derived=None):
     """`meant`: label -> whole copies meant in memory; every other secret must be absent. No loose pieces anywhere."""
     time.sleep(0.6)
-    data = dump(s, name)
     report = []
-    for label, text in ALL:
-        whole = data.count(text.encode())
-        loose = sum(data.count(p) for p in pieces(text)) - whole * len(pieces(text))
-        want = meant.get(label, 0)
-        if whole or label in meant:
-            report.append("%s %d" % (label, whole))
-        if whole != want or loose:
-            failures.append("%s: %s whole %d (meant %d), loose %d" % (name, label, whole, want, loose))
-            report.append("(%s MEANT %d, LOOSE %d)" % (label, want, loose))
-    if derived is not None:
-        found = data.count(derived)
-        report.append("derived key %d" % found)
-        if found:
-            failures.append(name + ": the derived key is in memory")
+    with s.m.memory(name) as data:
+        for label, text in ALL:
+            whole = data.count(text.encode())
+            loose = sum(data.count(p) for p in pieces(text)) - whole * len(pieces(text))
+            want = meant.get(label, 0)
+            if whole or label in meant:
+                report.append("%s %d" % (label, whole))
+            if whole != want or loose:
+                failures.append("%s: %s whole %d (meant %d), loose %d" % (name, label, whole, want, loose))
+                report.append("(%s MEANT %d, LOOSE %d)" % (label, want, loose))
+        if derived is not None:
+            found = data.count(derived)
+            report.append("derived key %d" % found)
+            if found:
+                failures.append(name + ": the derived key is in memory")
     print("  %-34s %s" % (name, ", ".join(report) or "nothing"))
 
 
