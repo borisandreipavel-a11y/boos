@@ -12,8 +12,9 @@ from keyref import head_facts, unlock
 from nb import BLOCK, read_notebook
 from onboard_model import name_of
 from picture import compare, expected, to_png
+from verdict import Failures
 
-failures = []
+failures = Failures()
 
 
 def fresh_disk(name, divided=True):

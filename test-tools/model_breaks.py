@@ -11,16 +11,21 @@ def nowipe(text):
     return swap(text, "    wipe(&mut request);\n", "    // BREAK: the request is not wiped\n")
 
 
+# The end of model_tell, the question's path: model_app has a room of its own, ended the same way.
+TELL_END = "        question_ask(interface, card, sockets, name_server, &key_room[..key_length])\n    };\n"
+
+
 def nowipe_copy(text):
-    return swap(text, "    wipe(&mut key_room);\n", "    // BREAK: the copy of the key is not wiped\n")
+    return swap(text, TELL_END + "    wipe(&mut key_room);\n", TELL_END + "    // BREAK: the copy of the key is not wiped\n")
 
 
 def nohide(text):
-    return swap(text, "    key_hide(&mut signs, key);\n", "    // BREAK\n")
+    # In words_cut, which every row with the model's words goes through; app_sentence hides the key in a script too.
+    return swap(text, "    key_hide(&mut signs, key);\n    signs.truncate(longest);\n", "    // BREAK\n    signs.truncate(longest);\n")
 
 
 def cutfirst(text):
-    return swap(text, "    key_hide(&mut signs, key);\n    signs.truncate(WORDS_SHOWN);\n", "    signs.truncate(WORDS_SHOWN);\n    key_hide(&mut signs, key);\n")
+    return swap(text, "    key_hide(&mut signs, key);\n    signs.truncate(longest);\n", "    signs.truncate(longest);\n    key_hide(&mut signs, key);\n")
 
 
 def length(text):
@@ -28,7 +33,9 @@ def length(text):
 
 
 def path(text):
-    return swap(text, 'Step::Name("choices"), Step::Place(0)', 'Step::Name("choices"), Step::Place(1)')
+    # The path to the model's words; the paths to the pieces, the ending and the thoughts begin the same way.
+    return swap(text, "const WORDS: &[Step<'static>] = &[Step::Name(\"choices\"), Step::Place(0)",
+                "const WORDS: &[Step<'static>] = &[Step::Name(\"choices\"), Step::Place(1)")
 
 
 def toolong(text):
@@ -64,9 +71,24 @@ pub fn stack_depth_now() -> usize {
 
 
 def stack_model(text):
-    return swap(text, "    wipe(&mut key_room);\n",
-                "    wipe(&mut key_room);\n    crate::serial::serial_print(&format!(\"TEST stack {}\\r\\n\", crate::tasks::stack_depth_now()));\n")
+    return swap(text, TELL_END + "    wipe(&mut key_room);\n",
+                TELL_END + "    wipe(&mut key_room);\n    crate::serial::serial_print(&format!(\"TEST stack {}\\r\\n\", crate::tasks::stack_depth_now()));\n")
 
+
+# name: (the cases of test_model.py that should catch it, whether the memory is searched after the last answer)
+CATCH = {
+    "nowipe": ("good", True),
+    "nowipe_copy": ("good", True),
+    "nohide": ("echo,echopart", False),
+    "cutfirst": ("echocut", False),
+    "length": ("good", False),
+    "path": ("good", False),
+    "toolong": ("huge", False),
+    "nokeycheck": ("good", False),
+    "othername": ("good", False),
+}
+# Known not to be caught (docs/testing.md): what was left behind had been written over by the time of the dump.
+MISSES = {"nowipe", "nowipe_copy"}
 
 BREAKS = {
     "stack": {"tasks.rs": stack_tasks, "model.rs": stack_model},

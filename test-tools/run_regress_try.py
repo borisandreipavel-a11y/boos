@@ -7,9 +7,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_KINDS = ("wrongkey,credit,echo,echopart,echoescaped,echocut,good,goodlong,harmful,flaterror,keepopen,page,nobody,chunked,"
-               "cutoff,nothttp,huge,silent,empty,lengthempty,lengthnull,nullthink,pieces,lengthwords,filtered,filteredwords,spaces,"
-               "nocontent,oddending,noending,blank,echo200,nochoices,streamed,otherform,echobody,notfound,upstream,upstreambare")
+from suites import MODEL_KINDS  # the same list run_tests.py runs
 # The model's cases type "key" and "ask" as ordinary lines: they boot with a disk that is not divided, so that
 # no notebook is opened and nothing is asked at the start.
 UNDIVIDED = {"DIVIDED_DISK": ""}

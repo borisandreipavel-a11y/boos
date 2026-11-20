@@ -10,10 +10,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-APP_KINDS = ("app,appfenced,appprose,appopen,appclose,apptwo,appmarksonly,appcut,appfiltered,appthink,appnull,appexact,appover,"
-             "appodd,appecho,apppieces,appspaces,appcrlf,appnoending,apponeline,slowapp,realrefusal,upstream,upstreambare,huge,"
-             "nothttp,otherform,streamed,runshow,runprint,runcut,runcut41,runexact40,runsplit,runloop,runmemory,runmistake,"
-             "runsyntax,runmanyshow,runmanyprint,runrandom,runrandom,runreal,runslow,runnil,runrecurse")
+from suites import APP_KINDS  # the same list run_tests.py runs
 RUNS = [
     ["build_all.py"],
     ["test_app.py", APP_KINDS, "dump"],

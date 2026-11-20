@@ -3,6 +3,7 @@ monitor, saves pictures of the screen, and gives back what the kernel printed.
 
 Used as a module by the test scripts in this folder."""
 
+import contextlib
 import os
 import shutil
 import socket
@@ -10,6 +11,7 @@ import subprocess
 import time
 
 from places import FIRMWARE, HERE, KERNEL, PROJECT, QEMU, QEMU_IMG, RUNS  # noqa: F401 (others import them from here)
+from turns import memory_turn
 HINT = b"repeated here:"
 
 KEY_NAMES = {
@@ -162,6 +164,25 @@ class Machine:
                     return path
                 last = size
         raise RuntimeError("no picture saved: " + path)
+
+    @contextlib.contextmanager
+    def memory(self, name):
+        """The machine's whole memory (256 MB) as bytes, inside a `with`. The copy is made, read and searched in the
+        memory turn (turns.py): one test at a time on the computer, so two copies never sit in memory at once.
+        Its file is removed as soon as it is read."""
+        path = os.path.join(self.folder, name + ".mem")
+        with memory_turn():
+            self.command("pmemsave 0 0x10000000 " + path.replace("\\", "/"))
+            last = -1
+            for _ in range(100):
+                time.sleep(0.3)
+                size = os.path.getsize(path) if os.path.exists(path) else 0
+                if size == 0x10000000 and size == last:
+                    break
+                last = size
+            data = open(path, "rb").read()
+            os.remove(path)
+            yield data
 
     def quit(self):
         try:

@@ -17,11 +17,12 @@ from onboard_model import name_of
 from start_helper import fresh_disk
 
 from ports import standin_port
+from verdict import Failures
 PORT = standin_port(1)  # 44301 unless BOOS_PORT_BASE says otherwise
 TLS = test_keys()
 KEY = "sk-orca-TEST_Made-Up-Key-0123456789"
 PW = "blue lamp"
-failures = []
+failures = Failures()
 
 
 def press(machine, text, pause=0.22):

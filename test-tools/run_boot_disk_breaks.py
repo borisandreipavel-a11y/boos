@@ -44,10 +44,12 @@ if __name__ == "__main__":
     copy_folder = os.path.join(RUNS, "boot-disk-break-copy")
     names = sys.argv[1:] or list(BREAKS)
     caught = 0
+    missed = []
     for label in names:
         old, new, scenarios = BREAKS[label]
         if source.count(old) != 1:
             print("%-46s THE BREAK COULD NOT BE MADE (its text stands %d times)" % (label, source.count(old)), flush=True)
+            missed.append(label + " (not made)")
             continue
         shutil.rmtree(copy_folder, ignore_errors=True)
         os.makedirs(copy_folder)
@@ -61,9 +63,14 @@ if __name__ == "__main__":
         verdict = [line for line in lines if line.startswith("FAILURES:")]
         is_caught = done.returncode != 0 and bool(verdict) and verdict[-1] != "FAILURES: none"
         caught += is_caught
+        if not is_caught:
+            missed.append(label)
         # The test names what went wrong in the lines after its verdict.
         after = lines[lines.index(verdict[-1]) + 1:] if verdict else []
         why = [line.strip() for line in after if line.strip()]
         print("%-46s %s | %s" % (label, "caught" if is_caught else "NOT CAUGHT",
                                  (" / ".join(why) if why else (done.stdout + done.stderr)[-200:])[:400]), flush=True)
     print("caught %d of %d" % (caught, len(names)), flush=True)
+    # The verdict line, as every suite ends: run_tests.py runs this list as one job of its own (suites.py).
+    print("FAILURES: " + ("none" if not missed else str(missed)), flush=True)
+    sys.exit(1 if missed else 0)

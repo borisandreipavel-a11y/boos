@@ -45,7 +45,8 @@ def run(ending):
         print("  %-38s %s" % ("his-kill-1 notebook after the kill", names))
         if names[-1:] != ["look"]:
             failures.append("his-kill-1 notebook")
-    s = Start("his-%s-2" % ending, disk, LookChat(1280, kept_name=b"Ada", key_entry=b"", last_line=b"look", kept_look=b"Night"))
+    # No last line: `look` was the answer to the onboarding's question for a look, and an answer is not kept as one.
+    s = Start("his-%s-2" % ending, disk, LookChat(1280, kept_name=b"Ada", key_entry=b"", kept_look=b"Night"))
     s.look("1-second-start-in-night")
     s.end()
 

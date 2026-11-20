@@ -1,14 +1,17 @@
 """Limits, long rows, more rows than fit, every sign. Usage:
-   python test_more.py <tag> [size=WxH] [noscreen] [memory=96M] [qemu options...]"""
+   python test_more.py <tag> [size=WxH] [noscreen] [memory=96M] [shift] [qemu options...]
+With `shift`, test_shift.py's keys and pictures follow in the same start, so that one boot serves both tests; the
+terminal's rows are then checked for both."""
 
 import sys
 import time
 
 from boot import Machine
 from picture import Chat, compare, expected, to_png
+from verdict import Failures
 
 tag = sys.argv[1]
-width, height, screen, memory = 1280, 800, True, "256M"
+width, height, screen, memory, with_shift = 1280, 800, True, "256M", False
 extra = []
 for option in sys.argv[2:]:
     if option.startswith("size="):
@@ -17,11 +20,15 @@ for option in sys.argv[2:]:
         screen = False
     elif option.startswith("memory="):
         memory = option[7:]
+    elif option == "shift":
+        with_shift = True
     else:
         extra.append(option)
+if with_shift and (not screen or (width, height) != (1280, 800)):
+    sys.exit("`shift` needs the screen at 1280 by 800, as test_shift.py has it")
 
 machine = Machine(tag, extra, memory=memory)
-failures = []
+failures = Failures()
 chat = Chat(width if screen else None)
 
 
@@ -71,6 +78,10 @@ try:
     last = look("8-every-sign-sent")
     if last:
         to_png(last, last[:-4] + ".png")
+    if with_shift:
+        from test_shift import steps
+        print("--- Shift, in the same start")
+        steps(machine, chat, lambda name: look("shift-" + name))
 finally:
     serial = machine.quit()
 
