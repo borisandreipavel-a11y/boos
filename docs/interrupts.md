@@ -22,7 +22,7 @@ Both go through the interrupt table.
 - Each of the 32 failures has a small stub of machine instructions, made by the `fault_entry!` macro and listed with its name in `FAULTS` (`faults.rs`).
 - A stub puts the failure's number in `edi` and the stack address in `rsi`, then calls `report_fault`, which is `extern "sysv64"` so that those two registers are its two arguments.
 - Some failures come with a detail code from the processor and some do not. For those that do not, the stub pushes a zero, so `FaultNotes` always has the same shape. `has_code` in `FAULTS` marks the ones that bring their own.
-- `report_fault` prints one line and stops for good with `stop()`. The fault stubs never return.
+- `report_fault` prints one line, shows it on the screen too with the lines the kernel said before it (the stop screen; see "The kernel's lines" in [screen.md](screen.md)), and stops for good with `stop()`. The fault stubs never return.
 - The stubs are naked functions (`#[unsafe(naked)]` with `naked_asm!`), because Rust's own `extern "x86-interrupt"` is not available on stable Rust.
 
 What the reports look like:
@@ -36,11 +36,13 @@ Kernel panic: src\frames.rs:29: the machine is out of memory
 - "at" is the address of the instruction that failed.
 - "touching", shown for a page fault, is the address it tried to use (the processor keeps it in `cr2`).
 - The detail code is shown when it is not zero.
-- A panic is Rust code giving up, for example on a list index out of range. The panic handler in `main.rs` switches signals off, prints the file, the line and the message, then stops.
+- A panic is Rust code giving up, for example on a list index out of range. The panic handler in `main.rs` switches signals off, prints the file, the line and the message, shows the stop screen too, then stops.
+- On the stop screen the report stands at the top under "The kernel stopped:", word for word as printed, and below it the last lines the kernel said before it.
 
 Limits:
 
 - There is no spare stack. A failure inside `report_fault`, or running out of stack, resets the machine without a message.
+- A failure while the stop screen is painted is reported through the serial port only; the stop screen is not begun again. A failure before the kernel knows the screen, right after the firmware steps aside, shows nothing on the screen.
 
 ## The interrupt controller (PIC)
 
@@ -79,7 +81,7 @@ Limits:
 - `on_keyboard` checks that a byte is really waiting, reads it and puts it in `KEY_QUEUE`: 16 slots, with the counters `KEYS_ARRIVED` and `KEYS_TAKEN`, all atomics. When the queue is full the key is dropped. It always ends with `signal_done`.
 - The mouse is switched off in the settings byte on purpose. The mouse shares the keyboard's waiting byte, and nothing listens on its line, so a mouse byte would block the keyboard.
 - `next_key` empties each place of the queue as it takes the key out of it. Without that the last sixteen key numbers stayed readable there until later keys took their places, and a typed secret is made of key numbers too (see [chat.md](chat.md)).
-- The main loop takes keys out with `next_key`, turns them into letters with `key_letter`, and hands each letter to the chat box (`chat_key`, see [chat.md](chat.md)).
+- The main loop takes keys out with `next_key`, hands every key number to `lines_key` first (F1, key number 59, `F1_KEY`, shows the kernel's lines, and a key pressed while they show brings the usual picture back; see "The kernel's lines" in [screen.md](screen.md)), turns them into letters with `key_letter`, and hands each letter to the chat box (`chat_key`, see [chat.md](chat.md)).
 - A key number says where the key sits, not what is printed on it. Letting a key go sends the same number plus 128.
 - `key_letter` knows the US layout, the space bar, Enter and Backspace. Enter and Backspace have no letter; they come back as the numbers that stand for them, `b'\n'` and `BACKSPACE` (8). Backspace is key number 14. Everything else gives nothing.
 - **Shift.** While a Shift key is held down, a key gives its second sign: a capital letter, or the sign printed above a digit or beside another sign (`!` for `1`, `?` for `/`, `_` for `-`, and so on for all 47 keys with a sign). The space bar, Enter and Backspace are the same with Shift as without.

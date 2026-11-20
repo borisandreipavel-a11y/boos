@@ -1,7 +1,8 @@
 //! Drawing on the screen: filling it, filled rectangles, text, the background
 //! with its sentence, and the box in which an app's text is shown. Their
-//! colours come from the look in use (`look.rs`). Notes: `docs/screen.md`.
-//! (The chat box is drawn with these pieces by `chat.rs`.)
+//! colours come from the look in use (`look.rs`). While the kernel's own lines
+//! cover the screen (`lines.rs`), this usual picture waits. Notes:
+//! `docs/screen.md`. (The chat box is drawn with these pieces by `chat.rs`.)
 
 use crate::firmware::{ColourOrder, Screen};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH, letter_shape};
@@ -22,13 +23,38 @@ pub struct Colour {
 // screen, and then the drawing functions do nothing.
 static mut SCREEN: Option<Screen> = None;
 
-// Takes the screen that the firmware described and gets it ready to be
-// drawn on. Call it once, after the kernel's own page tables are in place.
+// Takes the screen that the firmware described, so that it can be drawn on.
+// Call it once, right after the takeover: until the kernel's own page tables
+// are in place, the firmware's still lead to the screen's memory, where the
+// firmware wrote its own text a moment before.
 pub fn screen_setup(screen: Screen) {
+    unsafe { SCREEN = Some(screen) };
+}
+
+// Makes the screen's memory reachable through the kernel's own page tables.
+// Call it right after `page_tables_setup`, before anything is painted again.
+pub fn screen_reach() {
     // The screen's memory belongs to a device, the display card. It may lie
     // above the range the page tables cover, so make sure it can be reached.
-    map_device_memory(screen.memory_start, screen.memory_size);
-    unsafe { SCREEN = Some(screen) };
+    if let Some(screen) = unsafe { SCREEN } {
+        map_device_memory(screen.memory_start, screen.memory_size);
+    }
+}
+
+// Whether the kernel's own lines cover the screen (see `lines.rs`). While
+// they do, the usual picture waits: the background, the chat box and the box
+// in the middle go on keeping what they show, but none of it is painted until
+// the lines go and `look_paint` paints all of it at once. The lines are
+// painted with `screen_rectangle_over` and `screen_text_over`, which do not
+// wait. Only the startup code and the main loop change this.
+static mut COVERED: bool = false;
+
+pub fn screen_cover(covered: bool) {
+    unsafe { COVERED = covered };
+}
+
+pub fn screen_covered() -> bool {
+    unsafe { COVERED }
 }
 
 // Says how many dots the screen is across and down. Gives nothing on a
@@ -52,10 +78,24 @@ fn dot_value(order: ColourOrder, colour: Colour) -> u32 {
     first as u32 | (colour.green as u32) << 8 | (third as u32) << 16
 }
 
-// Paints a filled rectangle. `left` and `top` say where its top left corner
-// is, counted in dots from the top left corner of the screen. `width` and
-// `height` say how many dots it is across and down.
+// Paints a filled rectangle of the usual picture. `left` and `top` say where
+// its top left corner is, counted in dots from the top left corner of the
+// screen. `width` and `height` say how many dots it is across and down. While
+// the kernel's lines cover the screen it paints nothing.
 pub fn screen_rectangle(left: u32, top: u32, width: u32, height: u32, colour: Colour) {
+    if unsafe { COVERED } {
+        return;
+    }
+    rectangle_paint(left, top, width, height, colour);
+}
+
+// The same for the kernel's own lines (`lines.rs`), which are painted while
+// they cover the screen.
+pub fn screen_rectangle_over(left: u32, top: u32, width: u32, height: u32, colour: Colour) {
+    rectangle_paint(left, top, width, height, colour);
+}
+
+fn rectangle_paint(left: u32, top: u32, width: u32, height: u32, colour: Colour) {
     let Some(screen) = (unsafe { SCREEN }) else {
         return;
     };
@@ -80,12 +120,26 @@ pub fn screen_rectangle(left: u32, top: u32, width: u32, height: u32, colour: Co
     }
 }
 
-// Writes one line of text. `left` and `top` say where the top left corner of
-// the first sign goes. `size` says how large a dot of a letter is painted:
-// with 1 it is one dot of the screen, with 2 a block of 2 by 2 dots, and so
-// on, which makes the letters twice as large. Only the dots of the letters
-// are painted. What lies between them stays as it was.
+// Writes one line of text of the usual picture. `left` and `top` say where
+// the top left corner of the first sign goes. `size` says how large a dot of
+// a letter is painted: with 1 it is one dot of the screen, with 2 a block of
+// 2 by 2 dots, and so on, which makes the letters twice as large. Only the
+// dots of the letters are painted. What lies between them stays as it was.
+// While the kernel's lines cover the screen it paints nothing.
 pub fn screen_text(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
+    if unsafe { COVERED } {
+        return;
+    }
+    text_paint(left, top, text, size, colour);
+}
+
+// The same for the kernel's own lines (`lines.rs`), which are painted while
+// they cover the screen.
+pub fn screen_text_over(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
+    text_paint(left, top, text, size, colour);
+}
+
+fn text_paint(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
     let mut sign_left = left;
     for sign in text.chars() {
         // Go through the sign's picture row by row, and paint a small
@@ -97,10 +151,10 @@ pub fn screen_text(left: u32, top: u32, text: &str, size: u32, colour: Colour) {
                     // (`saturating_mul` and `saturating_add` stop at the
                     // largest number instead of wrapping round. A square
                     // that lands outside the screen is not painted:
-                    // `screen_rectangle` sees to that.)
+                    // `rectangle_paint` sees to that.)
                     let square_left = sign_left.saturating_add(size.saturating_mul(column as u32));
                     let square_top = top.saturating_add(size.saturating_mul(row as u32));
-                    screen_rectangle(square_left, square_top, size, size, colour);
+                    rectangle_paint(square_left, square_top, size, size, colour);
                 }
             }
         }
