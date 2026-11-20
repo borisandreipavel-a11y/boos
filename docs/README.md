@@ -125,6 +125,7 @@ Outside `src/`:
 - `README.md` in the project's root is the front page for a visitor: what the project is for, what the kernel does today, what a start looks like, how to run it, and where the outside code comes from. It repeats, shortly, what these notes say, and some of the lines a boot prints. When the kernel's abilities, its boot lines or the way to run it change, change it too.
 - `test-tools/` holds the scripts that build, boot and check the kernel in QEMU, and `.github/workflows/build.yml` has GitHub build it for every pull request; see [testing.md](testing.md).
 - Not in the repository: `esp/`, `target/` and `interpreter/target/` (build output), `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder) and `disk.img` (the machine's disk, which holds what was stored on it).
+- `LICENSE-MIT` and `LICENSE-APACHE` are the two licences of the project's own code: whoever uses it chooses either. The outside code keeps its own: the copies in `vendor/` hold their licence files (see `vendor/README.md`), and the notices of the interpreter for Lua are in [interpreter.md](interpreter.md).
 
 ## Conventions
 
