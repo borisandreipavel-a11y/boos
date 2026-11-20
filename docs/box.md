@@ -186,4 +186,4 @@ The programs for these tests are made by hand, byte by byte, with a short script
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: an app can ask the kernel for two things only, it runs once from `start` to the end and nothing of it is kept, every run translates the program again, and the version of wasmi cannot simply be raised.
+See [open-points.md](open-points.md). In short: an app can ask the kernel for two things only, it runs once from `start` to the end and nothing of a run is kept for the next, every run translates the program again, and the version of wasmi cannot simply be raised.

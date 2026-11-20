@@ -132,7 +132,13 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Apps made on request
 
-- **The app runs once and is gone.** Its script goes to the terminal, line by line, and is run; nothing keeps it, so the same app asked for again is written again by the model. See [apps.md](apps.md).
+- **A kept app cannot be run again yet.** Its script goes to the terminal, line by line, and is run once; an app that ran to its end is kept on the disk and listed in the panel of apps, but nothing runs a kept app. The same app asked for again is written again by the model, and takes the kept one's place. See [apps.md](apps.md).
+- **A kept app cannot be taken away.** Nothing can be taken out of the notebook, so an app can only be replaced, by an app made for the same request. Requests that differ in a space or a capital letter make two apps.
+- **An app is known by its request only:** the words typed after `make`, up to 45 signs. It has no name and no sentence that says what it does.
+- **The panel of apps shows its first page only.** Nothing turns the page yet. Its place and size are fixed, five apps a page; on a screen smaller than 800 by 600 dots it could lie over the box with an app's text.
+- **A kept script is unlocked on the disk,** readable by anyone with the disk, like every line kept there.
+- **Every start reads every kept script,** piece by piece, when the notebook is opened, and checks every script in pieces whole. How long that takes is in [testing.md](testing.md).
+- **Keeping an app holds the main loop,** like the run before it: every piece is written, put down for good and read back, and then the whole script is read back once more and compared. Keys typed meanwhile wait in the keyboard's line. How long it takes is in [testing.md](testing.md).
 - **An app can show one line of 40 signs and print to the terminal, and nothing else.** It cannot wait, read a key, or be run again; so an app that shows several lines in turn, like frames, is seen only at its last. Its printed lines are in the terminal, not on the screen.
 - **A request has at most 45 signs,** what is left of the chat box's 50-sign line after `make` and its space.
 - **The model is told the same fixed text every time,** sent with every request. Whether it follows the text is not checked, except that marks around code are taken off: an answer in words is taken as a script, and only the first block between marks is kept.
@@ -166,7 +172,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 - **Nothing tidies the notebook.** Every line sent in the chat box adds an entry, entries that a newer one has replaced stay, and a full notebook stays full: keeping is refused from then on. The disk file in QEMU has room for 30,685 entries. Tidying has to be safe against a power cut too, which an only-added-to notebook is by itself and a tidied one is not.
 - **A start takes longer the more entries there are.** Opening reads every entry in a command of its own: about half a second for a thousand entries and 14 seconds for a full notebook of 30,685, in QEMU. Reading several blocks with one command would shorten it; tidying would too.
-- **A thing in the notebook is at most 448 bytes,** because an entry is one block. Anything larger, such as the text of an app, needs entries that go over several blocks: a new version of the layout, and an answer to a power cut between the blocks of one entry.
+- **A thing in the notebook is at most 32 KB,** kept in at most 74 entries. A thing longer than one entry, such as the script of an app, is kept in pieces, each a whole entry, and counts only once all are there (see "A thing in pieces" in [notebook.md](notebook.md)). A larger thing would need a larger limit, which is one number, and as many more blocks to read at every start.
+- **An unfinished thing in pieces is never taken out of the way.** A power cut, or a disk that refuses a write, in the middle of keeping one leaves its pieces as entries that count for nothing, for good, like every entry a newer one replaced.
 - **Every line sent is kept, whatever it holds.** Nothing asks whether a line should be kept, and nothing can take a line out of the notebook again; older lines stay on the disk although only the last is said. A secret typed as a line would stay there in the clear.
 - **A damaged notebook is not repaired.** It is read up to the damage, the entries behind it are not looked at, and nothing is added. Only the eight blocks behind the notebook's end are looked at for that; something further behind is not noticed.
 - **The reading back after a write was not tested for the notebook.** In QEMU a write either works or reports its failure. For the count of starts a write that silently does nothing was played and caught by the reading back; the notebook uses the same steps.
@@ -231,6 +238,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **On a machine without a screen the typing is blind:** nothing shows until Enter, when the line appears in the terminal.
 - **On a screen smaller than 800 by 600 dots** the chat box may lie over the box that shows an app's text. Nothing was tried there.
 - The row from the kernel that says what to do, and the answer that gives the line back, are demonstrations.
+- **`setup` is heard only while no question waits.** At a start where a key is locked on the disk, the question for the password comes first, in the look kept there, and `setup` typed then is taken as a password; Enter alone there, and then `setup`, brings back the first look. With a look that cannot be read, those keys are typed blind.
+- **When `setup` cannot keep the first look on the disk,** as on a notebook that cannot be added to, look 1 lasts until the machine is switched off, and the next start shows the look kept there again. Two rows say so.
 
 ## Trying the key
 

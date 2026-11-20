@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::apps::{app_ask, app_print_script, app_run, app_wanted};
+use crate::apps_kept::{app_keep, apps_kept_begin};
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -330,8 +331,9 @@ pub fn chat_paint() {
 // question for it (see `onboarding.rs`); and the last line that was sent
 // before the machine was switched off, if the notebook on the disk holds one.
 // Before that, it puts the look kept in the notebook in use, so that all of
-// it shows in that look. Call it once at startup, after the notebook is
-// opened.
+// it shows in that look. Last, it shows the panel of the apps kept on the
+// disk, if any are (see `apps_kept.rs`). Call it once at startup, after the
+// notebook is opened.
 pub fn chat_begin() {
     let (look_trouble, look_changed) = look_begin();
     let mut rows = onboarding_begin();
@@ -361,6 +363,7 @@ pub fn chat_begin() {
     } else {
         chat_paint_rows();
     }
+    apps_kept_begin();
 }
 
 // The row that says the last line that was sent before the machine was
@@ -397,13 +400,20 @@ fn chat_say(text: &str) {
 // which says what comes of it; any other answer is said as it is. A script
 // that the model wrote comes with its answer: it is shown in the terminal
 // below that row, then run, and a second row says how the run went (see
-// `apps.rs`).
+// `apps.rs`). An app that ran to its end is kept on the disk; a third row
+// comes only if that failed (see `apps_kept.rs`).
 pub fn chat_answer(answer: Answer) {
     if answer.errand != Errand::KeyTry {
         chat_say(&answer.sentence);
         if let Some(script) = &answer.script {
             app_print_script(script);
-            chat_say(&app_run(script));
+            let (sentence, ran) = app_run(script);
+            chat_say(&sentence);
+            if let (true, Errand::AppRequest(request)) = (ran, &answer.errand) {
+                if let Some(trouble) = app_keep(request, script) {
+                    chat_say(&trouble);
+                }
+            }
         }
         return;
     }

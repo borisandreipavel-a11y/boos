@@ -1,10 +1,10 @@
 # Apps made on request
 
-Code: `src/apps.rs`; the asking itself in `model_app` in `src/model.rs`; the errand `Errand::AppRequest` in `src/errand.rs` and its run in `src/network.rs`; the line `make` and the run in `chat_answer` in `src/chat.rs`; `box_script` in `src/app_box.rs` and `seed` in `interpreter/src/lib.rs`.
+Code: `src/apps.rs`; the asking itself in `model_app` in `src/model.rs`; the errand `Errand::AppRequest` in `src/errand.rs` and its run in `src/network.rs`; the line `make` and the run in `chat_answer` in `src/chat.rs`; `box_script` in `src/app_box.rs` and `seed` in `interpreter/src/lib.rs`; keeping an app and the panel of apps in `src/apps_kept.rs`, with the notebook in `src/notebook.rs`.
 
 The idea of this kernel is that a model writes the apps. The person at the machine says in the chat box what app they want, and the model writes it as a script in the language Lua, which the interpreter runs inside the locked box (see [interpreter.md](interpreter.md) and [box.md](box.md)).
 
-**Today the script is asked for, checked, shown in the terminal and run once.** What the app shows appears in the box in the middle of the screen, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went. Nothing of the app is kept afterwards.
+**Today the script is asked for, checked, shown in the terminal and run once.** What the app shows appears in the box in the middle of the screen, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went. **An app that ran to its end is kept on the disk,** and the panel of apps near the top left of the screen lists it, also after the machine was switched off and on again. Nothing runs a kept app again yet.
 
 ## The words
 
@@ -105,7 +105,7 @@ The script and the row travel back to the main loop with the errand's answer (`A
 
 - The script came from outside the kernel, so each line is cleaned like every text from outside (`plain_text` in `page.rs`): a tab first becomes two spaces, every other sign that is not a plain sign becomes a dot, and a return is dropped. A line is cut at 200 signs (`SCRIPT_LINE_SHOWN`).
 - Each line is printed on its own, so that device signals are never held off for long (see "Output" in [README.md](README.md)).
-- Nothing of the script goes into the chat box except the row that says how many lines it has. Nothing of it is kept: once it has run, it is gone.
+- Nothing of the script goes into the chat box except the row that says how many lines it has. Once it has run to its end, it is kept on the disk (see "Keeping an app" below); otherwise it is gone.
 
 ## Running it
 
@@ -130,6 +130,53 @@ The row after the run, behind `Kernel: `:
 | `the app was stopped, because ...` | Any other stop, with the kernel's reason: `it printed too many texts` at the 101st print, `it showed too many texts` at the 21st showing, and so on |
 
 The kernel tells the kinds of stop apart by what the box reports, not by its words: `box_script` gives back a `ScriptStop` with a kind, read from wasmi's own kind of trap for fuel and for `unreachable`, and from the interpreter's answer for a mistake.
+
+## Keeping an app
+
+Right after the row about the run, `chat_answer` hands the app to `app_keep` in `apps_kept.rs`, if it ran to its end.
+
+- **Which apps are kept:** every app that ran to its end, with either of the two rows that say so (it showed something, or it showed nothing). An app that was stopped, for a mistake, for too much work or for any other reason, is not kept.
+- **What is kept,** in the notebook (see [notebook.md](notebook.md)), as two things under names made from the app's number:
+  - `app 3 script`: the script exactly as it ran, which is what the checks above took out of the model's words, with any piece of the key already turned into stars. A script longer than 448 bytes is kept in pieces; the longest, 32,768 bytes, in 74.
+  - `app 3`: a note. Its first byte, 1, says what form the rest has, so that later forms can say more about an app; in form 1 the rest is the request, the words that were typed after `make`.
+- **In that order:** the script first, and then it is read back from the disk and compared with the script that ran, byte for byte; only if they are the same is the note kept. So an app whose note is there had its whole script there first.
+- **While it is kept, keys wait,** as while it runs: keeping is done in the main loop, and every entry is written, put down for good and read back, and the whole script is read back once more. How long that takes is in [testing.md](testing.md).
+- **Its number** is the one after the highest kept so far, starting at 1, up to 999,999,999 (nine digits). **An app made for exactly the same request as a kept one takes that one's number:** its script takes the place of the old one, and the note, which says the same, is not written again. So asking again for the same app gives a fresh try in the same place, and the list does not fill up with copies. Requests that differ in a space or a capital letter are different requests.
+- **Nothing is said in the chat box when an app is kept,** as with every line that is kept. The terminal says `Apps: the app made for "a dice that rolls" is kept on the disk`, and the panel of apps (below) shows its first page with the app at the top.
+- **When it cannot be kept** in a notebook that can be added to, a row says why: `Kernel: I could not keep the app, because the notebook is full.`, or `the disk did not give its script back as it was written`, or the disk's own reason, or, once an app numbered 999,999,999 is kept, `the numbers for apps have run out` for every new request (nothing of it is written; an app made for the request of a kept one still takes that one's number). On a machine without a notebook that can be added to (no disk, no part of the kernel's own, a damaged notebook) nothing is kept and nothing is said; the lines at startup have said why.
+- **Both things are kept unlocked,** readable by anyone with the disk, like every line kept there.
+
+At every start, once the notebook is opened, `apps_kept_begin` (called at the end of `chat_begin`) finds the kept apps again: every note under a name `app` and a number (one to nine digits, without a 0 in front) whose form is 1 and which holds a request. An app counts if the notebook found its script whole (see "A thing in pieces" in [notebook.md](notebook.md)); the notebook checked the check value of every script in pieces as it opened. When any app is kept, the terminal lists them, the one kept last first, and the panel shows them:
+
+```text
+Apps: 2 are kept on the disk:
+Apps: "a coin to flip"
+Apps: "a dice that rolls"
+```
+
+An app whose note is there and whose script is not whole is left out, with a line of its own in the terminal: `Apps: the script kept for "..." is not whole, so that app is left out`. It keeps its number, so a new app made for its request takes its place again. With no app kept, nothing is said and no panel is shown.
+
+A request read from the disk comes from outside the kernel: at most 45 bytes of it are taken, and every byte that is not a plain sign becomes a dot.
+
+## The panel of apps
+
+A panel near the top left of the screen, under the sentence, lists the kept apps a page at a time. It is the kernel's own, drawn by `apps_kept.rs` with the pieces of `screen.rs`; it is not the box in the middle of the screen that shows an app's text.
+
+```text
+Apps: page 1 of 2
+- a coin to flip
+- a dice that rolls
+- ...
+```
+
+- **It is there only while at least one app is kept.** It appears at a start that finds kept apps, with the rest of the usual picture when the start is over (see "The kernel's lines" in [screen.md](screen.md)), and when the first app is kept. A screen without kept apps looks as it did before.
+- **The first row says which page is shown and how many there are,** and below it come the apps of that page, five a page, the one kept last first, each as `- ` and its request. A row holds 47 signs, so a request of 45 always fits whole.
+- **It shows the first page,** at every start and again whenever an app is kept. Nothing turns the page yet.
+- **Its sizes are kept in one place,** `APPS_PANEL_STYLE` in `apps_kept.rs`: its top left corner 40 dots from the left and 80 from the top, 600 dots across, a frame 3 dots thick, the text 10 dots from the frame, letters at size 2 and 4 dots between rows, and five apps a page. That makes it 158 dots high: on QEMU's usual screen of 1280 by 800 dots it covers columns 40 to 639 and rows 80 to 237. It keeps that size whatever the page shown holds. It lies under the sentence and above the box with an app's text, which begins at row 270 on a screen of 800 by 600 dots and lower on larger ones; on a smaller screen the two could overlap.
+- **Its colours are those of the box with an app's text,** from the look in use: the frame's, the inside's and the letters'. `look_paint` paints it again with everything else when the look changes (`apps_panel_again`).
+- **Painting it** paints the whole panel in the frame's colour, the inside over it, and the rows. **Nothing lands outside it:** only as many signs of a row are written as fit whole between the frame and the empty room on both sides.
+- **On a machine without a usable screen** nothing is painted; the lines in the terminal say which apps are kept.
+- **Only the startup code and the main loop may call `apps_kept.rs`:** the list of kept apps and the page shown are plain `static mut` values that nothing protects. The list grows, so `kept_apps()` hands it out through its address, with the same rule as the chat box's lists (see [chat.md](chat.md)).
 
 ## What the script is trusted with
 
@@ -174,4 +221,4 @@ Script 13: show("Rolled " .. n .. " " .. faces[n])
 
 ## Limits
 
-See "Apps made on request" in [open-points.md](open-points.md). In short: the app runs once and is gone; the request has at most 45 signs; the model is told the same fixed text every time; typing waits while an app runs; an app can show one line and print to the terminal, and nothing else.
+See "Apps made on request" in [open-points.md](open-points.md). In short: an app runs once, and a kept app cannot be run again yet; a kept app cannot be taken away, only replaced; the panel shows its first page only; the request has at most 45 signs; the model is told the same fixed text every time; typing waits while an app runs; an app can show one line and print to the terminal, and nothing else.
