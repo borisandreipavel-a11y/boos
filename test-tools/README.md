@@ -46,6 +46,7 @@ Building and helpers:
 | `ports.py`, `places.py` | Ports and folders, as above |
 | `restore.py`, `crlf.py`, `export_check.py`, `make_lock_values.py` | Putting sources back after a break; Windows line ends; a clean export of a commit built from nothing; writing `src/lock_values.rs` |
 | `app_cases.py` | The stand-in's answers to a request for an app, and what the kernel is meant to say, list and show for each, worked out apart from the kernel's code |
+| `lines_model.py`, `lines_checks.py`, `lines_copy.py` | The kernel's own lines on the screen: the pictures that are meant (the start screen, the lines after F1, the stop screen); the checks that boot and judge them; a copy of the project with a failure or a break on purpose |
 
 Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 
@@ -70,3 +71,7 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `run_app_breaks.py`, `app_breaks.py` | The breaks on purpose for apps, each alone; a change to the interpreter is built into the copy too |
 | `check_lua.py <script> [boots]` | A Lua script of `lua/` in place of the greeting script, in a copy: what the interpreter really does |
 | `run_regress_apps.py` | Everything for apps, then the try of a key and `run_regress_try.py`'s list, one after another |
+| `test_lines.py [start] [early] [small] [noscreen] [noserial] [later] [held]` | The kernel's own lines: the start screen, judged dot by dot with the machine paused at moments along the way; the usual picture at the prompt; F1, a key, Enter; a key during the start; a screen of 800 by 600, where the lines move up; no screen; no serial port; lines printed while F1 shows them; F1 held down (pressed again without being let go, through QEMU's machine protocol) |
+| `test_lines_stop.py` | The stop screen after a failure or a panic made on purpose in a copy: right after the takeover, after the kernel's own page tables, in the middle of the start, with the usual picture, with the lines after F1, and in a task of its own while the start screen shows |
+| `run_lines_breaks.py` | Breaks of the kernel's lines on purpose, each alone, in a copy, and whether those checks catch them |
+| `time_lines.py [boots] [commit]` | How much later the lines of a start arrive than with another commit's kernel, built from a clean export |

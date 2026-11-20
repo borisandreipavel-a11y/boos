@@ -11,7 +11,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Nothing notices a stack that overflows.** A task that uses more than its 256 KB writes into whatever lies below it on the heap. An unmapped page below each stack would turn that into a page fault.
 - **A finished task's stack is given back only when its place is reused.**
 - **A failure in one task stops everything.** Tasks are not isolated from each other.
-- **Printing holds signals off for a whole text.** On a real serial port a long line takes several milliseconds, which could delay a tick. The longest text is the report about a fetched page, about 700 bytes: roughly 60 ms on a real port at the speed set, which is six ticks.
+- **Printing holds signals off for a whole text.** On a real serial port a long line takes several milliseconds, which could delay a tick. The longest text is the report about a fetched page, about 700 bytes: roughly 60 ms on a real port at the speed set, which is six ticks. While the machine starts, a line is also painted on the screen then; that is before device signals are let through, so no tick waits for it.
 - **The first task has no stack of its own.** Task 0 still runs on the firmware's stack. There is also no spare stack for failures, so a failure inside the failure report, or running out of stack, resets the machine without a message.
 
 ## Memory
@@ -263,8 +263,11 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 - **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures. An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).
 - **Text is one line of plain English signs.** Nothing wraps round at the right edge, a line break is not understood, and every sign outside the 95 plain ones, a letter with an accent among them, shows as an empty box. The letters have one shape and one thickness; larger text is the same shapes with bigger dots.
-- **The kernel's own lines do not appear on the screen.** They go to the serial port only, so a machine without one shows the picture and the chat box, and none of the lines about its start.
-- **Nothing remembers what is written where,** except the chat box, which keeps its own rows and paints them again, and the box that shows an app's text, which keeps that text so that it can be painted again in another look. Elsewhere text cannot be taken off again except by painting over it.
+- **The kernel's own lines have colours and a size of their own,** white letters at size 2 on dark blue, and white on dark red when the kernel stops, whatever the look; and only the last 100 lines are kept, each with at most 300 signs. The rest of a longer line is in the terminal only. See "The kernel's lines" in [screen.md](screen.md).
+- **Once the start is over, the kernel's lines show only after F1.** What is printed later, a fetched page's report or an app's printed lines, is not seen on the screen without it.
+- **Once the tasks run, the kernel's lines are painted by the main loop.** A task that stops all work with device signals off, without a failure, keeps the lines printed just before off the screen.
+- **Between the takeover and the kernel's own page tables, the screen's memory is reached through the firmware's.** That held in QEMU. On a real PC it is expected, since the firmware wrote its own text there a moment before, but it was not seen. A screen whose memory lies above 4 GB, which `screen_reach` maps, was not tried either.
+- **Nothing remembers what is written where,** except the chat box, which keeps its own rows and paints them again, the box that shows an app's text, which keeps that text so that it can be painted again in another look, and the kernel's lines, which keep the last 100. Elsewhere text cannot be taken off again except by painting over it.
 - **Painting is slow.** Filling the screen takes roughly 0.16 s in this kind of build, possibly up to half as much again, at startup with device signals off. Dots are written one at a time, each through a function call; writing a row in one go was measured at twenty times the speed and not kept, for the sake of plain code.
 - **There is one picture and no copy of it.** What is painted shows at once, half-finished drawing included, and nothing remembers what was under a rectangle.
 - **Nothing decides who may draw.** Any code in the kernel can paint anywhere, and two tasks drawing at once give a mixed picture. Today drawing happens at startup and, for the chat box and for the whole screen when a look is tried, in the main loop; no other task draws.
@@ -276,8 +279,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - The sentence written at startup is a demonstration, and so is the app that shows a text.
 - **There are four looks to pick from, and a look is colours only.** Sizes, places and the letters' shapes stay as they were built, and there is no look but these four.
 - **The kernel does not check that a look can be read.** The four looks are written into it and were checked from outside by a stated measure (see "The look" in [screen.md](screen.md)). Nothing in the kernel would stop a look whose letters cannot be told from what lies behind them.
-- **Every start shows the first look until the notebook is opened,** a second or two in, and only then the look kept there. A start without a notebook keeps the first look.
-- **Painting the whole screen again for a look is slow,** about a quarter of a second, for the same reason as filling it: a dot at a time. Keys typed meanwhile wait in the keyboard's line of 16 key numbers; those that do not fit are lost.
+- **The usual picture first appears when the start is over,** about four seconds after the devices start, or at the first key before then; the start itself shows the kernel's lines. It appears in the look kept in the notebook; a start without a notebook keeps the first look.
+- **Painting the whole screen again for a look is slow,** about a quarter of a second, for the same reason as filling it: a dot at a time. The same painting ends every start, when the usual picture takes the place of the kernel's lines. Keys typed meanwhile wait in the keyboard's line of 16 key numbers; those that do not fit are lost.
 - **A kept look is found by its name, letter for letter.** A look renamed in a later kernel would not be found, and the first look would show.
 - **The box that shows an app's text remembers 160 bytes of it,** enough for the 40 signs that fit today. A box made wide enough for more would have its text cut when it is painted again in another look.
 
@@ -286,7 +289,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 The kernel has only run in QEMU. Known differences to expect:
 
 - Use a FAT32 USB stick with the kernel at `EFI\BOOT\BOOTX64.EFI`, with Secure Boot switched off. Never the machine's main disk.
-- Most PCs have no serial port, so the kernel would run but say nothing. It needs screen output first.
+- Most PCs have no serial port. The kernel's lines then show on the screen only (see "The kernel's lines" in [screen.md](screen.md)). A machine without one was played in QEMU by a kernel that finds none; none was met for real.
 - Many modern PCs have no PS/2 keyboard controller, because their keyboards are USB. The keyboard code may stay silent there.
 - The old interrupt controller and timer chips are usually still present, but that is not guaranteed.
 - The kernel assumes 4-level page tables. A firmware that hands over with 5-level tables switched on (bit 12 of `cr4`) needs a check first: loading 4-level tables there resets the machine without a message.

@@ -82,6 +82,11 @@ pub fn next_key() -> Option<u8> {
 // typed sign away. It is the number computers have long used for it.
 pub const BACKSPACE: u8 = 8;
 
+// The key number of F1, the first of the keys along the top of the keyboard.
+// It has no letter. The main loop hands every key number to `lines_key`,
+// which shows the kernel's own lines on F1 (see `lines.rs`).
+pub const F1_KEY: u8 = 59;
+
 // The key numbers of the two Shift keys: the number each sends when it is
 // pressed, and the number it sends when it is let go, which is 128 more.
 const LEFT_SHIFT: u8 = 42;

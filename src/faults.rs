@@ -1,9 +1,11 @@
 //! Catching the processor's failures: each of the 32 gets a name and a few
-//! machine instructions that lead to one report. Notes: `docs/interrupts.md`.
+//! machine instructions that lead to one report, printed and shown on the
+//! screen. Notes: `docs/interrupts.md`.
 
 use core::arch::{asm, naked_asm};
 use core::fmt::Write;
 
+use crate::lines::{lines_stop_screen, lines_stopping};
 use crate::processor::stop;
 use crate::serial::Serial;
 
@@ -18,8 +20,11 @@ struct FaultNotes {
     stack_segment: u64,
 }
 
-// Every failure ends up here: print its name and where it happened, then stop.
+// Every failure ends up here: print its name and where it happened, show the
+// same on the screen with the lines the kernel said before it, then stop.
 extern "sysv64" fn report_fault(number: u64, notes: &FaultNotes) -> ! {
+    // From here on nothing but the report is painted.
+    lines_stopping();
     let mut serial = Serial;
     let name = FAULTS[number as usize].0;
     write!(serial, "CPU fault: {} at {:#x}", name, notes.address).ok();
@@ -33,6 +38,7 @@ extern "sysv64" fn report_fault(number: u64, notes: &FaultNotes) -> ! {
         write!(serial, ", detail code {:#x}", notes.detail_code).ok();
     }
     write!(serial, "\r\n").ok();
+    lines_stop_screen();
     stop()
 }
 

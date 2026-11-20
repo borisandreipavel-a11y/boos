@@ -36,6 +36,7 @@ mod tls; // The encrypted link.
 mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
 mod letters; // The shapes of the letters, drawn by hand.
+mod lines; // The kernel's own lines on the screen.
 mod look; // The look: the colours of everything on the screen, picked from a list.
 mod chat; // The chat box: typing on the screen, and what was said.
 mod onboarding; // What the kernel asks at a start where it does not know the person yet.
@@ -76,6 +77,7 @@ use json::json_check;
 use lock::lock_check;
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
+use lines::{lines_begin, lines_key, lines_paint_new, lines_start_over, lines_stop_screen, lines_stopping, lines_tasks_start};
 use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
 use notebook::notebook_open;
@@ -83,7 +85,7 @@ use page_tables::{GIGABYTE, page_tables_setup};
 use parts::part_find;
 use processor::{sse_refuse, stop};
 use random::{random_number, random_setup};
-use screen::{screen_background, screen_setup};
+use screen::{screen_background, screen_reach, screen_setup};
 use segments::load_segment_table;
 use starts::start_count;
 use serial::{Serial, serial_print, serial_setup};
@@ -142,6 +144,16 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     // processor refuse any instruction that does.
     sse_refuse();
 
+    // A PC may have no serial port. If the firmware named a screen, the
+    // kernel's lines are shown there too from here on, on the whole screen,
+    // until the start is over; a failure from here on shows there as well.
+    // The firmware's page tables still lead to the screen's memory, where
+    // the firmware wrote its own text a moment ago.
+    if let Ok(found) = screen {
+        screen_setup(found);
+        lines_begin();
+    }
+
     let mut serial = Serial;
     write!(serial, "The firmware has stepped aside. This machine is mine.\r\n").ok();
 
@@ -150,8 +162,10 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     let free_frames = unsafe { FREE_FRAMES };
     write!(serial, "Free memory: {} MB\r\n", free_frames * FRAME_SIZE / (1024 * 1024)).ok();
 
-    // Stop relying on the firmware's page tables.
+    // Stop relying on the firmware's page tables. The kernel's own must lead
+    // to the screen's memory before the next line is painted.
     let covered = page_tables_setup(memory_end);
+    screen_reach();
     write!(serial, "Page tables: the kernel's own, covering {} GB\r\n", covered / GIGABYTE).ok();
 
     // Try the heap: a text and a list, both growing as they are filled. At
@@ -166,14 +180,14 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Heap: {} {:?}, kept at {:p}\r\n", greeting, squares, greeting.as_ptr()).ok();
     }
 
-    // What the firmware said about the screen. If there is one, try it:
-    // paint all of it in one colour, write a sentence near the top left
-    // corner, and put the chat box along the bottom. The colours are those
-    // of the first look, until the notebook says which look to use.
+    // What the firmware said about the screen. If there is one, get the
+    // usual picture ready: all of it in one colour, a sentence near the top
+    // left corner, and the chat box along the bottom. It is painted once the
+    // start is over, in the look the notebook names; until then the
+    // kernel's lines cover the screen.
     match screen {
         Ok(screen) => {
             write!(serial, "Screen: found, {} dots wide and {} dots high, its memory starts at {:#x}\r\n", screen.width, screen.height, screen.memory_start).ok();
-            screen_setup(screen);
             screen_background();
             chat_setup();
         }
@@ -402,6 +416,9 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     controller_setup();
     timer_setup();
     keyboard_setup();
+    // From here on other tasks print too, and only the main loop draws: it
+    // paints the kernel's new lines at every turn.
+    lines_tasks_start();
     unsafe { asm!("sti") };
 
     let mut hint_shown = false;
@@ -410,19 +427,28 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         // the next signal from a device.
         task_rest();
 
+        // Paint the kernel's lines that were printed meanwhile, if they
+        // cover the screen.
+        lines_paint_new();
+
         // When the two tasks have had their say, tell how much the processor
-        // rested, and ask for some typing.
+        // rested, and ask for some typing. The start is over then: the usual
+        // picture takes the place of the kernel's lines.
         let ticks = TICKS.load(Ordering::Relaxed);
         let seconds = ticks / TICKS_PER_SECOND;
         if seconds >= 4 && !hint_shown {
             hint_shown = true;
             write!(serial, "The processor rested through {} of the first {} ticks.\r\n", RESTED_TICKS.load(Ordering::Relaxed), ticks).ok();
+            lines_start_over();
             write!(serial, "Click the QEMU window and type in its chat box. What is said there is repeated here:\r\n").ok();
         }
 
         // Hand the keys that arrived in the meantime to the chat box. A key
-        // without a letter, or a key being let go, gives nothing.
+        // without a letter, or a key being let go, gives nothing. Every key
+        // goes to the kernel's lines first: a key brings the usual picture
+        // back while they cover it, and F1 brings them.
         while let Some(key) = next_key() {
+            lines_key(key);
             if let Some(letter) = key_letter(key) {
                 chat_key(letter);
             }
@@ -440,12 +466,16 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
 // Runs when Rust code gives up, for example on a list index that is out of range.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // No device signals while the kernel reports its own end.
+    // No device signals while the kernel reports its own end, and from here
+    // on nothing but the report is painted.
     unsafe { asm!("cli") };
+    lines_stopping();
     let mut serial = Serial;
     if let Some(place) = info.location() {
         write!(serial, "Kernel panic: {}:{}: ", place.file(), place.line()).ok();
     }
     write!(serial, "{}\r\n", info.message()).ok();
+    // The same on the screen, with the lines the kernel said before it.
+    lines_stop_screen();
     stop()
 }
