@@ -66,6 +66,16 @@ def same(path, picture):
     return (width, height) == (picture.width, picture.height) and dots == bytes(picture.dots)
 
 
+def wait_for_picture(machine, picture, name, seconds):
+    """Saves a picture a second until the screen shows the one meant, for at most `seconds`; says whether it came."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if same(machine.shot(name), picture):
+            return True
+        time.sleep(1.0)
+    return False
+
+
 def judge(path, picture, name, problems):
     """Compares a saved picture with the one meant, says how it went, and notes a difference."""
     wrong, places = compare(path, picture)
@@ -267,8 +277,12 @@ def noserial_check(kernel, kernel_without_port, tag="lines-noserial"):
         reference.quit()
     machine = Machine(tag, kernel=kernel_without_port)
     try:
-        # Long enough for the start to be over, also in a slow windowless run.
-        time.sleep(15)
+        # Nothing comes out of a serial port to say that the start is over, and F1 during the start ends the start
+        # screen like any other key. So F1 waits until the screen shows the usual picture, which is painted whole
+        # when the start is over: a picture a second until it is the one the start check judges at the prompt.
+        if not wait_for_picture(machine, expected(1280, 800, Chat(1280)), "noserial-usual", 150):
+            problems.append("no serial port: the usual picture never came")
+            return problems
         machine.named_key("f1", pause=0)
         time.sleep(1.0)
         path = machine.shot("noserial-f1")
