@@ -4,8 +4,9 @@
 //! was made for. An app made for the same request again takes the place of the
 //! one kept for it. At every start the kept apps are found again, and the
 //! panel of apps, near the top left of the screen, lists them a page at a
-//! time, the one kept last first. Only the startup code and the main loop may
-//! call these functions.
+//! time, the one kept last first. The model is told about them with every
+//! line, and can run one again or turn the panel's page (see `tools.rs`).
+//! Only the startup code and the main loop may call these functions.
 //! Notes: `docs/apps.md` ("Keeping an app" and "The panel of apps").
 
 use alloc::format;
@@ -32,14 +33,15 @@ const NUMBER_DIGITS_MOST: usize = 9;
 const NUMBER_MOST: u32 = 999_999_999;
 
 // The first byte of a note says what form the rest of it has, so that later
-// forms can say more about an app. Form 1: the rest is the request, the words
-// that were typed after `make`.
+// forms can say more about an app. Form 1: the rest is the request, the few
+// words that say what the app does.
 const NOTE_FORM: u8 = 1;
 
-// The longest request: what is left of the chat box's line of 50 signs after
-// the word `make` and its space. A request read from the disk comes from
-// outside the kernel, and no more of it than this is taken.
-const REQUEST_MOST: usize = 45;
+// The longest request, in signs. A request read from the disk comes from
+// outside the kernel, and no more of it than this is taken; the same holds
+// for a request the model gives (see `tools.rs`). It was what was left of the
+// chat box's line of 50 signs after the word `make` and its space.
+pub const REQUEST_MOST: usize = 45;
 
 // Every script the box takes fits in the notebook as one thing.
 const _: () = assert!(SCRIPT_LIMIT <= THING_MOST);
@@ -205,6 +207,56 @@ pub fn app_keep(request: &str, script: &str) -> Option<String> {
     serial_print(&format!("Apps: the app made for \"{}\" is kept on the disk\r\n", request));
     apps_panel_again();
     None
+}
+
+// The kept apps the model may run, by number and request, the one kept last
+// first: what `chat_tools` in `tools.rs` lists with every line.
+pub fn apps_listed() -> Vec<(u32, String)> {
+    kept_apps().iter().filter(|app| app.whole).map(|app| (app.number, app.request.clone())).collect()
+}
+
+// How many pages the panel of apps has, and which of them it shows, both
+// counted from 1. No pages while no app is listed.
+pub fn apps_pages() -> (usize, usize) {
+    let listed = kept_apps().iter().filter(|app| app.whole).count();
+    let pages = listed.div_ceil(APPS_PANEL_STYLE.apps_on_a_page.max(1) as usize);
+    (pages, unsafe { PAGE }.min(pages.saturating_sub(1)) + 1)
+}
+
+// The tool `turn_page`: shows the page of the panel of apps with this
+// number, counted from 1, if there is one. Gives back what the kernel says.
+pub fn apps_page_turn(page: u64) -> String {
+    let (pages, _) = apps_pages();
+    if pages == 0 {
+        return String::from("the model asked for another page of the panel of apps, but no app is kept.");
+    }
+    match usize::try_from(page) {
+        Ok(page) if (1..=pages).contains(&page) => {
+            unsafe { PAGE = page - 1 };
+            apps_panel_again();
+            format!("the panel of apps shows page {} of {}.", page, pages)
+        }
+        _ => format!("the model asked for page {} of the panel of apps, but it has {} {}.", page, pages, if pages == 1 { "page" } else { "pages" }),
+    }
+}
+
+// The request and the script of the kept app with this number, read from the
+// notebook, so that the app can run again; or what the kernel says when it
+// cannot be had. The script comes from the disk, and the box checks it like
+// any script before it runs.
+pub fn app_kept(number: u64) -> Result<(String, String), String> {
+    let Some(app) = kept_apps().iter().find(|app| app.whole && u64::from(app.number) == number) else {
+        return Err(format!("the model asked for app {}, but no kept app has that number.", number));
+    };
+    let request = app.request.clone();
+    match notebook_find(&script_name(app.number)) {
+        Ok(Some(script)) => match String::from_utf8(script) {
+            Ok(script) => Ok((request, script)),
+            Err(_) => Err(format!("I could not run the app made for \"{}\", because its script on the disk is not proper text.", request)),
+        },
+        Ok(None) => Err(format!("I could not run the app made for \"{}\", because its script is not on the disk.", request)),
+        Err(reason) => Err(format!("I could not run the app made for \"{}\", because {}.", request, reason)),
+    }
 }
 
 // How the panel of apps is laid out. Its sizes are decided here, in this one

@@ -10,32 +10,37 @@
 use alloc::string::String;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use crate::model::KeyVerdict;
+use crate::model::{ChatReply, KeyVerdict};
 use crate::processor::{signals_back, signals_off};
 
 // What can be asked for.
 #[derive(Clone, PartialEq)]
 pub enum Errand {
-    // Fetch the example page from the web and say how the site answered.
-    ExamplePage,
-    // Ask the model the one question and say what came back.
-    ModelQuestion,
-    // Try a key typed at the onboarding: ask the model the same question
+    // Try a key typed at the onboarding: ask the model the fixed question
     // with it, and say what came back and how the provider took the key.
     KeyTry,
-    // Ask the model to write an app. The text says which app: the words
-    // typed after `make` in the chat box (see `apps.rs`).
+    // Send a line typed in the chat box to the model, with the list of what
+    // the kernel can do for it: the JSON that `chat_tools` in `tools.rs` made
+    // when the line was sent.
+    ChatLine { line: String, tools: String },
+    // Ask the model to write an app. The text says which app: the request the
+    // model gave with the tool `make_app` (see `tools.rs`).
     AppRequest(String),
 }
 
-// The answer to an errand: which errand it answers, what came back, in one
-// sentence, for a question to the model how the provider took the key, and
-// for an app the script the model wrote, if it passed the checks.
+// The answer to an errand: which errand it answers; what the kernel has to
+// say about it, in one sentence (for a line the model answered as it should,
+// nothing); for the try of a key how the provider took the key; for an app
+// the script the model wrote, if it passed the checks; for a line what the
+// model answered; and, for a line or an app the provider answered, the
+// terminal's line about how many tokens that took.
 pub struct Answer {
     pub errand: Errand,
     pub sentence: String,
     pub key: KeyVerdict,
     pub script: Option<String>,
+    pub reply: Option<ChatReply>,
+    pub tokens: Option<String>,
 }
 
 // How far the one errand has got. There is room for one at a time.

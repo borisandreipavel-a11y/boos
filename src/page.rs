@@ -131,19 +131,6 @@ pub fn site_exchange(
     result
 }
 
-// Fetches the site's page for somebody who asked for it, and says in one
-// sentence how that went: how the site answered and how long its page is, or
-// why no page came. Called by the network's task when it runs an errand; the
-// sentence is the errand's answer. The site's own words in it were cleaned
-// when they were read.
-pub fn page_tell(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) -> String {
-    match page_get(interface, card, sockets, name_server) {
-        Ok(answer) if answer.complete => format!("{} answered \"{}\". Its page is {} bytes long.", SITE, answer.first_line, answer.page_length),
-        Ok(answer) => format!("{} answered \"{}\", but its page did not come whole: {} bytes of it came.", SITE, answer.first_line, answer.page_length),
-        Err(reason) => format!("no page came, because {}", reason),
-    }
-}
-
 // Fetches the site's page and prints how it begins. Called once by the
 // network's task, as soon as this machine has an address.
 pub fn page_fetch(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet, name_server: Option<Ipv4Address>) {

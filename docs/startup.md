@@ -103,7 +103,7 @@ Box: a program of 41 bytes ran inside it and answered 2 + 3 = 5
 App: Hello from inside the box
 Interpreter: a program of 765037 bytes that understands Lua is on board, and the box accepts it
 App: Hello from a Lua script!!!
-JSON: 13 of 13 checks of making and reading it are right
+JSON: 19 of 19 checks of making and reading it are right
 Lock: 6 of 6 checks of locking a secret with a password are right
 Disk controller: found, device 4 on bus 0 of the PCI list
 Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller

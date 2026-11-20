@@ -1,9 +1,9 @@
 //! JSON: the form in which many services on the internet send and expect
 //! their data. It is text, with fixed ways to write a list (`[...]`), a set
 //! of named things (`{"name": ...}`), a text (`"..."`), a number, and the
-//! words `true`, `false` and `null`. This file does the two things the
-//! kernel needs and no more: it writes a text the JSON way, and it finds one
-//! text in a piece of JSON by its place.
+//! words `true`, `false` and `null`. This file does the things the kernel
+//! needs and no more: it writes a text the JSON way, and it finds one text,
+//! or one whole number, in a piece of JSON by its place.
 //! Notes: `docs/json.md`.
 
 use alloc::format;
@@ -25,6 +25,7 @@ pub const NOT_JSON: &str = "it is not sound JSON";
 pub const NOT_THERE: &str = "it has no such part";
 pub const NOT_A_TEXT: &str = "that part of it is not a text";
 pub const NOT_PROPER_TEXT: &str = "a text in it is not made of proper signs";
+pub const NOT_A_NUMBER: &str = "that part of it is not a whole number";
 
 // Writes a text the JSON way: in double quotes, with every sign that has a
 // meaning of its own in JSON written as a backslash and a letter, and every
@@ -70,15 +71,7 @@ pub fn json_text(text: &str) -> String {
 // far as it goes. This is not a full check of the JSON: commas and colons in
 // the parts that are passed over are not looked at.
 pub fn json_find_text(json: &[u8], path: &[Step]) -> Result<String, &'static str> {
-    let mut reader = Reader { bytes: json, at: 0 };
-    for step in path {
-        reader.skip_space();
-        match step {
-            Step::Name(name) => reader.go_to_name(name)?,
-            Step::Place(place) => reader.go_to_place(*place)?,
-        }
-    }
-    reader.skip_space();
+    let mut reader = reader_at(json, path)?;
     match reader.peek() {
         Some(b'"') => {
             reader.at += 1;
@@ -90,6 +83,39 @@ pub fn json_find_text(json: &[u8], path: &[Step]) -> Result<String, &'static str
         Some(byte) if value_starts(byte) => Err(NOT_A_TEXT),
         _ => Err(NOT_JSON),
     }
+}
+
+// Finds one whole number in a piece of JSON, such as how many tokens an
+// answer took. `path` says where, as for `json_find_text`. Only digits alone
+// make such a number: one with a minus sign, a point or a power of ten is not
+// one, and neither is one too large for 64 bits. As for a text, the number is
+// handed out only if what stands behind it closes properly.
+pub fn json_find_number(json: &[u8], path: &[Step]) -> Result<u64, &'static str> {
+    let mut reader = reader_at(json, path)?;
+    match reader.peek() {
+        Some(b'0'..=b'9') => {
+            let number = reader.whole_number()?;
+            reader.rest_closes(path.len())?;
+            Ok(number)
+        }
+        Some(byte) if value_starts(byte) => Err(NOT_A_NUMBER),
+        _ => Err(NOT_JSON),
+    }
+}
+
+// Goes along `path` from the start of a piece of JSON, and gives back a reader
+// that stands at the value found there.
+fn reader_at<'a>(json: &'a [u8], path: &[Step]) -> Result<Reader<'a>, &'static str> {
+    let mut reader = Reader { bytes: json, at: 0 };
+    for step in path {
+        reader.skip_space();
+        match step {
+            Step::Name(name) => reader.go_to_name(name)?,
+            Step::Place(place) => reader.go_to_place(*place)?,
+        }
+    }
+    reader.skip_space();
+    Ok(reader)
 }
 
 // Whether a byte can be the first of a value in JSON: a set of named things,
@@ -334,6 +360,27 @@ impl Reader<'_> {
         Ok(UNKNOWN)
     }
 
+    // At the first digit of a number: reads it as a whole number. One that
+    // goes on with a point or a power of ten, or that is too large for 64
+    // bits, is no whole number; one with a 0 in front of other digits, or
+    // with anything but the end of the value behind it, is not JSON.
+    fn whole_number(&mut self) -> Result<u64, &'static str> {
+        let first = self.at;
+        let mut number: u64 = 0;
+        while let Some(byte @ b'0'..=b'9') = self.peek() {
+            number = number.checked_mul(10).and_then(|tens| tens.checked_add(u64::from(byte - b'0'))).ok_or(NOT_A_NUMBER)?;
+            self.at += 1;
+        }
+        if self.at - first > 1 && self.bytes.get(first) == Some(&b'0') {
+            return Err(NOT_JSON);
+        }
+        match self.peek() {
+            Some(b'.' | b'e' | b'E') => Err(NOT_A_NUMBER),
+            None | Some(b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r') => Ok(number),
+            Some(_) => Err(NOT_JSON),
+        }
+    }
+
     // Reads four digits of the kind that count to sixteen (0 to 9, a to f)
     // as one number.
     fn four_digits(&mut self) -> Result<u32, &'static str> {
@@ -380,6 +427,13 @@ pub fn json_check() -> (usize, usize) {
         json_find_text(ONE_TOO_MANY, &content) == Err(NOT_JSON),
         // What was made here is read back here.
         json_find_text(format!("{{\"text\": {}}}", json_text(AWKWARD)).as_bytes(), &[Name("text")]).as_deref() == Ok(AWKWARD),
+        // Whole numbers: two in the answer, and four things that are none.
+        json_find_number(ANSWER, &[Name("created")]) == Ok(1_790_000_000),
+        json_find_number(ANSWER, &[Name("usage"), Name("total_tokens")]) == Ok(21),
+        json_find_number(ANSWER, &[Name("model")]) == Err(NOT_A_NUMBER),
+        json_find_number(b"{\"n\": 1.5}", &[Name("n")]) == Err(NOT_A_NUMBER),
+        json_find_number(b"{\"n\": -2}", &[Name("n")]) == Err(NOT_A_NUMBER),
+        json_find_number(b"{\"n\": 99999999999999999999}", &[Name("n")]) == Err(NOT_A_NUMBER),
     ];
     (checks.iter().filter(|right| **right).count(), checks.len())
 }

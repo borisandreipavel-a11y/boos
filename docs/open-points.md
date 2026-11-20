@@ -108,8 +108,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## JSON
 
-- **One request is made with it,** the question to the model, and its answer is read with it. See [json.md](json.md) and [model.md](model.md).
-- **Only texts can be read.** A number, `true`, `false` or `null` can be passed over, not read as a value; a list cannot be walked through without knowing how long it is; nothing says whether a name is there except by asking for its text.
+- **Every request to the model is made with it,** the list of tools among it, and every answer is read with it. See [json.md](json.md) and [model.md](model.md).
+- **Only texts and whole numbers can be read.** A fraction, a number below zero, `true`, `false` or `null` can be passed over, not read as a value; a list cannot be walked through without knowing how long it is; nothing says whether a name is there except by asking for it.
 - **The parts that are passed over are not checked.** Commas, colons and the spelling of numbers and words are not looked at there, and a square bracket closes a curly one. The kernel hands out the right text from some pieces that a strict reader refuses.
 - **A text is copied whole, however long.** An answer with a text of many megabytes asks the heap for as much, and a request for memory that cannot be met stops the kernel (see "Memory"). Whoever hands an answer to the reader has to limit its size first.
 - **The whole piece has to be in memory at once.** It cannot be read as it arrives.
@@ -117,9 +117,9 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Asking the model
 
-- **One fixed question.** What is asked is a constant; a typed line cannot be the question yet, and the answer is only said, not used. A typed line can be a request for an app, which is a question of its own kind (see "Apps made on request" below).
+- **Every line is a question.** Each line typed, but `key` and `setup`, goes to the model with the list of tools; the one fixed question is left only for the try of a key. See "Every line to the model" below.
 - **A good answer from the real provider was seen once, and only its row.** In a person's own run with a real key the model's words appeared in the chat box; the raw answer was not seen. Whether the model thinks before it answers, how long a good answer takes, and whether 1000 tokens leave room for longer answers are not known; if they do not, the kernel says so ("the model's answer was empty, because ...") instead of showing nothing. The kernel does not ask for thinking or no thinking, because the provider's documentation names no setting for this model.
-- **The tokens used are not read.** The answer says how many tokens the question and the answer cost (`usage`), but the JSON reader only reads texts, not numbers, so the kernel cannot say what an asking cost.
+- **The tokens used are said in the terminal only,** as counts (see [tools.md](tools.md)). What they cost is not worked out: the price depends on the hour and on the provider's list, which can change.
 - **The model's words are cut at 300 signs** and shown as plain signs only: a letter with an accent becomes dots.
 - **An answer in pieces is not read.** If a provider sends its answer in pieces with their lengths in between ("chunked"), the body does not read as JSON. The provider did not answer that way to this kernel's request.
 - **The end of an answer is the closed connection.** A provider that sends its whole answer and then leaves the connection open is waited for until the minute is over, and its answer is then called "not whole". The length the provider names is not used.
@@ -130,17 +130,29 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The request names nothing about this kernel** (no note saying what kind of program asks). A provider that wants one would refuse; this one did not.
 - **Refusals are not told apart.** A wrong key, used-up credit, a model the provider does not know and too many requests all read "the provider turned the question down", with the number and the provider's words. Only the provider's own trouble (500 to 599) reads differently, "the provider could not answer". Nothing asks again by itself.
 
+## Every line to the model
+
+- **Every line is a paid question that needs the network and takes seconds,** and everything typed in it reaches the provider and, from there, the maker of the model. Without a key, or without the network, a line gets a row that says so and nothing else. See [tools.md](tools.md).
+- **The model sees one line only.** Nothing said before goes with it, so a line such as "roll it again" means nothing to it, and it cannot ask back for something it needs.
+- **Only the first tool is done,** and what it did is not told to the model: a line that wants two things done gets one, with a row that says so.
+- **The model may pick the wrong tool,** or none, and nothing checks its choice beyond what it gives the tool. Only the real model shows whether it runs a kept app for a wish that fits one, rather than making it again.
+- **Real tool calls have been tried in one run only,** a person's own, which they said worked (see "Every line to the model" in [testing.md](testing.md)); nothing of it was watched, so no real answer with a tool call has been seen here. The shape the kernel reads is the one the provider's documentation and the model's maker give; the provider's documentation shows no whole answer with a tool call in it.
+- **Every kept app makes every request longer,** by its number and request in the list of `run_app`, some 20 to 60 bytes. Nothing caps the list.
+- **Thinking is not chosen.** The model's maker says its model thinks unless told not to, which is paid like the answer and takes time; the terminal's line about the tokens shows how much.
+- **A line sent while an answer is awaited is turned away,** not kept for later, and an asking cannot be called off.
+- **The words that retired are ordinary lines now:** `ask`, `fetch`, `make` and `look` go to the model like any other line, and so does a line that only says hello.
+
 ## Apps made on request
 
-- **A kept app cannot be run again yet.** Its script goes to the terminal, line by line, and is run once; an app that ran to its end is kept on the disk and listed in the panel of apps, but nothing runs a kept app. The same app asked for again is written again by the model, and takes the kept one's place. See [apps.md](apps.md).
+- **A kept app runs again only when the model picks it.** The model is told every kept app's number and request with every line, and nothing checks that it picks the one that fits: asked for an app that is kept, it may make it anew, and the new one takes the kept one's place if its request is the same. See [apps.md](apps.md) and [tools.md](tools.md).
 - **A kept app cannot be taken away.** Nothing can be taken out of the notebook, so an app can only be replaced, by an app made for the same request. Requests that differ in a space or a capital letter make two apps.
-- **An app is known by its request only:** the words typed after `make`, up to 45 signs. It has no name and no sentence that says what it does.
-- **The panel of apps shows its first page only.** Nothing turns the page yet. Its place and size are fixed, five apps a page; on a screen smaller than 800 by 600 dots it could lie over the box with an app's text.
+- **An app is known by its request only:** the few words the model gave with the tool `make_app`, up to 45 signs. It has no name and no sentence that says what it does.
+- **The panel of apps turns its page only when the model is asked to,** and shows its first page at every start and whenever an app is kept. Its place and size are fixed, five apps a page; on a screen smaller than 800 by 600 dots it could lie over the box with an app's text.
 - **A kept script is unlocked on the disk,** readable by anyone with the disk, like every line kept there.
 - **Every start reads every kept script,** piece by piece, when the notebook is opened, and checks every script in pieces whole. How long that takes is in [testing.md](testing.md).
 - **Keeping an app holds the main loop,** like the run before it: every piece is written, put down for good and read back, and then the whole script is read back once more and compared. Keys typed meanwhile wait in the keyboard's line. How long it takes is in [testing.md](testing.md).
 - **An app can show one line of 40 signs and print to the terminal, and nothing else.** It cannot wait, read a key, or be run again; so an app that shows several lines in turn, like frames, is seen only at its last. Its printed lines are in the terminal, not on the screen.
-- **A request has at most 45 signs,** what is left of the chat box's 50-sign line after `make` and its space.
+- **A request has at most 45 signs;** a longer one from the model is cut, and every byte in it that is not a plain sign becomes a dot.
 - **The model is told the same fixed text every time,** sent with every request. Whether it follows the text is not checked, except that marks around code are taken off: an answer in words is taken as a script, and only the first block between marks is kept.
 - **Random numbers depend on the processor's.** The interpreter's random numbers start from the same place each time unless the kernel gives a run a seed; it takes one from the processor's random numbers for every app. A processor without them would give none, but then the encrypted link cannot be made and no app comes at all. The seed is not secret and not meant to be: it only makes runs differ. The script at startup gets none.
 - **The kernel says how a run went in a few kinds only:** a mistake (the terminal's line says which), fuel used up, the interpreter giving up, and the kernel's own refusals in its own words. That the interpreter gave up because of memory is the likely reason, not one it reports.
@@ -214,7 +226,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The chat box
 
-- **The kernel gives the typed line back, with six lines set apart.** `key` takes a secret, `fetch` fetches the example page and says how the site answered, `ask` asks the model one fixed question, `setup` asks for the person's name, a key and a look again, `look` asks for the number of a look, and `make` with a few words asks the model for an app (see [apps.md](apps.md)). Nothing reads what else is typed: a typed line cannot be the question yet.
+- **Every line but two goes to the model.** `key` takes a secret, and `setup` asks for the person's name, a key and a look again; everything else goes to the model, and nothing in the kernel reads what it says (see "Every line to the model" below).
 - **The kernel asks the person at the machine for three things: a name, the model's key with a password to lock it, and a look.** The name is asked at a start where the notebook holds none, and after `setup`; the key after the name, at a start where the notebook holds no answer about it, and after `setup`; the password at every start where a key is locked on the disk; the look when the questions about the key are over, at a start where the notebook holds no answer about the look, and after `setup`. While the kernel waits, the next line is the answer, whatever it says; there is no way to leave a question but to answer it, Enter alone included.
 - **A name is one line of at most 20 plain signs.** Nothing checks it further: any signs, a name of one sign, a name that is a command word.
 - **The name is kept on the disk as typed, readable by anyone with the disk,** and nothing takes it out; a new answer only adds an entry that takes its place. Every `setup` answered with a new name adds an entry, like every line sent.
@@ -246,8 +258,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **A key that cannot be judged is kept,** and is locked if a password is chosen: a key typed when the machine has no address yet, or while the answer to an `ask` or a `fetch` is awaited, and a key whose try got any answer but 200, 401, 402 or 403. A mistyped key kept that way shows itself at the first `ask` as a 401; `setup` replaces it.
 - **At a first start a key can come too early.** The machine gets its address a few seconds after it starts; a key typed before that is kept untried.
 - **While a key is tried, nothing typed is taken,** and there is no way to call the try off. With a provider that stays silent that is the minute the kernel waits for any question to the model, and longer by the wall clock in QEMU. Signs typed meanwhile are lost, and a row says so when the answer comes.
-- **Each try is a real question to the provider:** with a key it knows, it is paid for as an `ask` is, and the provider keeps its record of it. A key it does not know is turned down before any model is asked.
-- **The question is the one `ask` asks,** so the try shows the model's answer to it. A cheaper or quicker way to check a key was not found in the provider's documentation: it names no free page that says whether a key is good.
+- **Each try is a real question to the provider:** with a key it knows, it is paid for as a line is, and the provider keeps its record of it. A key it does not know is turned down before any model is asked.
+- **The question is a fixed one,** `Say hello in five words.`, so the try shows the model's answer to it. A cheaper or quicker way to check a key was not found in the provider's documentation: it names no free page that says whether a key is good.
 
 ## The lock
 

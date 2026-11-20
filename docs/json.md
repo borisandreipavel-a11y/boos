@@ -2,9 +2,9 @@
 
 Code: `src/json.rs`, `src/json_values.rs`, and the check in `efi_main`.
 
-JSON is the form in which many services on the internet send and expect their data. The kernel has to speak it to ask a model for anything. It is done with code written for this kernel, about 400 lines with their comments, and no outside crate. That code does two things and no more: it writes a text the JSON way, and it finds one text in a piece of JSON.
+JSON is the form in which many services on the internet send and expect their data. The kernel has to speak it to ask a model for anything. It is done with code written for this kernel, about 400 lines with their comments, and no outside crate. That code does three things and no more: it writes a text the JSON way, it finds one text in a piece of JSON, and it finds one whole number there.
 
-**One thing uses it:** the question to the model is written with it, and the provider's answer is read with it (see [model.md](model.md)). A check at startup shows that it works.
+**What uses it:** every question to the model is written with it, the list of tools that goes with a line among it, and the provider's answer is read with it: the model's words, the tool it asks for and what it gives the tool, and how many tokens the answer took (see [model.md](model.md) and [tools.md](tools.md)). A check at startup shows that it works.
 
 ## The words
 
@@ -29,6 +29,8 @@ What comes back when there is no text to give:
 - `that part of it is not a text`: what lies at the end of the path is a number, a list, `null` or anything else that is not a text.
 - `a text in it is not made of proper signs`: the bytes between a text's quotes are not proper text (UTF-8).
 
+`json_find_number(json, path)` finds one whole number the same way, such as how many tokens an answer took, or the number of an app the model gives a tool. Only digits alone make such a number. What comes back when there is none: `that part of it is not a whole number`, for a number with a minus sign, a point or a power of ten, one too large for 64 bits, a text, or anything else; or, as above, `it is not sound JSON` (also for a number with a 0 in front of other digits, or with something other than the end of the value behind it) and `it has no such part`. The number is handed out only if what stands behind it closes properly, as a text is.
+
 **The JSON comes from outside the kernel, so nothing about it is taken on trust.** It is taken as bytes, which may be anything at all.
 
 - Every byte is reached through `get`, which gives nothing where there is no byte instead of stopping the kernel.
@@ -47,18 +49,18 @@ The rules, where JSON leaves a choice or the kernel is stricter or laxer than ot
 
 ## What is left out
 
-Numbers, `true`, `false` and `null` cannot be read as values, only passed over. There is no way to walk through a list whose length is not known, to ask whether a name is there without asking for its text, or to build a list or a set of names other than by writing the brackets by hand. Each can be added when something needs it.
+Numbers other than whole ones that are not below zero, `true`, `false` and `null` cannot be read as values, only passed over. There is no way to walk through a list whose length is not known, to ask whether a name is there without asking for its text, or to build a list or a set of names other than by writing the brackets by hand. Each can be added when something needs it.
 
 ## The check at startup
 
 `efi_main` calls `json_check()` after the interpreter's lines:
 
-- `JSON: 13 of 13 checks of making and reading it are right`
-- otherwise: `JSON: not to be trusted here, only N of 13 checks of making and reading it are right`, and the kernel carries on.
+- `JSON: 19 of 19 checks of making and reading it are right`
+- otherwise: `JSON: not to be trusted here, only N of 19 checks of making and reading it are right`, and the kernel carries on.
 
-The thirteen: two texts made, one of them with every kind of awkward sign; three texts found in an answer of the shape a model's answer has; the reason found in a refusal; every backslash form undone; a piece in which the name looked for also stands where it must not count, a name that only ends alike stands in front of it, and a text that is passed over holds brackets; a part that is not there, a part that is not a text, a piece cut off, and a whole piece with one closing bracket too many behind it; and a text made here and read back here.
+The thirteen: two texts made, one of them with every kind of awkward sign; three texts found in an answer of the shape a model's answer has; the reason found in a refusal; every backslash form undone; a piece in which the name looked for also stands where it must not count, a name that only ends alike stands in front of it, and a text that is passed over holds brackets; a part that is not there, a part that is not a text, a piece cut off, and a whole piece with one closing bracket too many behind it; and a text made here and read back here. Then six about whole numbers: two found in the answer (`created` and `usage`, `total_tokens`), a text where a number is looked for, and three pieces of JSON written into the check itself whose numbers are no whole numbers of the kind looked for: `1.5`, `-2` and a number of twenty nines, too large for 64 bits. Python's JSON reader takes the first as a fraction and the second as below zero, and the third does not fit in 64 bits.
 
-**The values it is held against are in `json_values.rs`, and that file is made by a script, not written by hand.** The script takes the expected values from Python's own JSON code, which is another reader and writer than the kernel's. Reading back what the kernel itself wrote would let two wrong halves agree with each other; only the last of the thirteen checks does that. The script is not in the repository. To make the file anew, write each piece of JSON, let another JSON reader say what it holds and how it would write the two texts, and put those in as the constants.
+**The values it is held against are in `json_values.rs`, and that file is made by a script, not written by hand.** The script takes the expected values from Python's own JSON code, which is another reader and writer than the kernel's. Reading back what the kernel itself wrote would let two wrong halves agree with each other; only the thirteenth check does that. The two numbers found in the answer are what the script put there. The script is not in the repository. To make the file anew, write each piece of JSON, let another JSON reader say what it holds and how it would write the two texts, and put those in as the constants.
 
 The answer of a model in that file is made up from the names of its parts as the provider's documentation lists them. It is not a real answer: the documentation shows none.
 
@@ -74,4 +76,4 @@ The answer of a model in that file is made up from the names of its parts as the
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: only texts can be read; the parts that are passed over are not checked; a text is copied whole, however long.
+See [open-points.md](open-points.md). In short: only texts and whole numbers can be read; the parts that are passed over are not checked; a text is copied whole, however long.
