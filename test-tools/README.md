@@ -42,16 +42,20 @@ caught (the misses that `docs/testing.md` names excepted).
 - **Breaks stop at their first failure.** One failure shows that a break is caught, so the runner stops the test
   there. It counts the break as caught only when that first failure is the one in `suites.CAUGHT_BY`, recorded
   from a run alone and to the end; any other first failure (a wait in vain while other machines ran, say) makes
-  it run that break again, alone and to the end.
+  it run that break again, alone and to the end. The breaks of the kernel's own lines run through
+  `run_lines_breaks.py` itself, one at a time, to the end: a break counts as caught when every check named for it
+  catches it, as that script says.
 - **The table checks itself.** A `test_*.py` or `run_*_breaks.py` that is in no entry of `suites.py` and not
   excused there, a list of breaks whose count differs from `suites.BREAK_COUNTS`, kinds of answer that differ from
   what the tests know, and a break whose old text no longer stands exactly once in its file: each is reported at
   every run, `--list` and "only what changed" included, and makes the run end with 1.
 - **To add a suite:** one entry in `suites.py`. **To add a break on purpose:** a line in one of the lists
-  (`run_key_breaks.py`, `run_look_breaks.py`, `run_reset_breaks.py`, `run_try_breaks.py` with `test_try.py`,
-  `app_breaks.py`, `apps_kept_breaks.py`, `model_breaks.py`, `model_breaks5.py`), the count in
+  (`run_key_breaks.py`, `run_look_breaks.py`, `run_reset_breaks.py`, `run_lines_breaks.py`, `run_try_breaks.py`
+  with `test_try.py`, `app_breaks.py`, `apps_kept_breaks.py`, `model_breaks.py`, `model_breaks5.py`), the count in
   `suites.BREAK_COUNTS`, and its first failure in
-  `suites.CAUGHT_BY` after one run with `--to-the-end`. A list of new breaks of the same kind (file, old text,
+  `suites.CAUGHT_BY` after one run with `--to-the-end`. A break that can no longer be caught, for a reason that
+  `docs/testing.md` gives, goes into `suites.KNOWN_MISSES` with that reason: it is still made and run, and counted
+  as missed, as meant. A list of new breaks of the same kind (file, old text,
   new text, the test that must catch it) can run in the break copy as the key's and the look's do
   (`copy_break.py`): the project's own source is never changed.
 

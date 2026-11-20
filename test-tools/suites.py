@@ -6,7 +6,9 @@ A suite entry says:
 - watches: the files outside test-tools that it is about, besides the ones that every start runs through. A change
   to a kernel file that no entry watches runs every suite, because nearly every file of the kernel runs at every
   start; a change to a test script runs every suite that uses it (read from the scripts' imports, nothing to list);
-- split (optional): run each scenario of the script's SCENARIOS as a job of its own, so that they can run at once;
+- split (optional): run each scenario as a job of its own, so that they can run at once: True for the scenarios of
+  the script's SCENARIOS, "file.py NAME" for the keys of the dict NAME in that file, or a list of the names the
+  script takes as arguments (each must stand in the script's text);
 - leave_out (optional, with split): scenarios that are not run, each with the reason, as {scenario: why};
 - env (optional): environment for the script, as {name: value};
 - alone (optional): nothing else of the same run at the same time (for a script that changes the project's own
@@ -63,6 +65,12 @@ SUITES = [
          leave_out={"times": "a measurement of how long keeping and opening take, with no verdict"},
          seconds=dict(first=55, make=85, echo=35, outside=20, requests=60, look=25, small=20, damaged=20, full=95, failing=50,
                       cut=360, older=90)),
+    # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
+    dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
+         watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
+    # The stop screen after a failure or a panic made on purpose, each in a copy built for it.
+    dict(name="lines stop", command=["test_lines_stop.py"], split="lines_checks.py STOP_CASES", watches=[],
+         seconds={"stop-firmware": 15, "stop-own": 15, "stop-panic": 15, "stop-picture": 20, "stop-view": 20, "stop-task": 40}),
 ]
 
 # Scripts named test_*.py or run_*_breaks.py that are no entry of their own, and why.
@@ -77,12 +85,23 @@ EXCUSED = {
 # Files no test runs or reads: a change to them alone boots nothing. Anything not named here or in an entry, and not
 # words only (WORDS), runs everything.
 NO_TEST = [".github/", "lua/", "run.bat", "test-tools/check_lua.py", "test-tools/export_check.py", "test-tools/time_look.py",
-           "test-tools/time_repaint.py", "test-tools/make_lock_values.py", "test-tools/restore.py", "test-tools/crlf.py"]
+           "test-tools/time_repaint.py", "test-tools/time_lines.py", "test-tools/make_lock_values.py", "test-tools/restore.py",
+           "test-tools/crlf.py"]
 # Words only: a change to these boots nothing.
 WORDS = [".md", "LICENSE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 19, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8}
+BREAK_COUNTS = {"apps": 19, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8, "lines": 18}
+
+# Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
+# still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
+# (MISSES in run_key_breaks.py and model_breaks.py).
+KNOWN_MISSES = {
+    "break look: the screen not painted again at startup":
+        "the kernel's own lines cover the screen while it starts, and the end of the start paints the whole usual picture "
+        "again in the look in use (lines_uncover calls look_paint), so the repaint in chat_begin that this break turns "
+        "off changes nothing on the screen",
+}
 
 # The first failure that caught each break on purpose when it was run alone and to the end. A run that stops at the
 # first failure counts a break as caught only when its first failure is this one; any other first failure (a wait in
@@ -126,16 +145,15 @@ CAUGHT_BY = {
     'break key: no key not noted': 'first terminal/disk',
     'break key: every refusal taken for a wrong password': 'odd-version 1-refused',
     'break key: the question for a new key not used at setup': 'stays 2-key-question-again',
-    'break look: the panel not painted again': 'pick-1 3-night',
-    'break look: the background not painted again': 'pick-1 3-night',
-    "break look: the panel's text not remembered": 'pick-1 3-night',
+    'break look: the panel not painted again': 'pick-1 1-name-question',
+    'break look: the background not painted again': 'pick-1 1-name-question',
+    "break look: the panel's text not remembered": 'pick-1 1-name-question',
     "break look: the kernel's letters keep the first look's colour": 'pick-1 3-night',
     'break look: the sentence stays white': 'pick-1 3-night',
     'break look: a number one off': 'pick-1 3-night',
     'break look: a tried look not shown at once': 'pick-1 3-night',
     'break look: the kept look not written': 'pick-1 terminal/disk',
     'break look: the kept look not read at startup': 'pick-2 1-next-start-in-night-no-question',
-    'break look: the screen not painted again at startup': 'pick-2 1-next-start-in-night-no-question',
     'break look: the answer kept as the last line': 'pick-1 terminal/disk',
     'break look: a look kept although none was tried': 'at-once-1 1-blue-stays',
     'break look: a kept look found whatever its capitals': 'case 1-blue-a-row-and-the-question',
@@ -180,7 +198,7 @@ CAUGHT_BY = {
     'break kept: requestnotcleaned': 'kept-requests start',
     'break kept: leadingzero': 'kept-requests start',
     'break kept: notwholelisted': 'kept-outside start',
-    'break kept: nolookrepaint': 'kept-look paper-tried',
+    'break kept: nolookrepaint': 'kept-look night',
     'break kept: sixapps': 'kept-small start',
     'break reset: setup leaves the look as it was': 'at-once-1 2-blue-at-once',
     'break reset: the first look not put in use': 'at-once-1 2-blue-at-once',
@@ -190,4 +208,22 @@ CAUGHT_BY = {
     'break reset: an entry although look 1 is kept': 'unchanged-blue terminal/disk',
     'break reset: nothing said when the first look cannot be kept': 'damaged-1 3-rows-about-the-look',
     'break reset: the rows about the look without the closing words': 'damaged-1 3-rows-about-the-look',
+    'break lines: the lines not shown while the machine starts': 'start',
+    'break lines: the usual picture not held': 'start',
+    'break lines: the start screen never ends': 'start',
+    'break lines: the usual picture not painted when the lines go': 'start',
+    "break lines: the tasks' lines not painted by the main loop": 'start',
+    'break lines: F1 does nothing': 'start',
+    'break lines: a key does not end the lines': 'start',
+    'break lines: F1 held down counted again': 'held',
+    'break lines: lines printed while F1 shows them not painted': 'later',
+    'break lines: the screen not filled when the lines are painted whole': 'small',
+    'break lines: the older lines do not move up': 'small',
+    'break lines: a long line not carried on in the next row': 'small',
+    'break lines: the lines kept only with a serial port': 'noserial',
+    'break lines: the stop screen not painted after a failure': 'stop-picture',
+    'break lines: the stop screen not painted after a panic': 'stop-panic',
+    'break lines: the report left off the stop screen': 'stop-own',
+    "break lines: a failure early on painted in the lines' colours": 'stop-firmware',
+    'break lines: no stop screen while the lines cover the screen': 'stop-view',
 }

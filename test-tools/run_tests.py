@@ -60,15 +60,29 @@ def assigned(script, name):
     return None
 
 
-def scenarios_of(script):
-    """The scenario names of a script's SCENARIOS, dict(name=function, ...) or {"name": function, ...}, read from its
-    text."""
-    value = assigned(script, "SCENARIOS")
+def scenarios_of(script, name="SCENARIOS"):
+    """The scenario names of a script's SCENARIOS (or of another dict that `name` names), dict(name=function, ...) or
+    {"name": ..., ...}, read from its text."""
+    value = assigned(script, name)
     if isinstance(value, ast.Call) and getattr(value.func, "id", "") == "dict" and value.keywords:
         return [keyword.arg for keyword in value.keywords]
     if isinstance(value, ast.Dict) and value.keys and all(isinstance(key, ast.Constant) for key in value.keys):
         return [key.value for key in value.keys]
-    raise SystemExit("%s has no SCENARIOS = dict(...) or {...} to split by" % script)
+    raise SystemExit("%s has no %s = dict(...) or {...} to split by" % (script, name))
+
+
+def split_names(entry, leaving_out=True):
+    """The scenarios a split entry runs as jobs of their own: its script's SCENARIOS (split=True), the keys of a dict
+    in another file (split="file.py NAME"), or the names given (split=[...]); less those it leaves out."""
+    split = entry["split"]
+    if split is True:
+        names = scenarios_of(entry["command"][0])
+    elif isinstance(split, str):
+        file, name = split.split()
+        names = scenarios_of(file, name)
+    else:
+        names = list(split)
+    return [n for n in names if not (leaving_out and n in entry.get("leave_out", {}))]
 
 
 def local_modules():
@@ -98,10 +112,13 @@ def needs_of(script, known=None):
 
 class Job:
     def __init__(self, name, command, env=None, seconds=60, kind="suite", catalogue=None, brk=None, expect="pass",
-                 watches=(), alone=False, prepare=None, needs=(), target=None, stop_early=False):
+                 watches=(), alone=False, prepare=None, needs=(), target=None, stop_early=False, misses=False, checks=()):
         self.name, self.command, self.env, self.kind = name, command, dict(env or {}), kind
         self.catalogue, self.brk, self.expect, self.watches, self.alone = catalogue, brk, expect, list(watches), alone
         self.prepare, self.needs, self.target, self.stop_early = prepare, set(needs), target, stop_early
+        # misses: the command is a list of breaks that reports what it did not catch ("NOT CAUGHT: none" when every
+        # check named for the break, `checks`, caught it), and its own verdict is read.
+        self.misses, self.checks = misses, list(checks)
         self.seconds = seconds
         self.reason = ""
         self.again = False  # a break run again alone and to the end
@@ -115,10 +132,8 @@ def suite_jobs():
         common = dict(env=entry.get("env"), watches=entry.get("watches", []), alone=entry.get("alone", False),
                       needs=needs_of(script))
         if entry.get("split"):
-            for scenario in scenarios_of(script):
-                if scenario in entry.get("leave_out", {}):
-                    continue
-                share = seconds.get(scenario, 60) if isinstance(seconds, dict) else 60
+            for scenario in split_names(entry):
+                share = seconds.get(scenario, 60) if isinstance(seconds, dict) else seconds
                 jobs.append(Job("%s %s" % (entry["name"], scenario), entry["command"] + [scenario], seconds=share, **common))
         else:
             jobs.append(Job(entry["name"], entry["command"], seconds=seconds if isinstance(seconds, (int, float)) else 60, **common))
@@ -150,10 +165,12 @@ def break_jobs():
     from copy_break import check as copy_check
     jobs, problems = [], []
 
-    def add(catalogue, name, command, env, changes, expect, files, seconds, prepare=None, kernel_file=False):
+    def add(catalogue, name, command, env, changes, expect, files, seconds, prepare=None, checks=None):
+        if "break %s: %s" % (catalogue, name) in suites.KNOWN_MISSES:
+            expect = "miss"
         job = Job("break %s: %s" % (catalogue, name), command, env=env, seconds=seconds, kind="break", catalogue=catalogue,
                   brk=name, expect=expect, needs=set().union(*[needs_of(f) for f in files]) | needs_of(command[0]),
-                  prepare=prepare, stop_early=True)
+                  prepare=prepare, stop_early=checks is None, misses=checks is not None, checks=checks or ())
         job.target = [target_of(file) for file, _ in changes]
         for file, change in changes:
             try:
@@ -207,6 +224,13 @@ def break_jobs():
     for name, (file, old, new, scenarios) in run_reset_breaks.BREAKS.items():
         add("reset", name, ["test_look_reset.py"] + list(scenarios), {}, [(file, lambda file, o=old, n=new: copy_check(file, o, n))],
             "caught", ["run_reset_breaks.py", "copy_break.py"], 60, prepare=(file, old, new))
+    # The kernel's own lines: each break through run_lines_breaks.py itself (read here from its text, since it runs
+    # when imported), which makes it in its own copy (lines_copy.py) and counts it as caught only when every check
+    # named for it catches it. Its own verdict is read; it does not stop at a first failure.
+    lines_breaks = ast.literal_eval(assigned("run_lines_breaks.py", "BREAKS"))
+    for label, (file, old, new, checks) in lines_breaks.items():
+        add("lines", label, ["run_lines_breaks.py", label], {}, [(file, lambda file, o=old, n=new: copy_check(file, o, n))],
+            "caught", ["run_lines_breaks.py"], 90, checks=checks)
     return jobs, problems
 
 
@@ -220,9 +244,15 @@ def table_problems(jobs):
             if name not in listed and name not in suites.EXCUSED and name not in CATALOGUE_FILES:
                 problems.append("%s is in no entry of suites.py and not excused there" % name)
     for entry in suites.SUITES:
-        unknown = set(entry.get("leave_out", {})) - set(scenarios_of(entry["command"][0]) if entry.get("split") else [])
+        names = split_names(entry, leaving_out=False) if entry.get("split") else []
+        unknown = set(entry.get("leave_out", {})) - set(names)
         if unknown:
             problems.append("the entry '%s' leaves out scenarios its script does not have: %s" % (entry["name"], sorted(unknown)))
+        if isinstance(entry.get("split"), list):
+            text = open(os.path.join(HERE, entry["command"][0]), encoding="utf-8").read()
+            absent = [n for n in names if '"%s"' % n not in text and "'%s'" % n not in text]
+            if absent:
+                problems.append("the entry '%s' names scenarios its script does not know: %s" % (entry["name"], absent))
     kinds = suites.APP_KINDS.split(",")
     if len(kinds) != 46:
         problems.append("suites.APP_KINDS holds %d kinds, not the 46 of app_cases.py" % len(kinds))
@@ -236,11 +266,16 @@ def table_problems(jobs):
             counts[job.catalogue] = counts.get(job.catalogue, 0) + 1
     if counts != suites.BREAK_COUNTS:
         problems.append("the lists of breaks hold %s, suites.BREAK_COUNTS says %s" % (counts, suites.BREAK_COUNTS))
+    breaks = {job.name for job in jobs if job.kind == "break"}
+    for name in sorted(set(suites.KNOWN_MISSES) - breaks):
+        problems.append("suites.KNOWN_MISSES names a break that no list holds: %s" % name)
+    for name in sorted(set(suites.KNOWN_MISSES) & set(suites.CAUGHT_BY)):
+        problems.append("%s is in suites.KNOWN_MISSES and has a first failure in suites.CAUGHT_BY" % name)
     return problems
 
 
 CATALOGUE_FILES = {"run_key_breaks.py", "run_try_breaks.py", "run_look_breaks.py", "run_app_breaks.py", "run_apps_kept_breaks.py",
-                   "run_reset_breaks.py"}
+                   "run_reset_breaks.py", "run_lines_breaks.py"}
 
 
 # ---------------------------------------------------------------- what a change needs
@@ -261,16 +296,17 @@ def changed_files(base):
 
 
 def table_on(point):
-    """suites.SUITES and CAUGHT_BY as they were at `point` (empty if suites.py was not there)."""
+    """suites.SUITES, CAUGHT_BY and KNOWN_MISSES as they were at `point` (empty if suites.py was not there)."""
     if point is None:
-        return {}, {}
+        return {}, {}, {}
     try:
         text = git("show", "%s:test-tools/suites.py" % point)
     except RuntimeError:
-        return {}, {}
+        return {}, {}, {}
     space = {}
     exec(compile(text, "suites.py at " + point, "exec"), space)  # the table holds data only
-    return {entry["name"]: entry for entry in space.get("SUITES", [])}, space.get("CAUGHT_BY", {})
+    return ({entry["name"]: entry for entry in space.get("SUITES", [])}, space.get("CAUGHT_BY", {}),
+            space.get("KNOWN_MISSES", {}))
 
 
 def plan_changed(jobs, files, point):
@@ -288,7 +324,7 @@ def plan_changed(jobs, files, point):
         if any(path.startswith(prefix) or path == prefix for prefix in suites.NO_TEST):
             continue
         if path == "test-tools/suites.py":
-            entries_then, caught_then = table_on(point)
+            entries_then, caught_then, misses_then = table_on(point)
             entries_now = {entry["name"]: entry for entry in suites.SUITES}
             for name, entry in entries_now.items():
                 if entries_then.get(name) != entry:
@@ -300,6 +336,11 @@ def plan_changed(jobs, files, point):
                     for job in jobs:
                         if job.name == name:
                             pick(job, "its first failure in suites.py changed")
+            for name in set(suites.KNOWN_MISSES) | set(misses_then):
+                if suites.KNOWN_MISSES.get(name) != misses_then.get(name):
+                    for job in jobs:
+                        if job.name == name:
+                            pick(job, "its known miss in suites.py changed")
             continue
         if path.startswith("test-tools/") and path.endswith(".py"):
             module = path[len("test-tools/"):-3]
@@ -450,6 +491,8 @@ class Worker:
             if ended:
                 say("    (ended %d test machine(s) left by %s)" % (ended, job.name))
             ports_free(self.port_base)
+        if job.misses:
+            return self.misses_verdict(job, lines, seconds, timed_out)
         verdicts = [l for l in lines if l.startswith("FAILURES:") or l.strip() == "all as meant"]
         if stopped:
             return "failed", first, seconds, "", True
@@ -464,6 +507,25 @@ class Worker:
                 return "error", first, seconds, "the verdict says none, but a failure was printed", False
             return "passed", None, seconds, "", False
         return "failed", first, seconds, last[:200], False
+
+    @staticmethod
+    def misses_verdict(job, lines, seconds, timed_out):
+        """A list that reports what it did not catch: one line per check named for the break ("<label> <check>
+        caught" or "... NOT CAUGHT"), then "NOT CAUGHT: none" or the misses. The break counts as caught (its tests
+        failed) only when every check named for it says so; the first of them stands for its first failure."""
+        if timed_out:
+            return "error", None, seconds, "timed out after %d s" % seconds, False
+        said = [l.strip() for l in lines if l.startswith("NOT CAUGHT:")]
+        if not said:
+            tail = [l for l in lines if l.strip()][-3:]
+            return "error", None, seconds, "no verdict line: " + " | ".join(tail)[-300:], False
+        reports = [l[len(job.brk):].split() for l in lines if l.startswith(job.brk + " ")]
+        caught = [words[0] for words in reports if words[1:] == ["caught"]]
+        if said[-1] == "NOT CAUGHT: none":
+            if sorted(caught) != sorted(job.checks):
+                return "error", None, seconds, "none missed, but the checks said caught are %s, not %s" % (caught, job.checks), False
+            return "failed", caught[0], seconds, "", False
+        return "passed", None, seconds, said[-1][:200], False
 
 
 # ---------------------------------------------------------------- the run
@@ -506,7 +568,8 @@ class Run:
     def again(self, job):
         """Queues a break to run again alone and to the end."""
         twin = Job(job.name, job.command, env=job.env, seconds=job.seconds, kind=job.kind, catalogue=job.catalogue,
-                   brk=job.brk, expect=job.expect, alone=True, prepare=job.prepare, stop_early=False)
+                   brk=job.brk, expect=job.expect, alone=True, prepare=job.prepare, stop_early=False, misses=job.misses,
+                   checks=job.checks)
         twin.again = True
         twin.reason = job.reason
         with self.lock:
