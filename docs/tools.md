@@ -106,7 +106,7 @@ The token line in the terminal shows what each answer really took.
 
 ## How to test it
 
-- **Against the stand-in for the provider** on the test computer (`chat_server.py`, with the answers of `chat_cases.py`), never against the real provider. Every request the stand-in gets is written down whole, and compared with what this page says is sent: the instruction text word for word, the line, the tools for what the disk holds, the limit, and nothing more.
+- **Against the stand-in for the provider** on the test computer (`model_server.py`, with the answers of `chat_cases.py` for a line), never against the real provider. Every request the stand-in gets is written down whole, and compared with what this page says is sent: the instruction text word for word, the line, the tools for what the disk holds, the limit, and nothing more.
 - **Work out what the kernel should say from this page, apart from the kernel's code** (`chat_tools_model.py`), and compare every row, every token line, and every dot of the screen.
 - **Feed it what a model may send:** words; each tool; a tool behind a thinking text full of quotes, brackets and line ends; words and a tool; two tools; a tool the kernel does not have; an odd name; inputs that are not JSON, missing, or too long; numbers as text, and numbers that fit nothing; requests that are long, odd, empty, or hold the key; an answer cut off, one spent on thinking, a refusal, and a good answer without words or a tool.
 - **The thing this part is done by:** a line asks for an app in other words, the app is made, runs and is kept; after a restart, `roll the dice` runs the kept app, the stand-in gets one request only, and nothing new is written on the disk.

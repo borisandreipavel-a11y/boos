@@ -249,7 +249,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The chat box's sizes are fixed when the kernel is built,** as a set of values in `chat.rs`; only its colours follow the look in use. The box that shows an app's text has its own set of sizes in `screen.rs`; the two are not one.
 - **On a machine without a screen the typing is blind:** nothing shows until Enter, when the line appears in the terminal.
 - **On a screen smaller than 800 by 600 dots** the chat box may lie over the box that shows an app's text. Nothing was tried there.
-- The row from the kernel that says what to do, and the answer that gives the line back, are demonstrations.
+- The row from the kernel that says what to do is a demonstration.
 - **`setup` is heard only while no question waits.** At a start where a key is locked on the disk, the question for the password comes first, in the look kept there, and `setup` typed then is taken as a password; Enter alone there, and then `setup`, brings back the first look. With a look that cannot be read, those keys are typed blind.
 - **When `setup` cannot keep the first look on the disk,** as on a notebook that cannot be added to, look 1 lasts until the machine is switched off, and the next start shows the look kept there again. Two rows say so.
 
@@ -257,7 +257,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 - **Only a key typed at the onboarding is tried.** A secret taken with `key` is not.
 - **The verdict rests on the number in the provider's answer,** and on the meanings its documentation gives them (read in November 2026). From the real provider only a 401 for a made-up key has been seen at a try, in a person's run; the other numbers were seen only from the stand-in on the test computer, which was built from that documentation. If the provider gave a 401 for something other than the key, a right key would be asked for again; Enter alone would still lead on.
-- **A key that cannot be judged is kept,** and is locked if a password is chosen: a key typed when the machine has no address yet, or while the answer to an `ask` or a `fetch` is awaited, and a key whose try got any answer but 200, 401, 402 or 403. A mistyped key kept that way shows itself at the first `ask` as a 401; `setup` replaces it.
+- **A key that cannot be judged is kept,** and is locked if a password is chosen: a key typed when the machine has no address yet, or while the answer to a line or to a request for an app is awaited, and a key whose try got any answer but 200, 401, 402 or 403. A mistyped key kept that way shows itself at the first line sent to the model, as a 401; `setup` replaces it.
 - **At a first start a key can come too early.** The machine gets its address a few seconds after it starts; a key typed before that is kept untried.
 - **While a key is tried, nothing typed is taken,** and there is no way to call the try off. With a provider that stays silent that is the minute the kernel waits for any question to the model, and longer by the wall clock in QEMU. Signs typed meanwhile are lost, and a row says so when the answer comes.
 - **Each try is a real question to the provider:** with a key it knows, it is paid for as a line is, and the provider keeps its record of it. A key it does not know is turned down before any model is asked.
