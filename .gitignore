@@ -4,3 +4,5 @@
 /edk2-x86_64-code.fd
 /disk.img
 __pycache__/
+/boot.img
+/boot.vdi

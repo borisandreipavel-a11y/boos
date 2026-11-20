@@ -83,6 +83,7 @@ State of the processor at handover, as seen in QEMU with its UEFI firmware. The 
 - `serial_print` writes to the first serial port (COM1, port `0x3F8`) using `port_read` and `port_write`. `Serial` implements `core::fmt::Write`, so `write!` works with numbers and formatting.
 - `serial_setup` sets the speed and format (115200 bits per second, 8 bits, no check bit, 1 stop bit). QEMU's port works without this; a real PC's port does not.
 - `serial_setup` then does a loop-back test: it sends one byte to itself and checks that it comes back. The result is kept in `SERIAL_FOUND`. When no port was found, `serial_print` sends nothing, so a machine without a serial port says what it says on the screen only.
+- **`serial_setup` runs with device signals off,** the setting and the test both. It runs first of all, before the takeover, while the firmware's timer still runs the firmware's own code now and then, and that code reads this port too: the firmware's console takes whatever comes in there. If it took the test byte, the kernel would believe it has no serial port and say nothing through it for the whole run. That happened twice in one run of every test, and every time in a copy of the kernel with a pause inside the test while signals stayed on (see [testing.md](testing.md)). With signals off the timer cannot step in until the test is over. The reference firmware does the same when its own code must not be interrupted: at its highest priority it switches device signals off.
 - `serial_print` hands every text to `lines_keep` first, whether or not a port was found, and `print` does the same: the kernel's lines are kept for the screen and shown there (see "The kernel's lines" in [screen.md](screen.md)).
 - `serial_print` waits without limit for the port to be ready for each letter.
 - `serial_print` switches device signals off while it keeps and sends a text, so that the text stays in one piece when several tasks print; see [tasks.md](tasks.md). While the machine starts, a whole line is also painted on the screen then.
@@ -142,3 +143,12 @@ The lines about the page come from the network stack's task as well. The name li
 The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks. The rest count shows that a waiting task uses no processor time. Fetching the page at every start is a demonstration too.
 
 When apps made on request are kept in the notebook, `chat_begin` ends by finding them, and lines that begin with `Apps:` follow the rows of the chat box: how many are kept, and the request each was made for, the one kept last first. The panel of apps, part of the usual picture, appears near the top left of the screen when the start is over (see "The kernel's lines" in [screen.md](screen.md)). Without kept apps there are no such lines and no panel. See "Keeping an app" in [apps.md](apps.md).
+
+## Starting from the boot disk
+
+`run-boot-disk.bat` starts the same kernel from the boot disk, `boot.img`, instead of the `esp` folder; see "The boot disk" in [disk.md](disk.md). The start is the same. The two lines that QEMU's firmware prints before the kernel's first name the disk it started from: `BdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00005 " from PciRoot(0x0)/Pci(0x4,0x0)/Sata(0x0,0xFFFF,0x0)` and `BdsDxe: starting` with the same words, where a start from the folder names the folder's disk on the IDE controller, `PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)`. The kernel then finds its own part on that same disk:
+
+```
+Disk: ready, "QEMU HARDDISK", 80 MB, in socket 0 of its controller
+Disk: my own part is 14 MB, from block 133120 to block 163806
+```

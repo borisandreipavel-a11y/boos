@@ -214,6 +214,7 @@ Seven crates are kept as copies in `vendor/`. Six of them came with a build scri
 | `vendor/` | The copies of outside code |
 | `run.bat` | Builds both, makes the disk file the first time, starts QEMU |
 | `make-disk.ps1` | Divides a new disk file into parts, with one part for the kernel |
+| `LICENSE-MIT`, `LICENSE-APACHE` | The licence of the project's own code: either one, whichever you choose |
 
 ## What it cannot do
 
@@ -228,3 +229,7 @@ Said plainly, because a list of what works is only half the picture:
 - The mouse is switched off, and the look of the screen is one of four built into the kernel.
 
 Start with [docs/README.md](docs/README.md) if you want to read the code or change it.
+
+## Licence
+
+The project's own code may be used under the MIT licence ([LICENSE-MIT](LICENSE-MIT)) or the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)), whichever you choose. The outside code keeps its own licences; [vendor/README.md](vendor/README.md) lists those of the copies.

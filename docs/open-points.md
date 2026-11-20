@@ -200,7 +200,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Only the list's copy at the start is read.** If it is damaged the kernel finds nothing of its own, also when the copy at the end is whole. It repairs nothing. A firmware may have repaired the list before the kernel runs; QEMU's does.
 - **A disk divided the older way is not understood.** The kernel reads the list PCs use today. A disk with only the old-style list in block 0 counts as having no list.
 - **The kernel cannot divide a disk.** A disk gets its list and the kernel's part from outside: the disk file from the script, a real disk from another system's tools. Nothing in the kernel can make or change a part, and nothing asks the person at the machine.
-- **Nothing puts the kernel on a disk.** A machine can only start the kernel from a part that holds it as a file in a file system the firmware reads. The kernel cannot make such a part or copy itself into one; in QEMU it is started from a folder, on a real machine from a USB stick.
+- **The kernel cannot put itself on a disk.** A machine can only start the kernel from a part that holds it as a file in a file system the firmware reads. The kernel cannot make such a part or copy itself into one. `make-boot-disk.ps1` makes a disk file that holds it, from outside (see "The boot disk" in [disk.md](disk.md)); in QEMU it starts from a folder (`run.bat`) or from that file (`run-boot-disk.bat`).
 - **Two parts of the kernel's kind are refused,** and so is one that shares a block with another part, although the reference firmware would only ignore the overlapping entries. Refusing is the safe answer for a kernel that will write there.
 - **The dividing script needs a computer that runs script files.** Where the settings refuse them, `run.bat` stops. The script was run on one computer.
 - **The first disk on the controller is taken,** the one in the lowest socket. On a machine with two disks the other is ignored, and nothing lets a person choose.
@@ -304,6 +304,13 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Painting the whole screen again for a look is slow,** about a quarter of a second, for the same reason as filling it: a dot at a time. The same painting ends every start, when the usual picture takes the place of the kernel's lines. Keys typed meanwhile wait in the keyboard's line of 16 key numbers; those that do not fit are lost.
 - **A kept look is found by its name, letter for letter.** A look renamed in a later kernel would not be found, and the first look would show.
 - **The box that shows an app's text remembers 160 bytes of it,** enough for the 40 signs that fit today. A box made wide enough for more would have its text cut when it is painted again in another look.
+
+## Virtual machines
+
+- **VirtualBox: not yet tried.** VirtualBox can start a machine from a copy of the boot disk in its own format; its user guide for version 7.2 names the command, `VBoxManage convertfromraw boot.img boot.vdi`. What that guide and VirtualBox's own source say about what the kernel uses: firmware of the UEFI kind, a SATA controller that is an AHCI controller, a PS/2 keyboard, a serial port of the 16550A kind at `0x3F8`, and a virtio network card, chosen by hand (its default card is another), which offers the newer way and both features the driver needs. Its network hands out addresses on `10.0.2.0` itself. Only a first start will show which file its firmware starts by itself, that Secure Boot is off for the machine (the kernel is not signed), whether the timer's and the keyboard's signals reach the kernel, and whether the processor offers RDRAND there.
+- **A copy in VirtualBox's format is a copy.** A new kernel means a new copy, and the notebook in it starts empty.
+- **On a Windows computer where Hyper-V runs,** VirtualBox runs on top of it. Its guide says that the Windows feature "Windows Hypervisor Platform" must be switched on for that, and that machines may then run much slower.
+- **VMware and Hyper-V.** VMware's list of network cards (for its server product) has no virtio card; its card E1000 is an Intel 82545EM, which a driver for Intel's 8254x cards would cover, as would VirtualBox's two "PRO/1000 MT" cards. Hyper-V's machines of the UEFI kind have none of the kernel's devices: their own network card, SCSI disks, and no PS/2 keyboard.
 
 ## Real hardware
 
