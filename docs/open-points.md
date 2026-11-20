@@ -238,6 +238,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **On a machine without a screen the typing is blind:** nothing shows until Enter, when the line appears in the terminal.
 - **On a screen smaller than 800 by 600 dots** the chat box may lie over the box that shows an app's text. Nothing was tried there.
 - The row from the kernel that says what to do, and the answer that gives the line back, are demonstrations.
+- **`setup` is heard only while no question waits.** At a start where a key is locked on the disk, the question for the password comes first, in the look kept there, and `setup` typed then is taken as a password; Enter alone there, and then `setup`, brings back the first look. With a look that cannot be read, those keys are typed blind.
+- **When `setup` cannot keep the first look on the disk,** as on a notebook that cannot be added to, look 1 lasts until the machine is switched off, and the next start shows the look kept there again. Two rows say so.
 
 ## Trying the key
 

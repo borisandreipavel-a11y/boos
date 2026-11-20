@@ -103,16 +103,18 @@ def his():
 
 
 def setup():
-    """`setup` asks for a look again after the name and the key, even when one is kept."""
+    """`setup` asks for a look again after the name and the key, even when one is kept. It brings look 1 back at once,
+    so Enter alone at the question keeps look 1 (more in test_look_reset.py)."""
+    from reset_model import ResetChat   # the model that knows that `setup` brings back the first look
     disk = fresh_disk("look-setup")
     put_notebook(disk, [("name", b"Fay"), ("locked key", b""), ("look", b"Night")])
-    s = Start("setup-1", disk, LookChat(1280, kept_name=b"Fay", key_entry=b"", kept_look=b"Night"))
+    s = Start("setup-1", disk, ResetChat(1280, kept_name=b"Fay", key_entry=b"", kept_look=b"Night"))
     s.keys("setup\n")
     s.keys("\n")                 # the name stays
     s.keys("\n")                 # no key
     s.look("1-question-after-setup")
-    s.keys("\n")                 # Enter alone at once: Night stays, nothing written
-    s.look("2-night-stays")
+    s.keys("\n")                 # Enter alone at once: look 1 stays; `setup` kept its entry already
+    s.look("2-blue-stays")
     s.keys("setup\n")
     s.keys("\n")
     s.keys("\n")
