@@ -8,9 +8,9 @@ The notebook is how the kernel keeps things across a switch-off. A thing is some
 
 It works like a paper notebook that is only ever added to.
 
-- Keeping a thing writes a new **entry** behind the last one: the name and the data.
+- Keeping a thing writes a new **entry** behind the last one: the name and the data. A thing longer than one entry holds is written as several entries, one right behind the other (see "A thing in pieces" below).
 - Nothing already written is ever changed. If a name is kept again, a new entry is written, and the newest entry for a name is the one that counts.
-- A power cut in the middle of a write can spoil only the entry that was being written. Every entry before it is whole, because nothing touched it.
+- A power cut in the middle of a write can spoil only the entry that was being written. Every entry before it is whole, because nothing touched it. A thing in pieces that a power cut interrupted does not count, and the thing kept under its name before still does.
 
 The price: old entries stay where they are and take up room, and a notebook can run full. Nothing tidies it yet; see "Limits".
 
@@ -44,12 +44,23 @@ Room that was never written is zeros. The script that divides a disk file leaves
 | 16 to 17 | How many bytes long the name is: 1 to 32 |
 | 18 to 19 | How many bytes long the data is: 0 to 448 |
 | 20 to 23 | A check value of the whole block of 512 bytes, worked out with these four bytes as zeros |
-| 24 to 31 | Zeros |
+| 24 to 25 | For a piece of a longer thing: which piece it is, counted from 1. Zeros for a thing of one entry |
+| 26 to 27 | For a piece: how many pieces the thing has, 2 to 74. Zeros for a thing of one entry |
+| 28 to 31 | For a piece: a check value of all of the thing's data, the same CRC-32, the same in every piece. Zeros for a thing of one entry |
 | 32 on | The name, and right behind it the data. The rest of the block is zeros |
 
 All numbers have their lowest byte first. A name is made of plain signs only (the bytes 32 to 126). The data can be any bytes.
 
-**One entry is one block.** That is why a thing is at most 448 bytes, and it is what makes a write safe against a power cut without more machinery: the disk is given one block, and the entry is either there or not. A thing larger than that needs entries that go over several blocks, which is new work and a new version of the layout.
+**One entry is one block.** That is what makes a write safe against a power cut without more machinery: the disk is given one block, and the entry is either there or not. An entry holds at most 448 bytes of data; a longer thing is kept in pieces, each of them a whole entry.
+
+### A thing in pieces
+
+- **A thing of up to 448 bytes is one entry,** with bytes 24 to 31 zeros: exactly the entry the kernel wrote before pieces existed.
+- **A longer thing, up to 32 KB** (`THING_MOST`, as much as the longest script the box takes), **is kept in pieces:** as many entries as it needs, one right behind the other, each under the thing's name. Every piece but the last holds 448 bytes of the data, and the last holds the rest, 1 to 448 bytes. Bytes 24 to 31 of each say which piece it is and how many there are, and hold a check value of all of the data. 32 KB takes 74 pieces.
+- **The thing counts only when it is whole:** all of its pieces in a row and in order, under the same name, with the same count and the same check value, and the check value of all of their data fits. Only then does it take the place of the thing kept under that name before.
+- **A power cut in the middle** of keeping a thing in pieces leaves the pieces written so far as whole entries, and at most the block that was being written spoiled, which is then the notebook's end, as for any entry. At the next start the thing that never got finished is passed over: its pieces take room and count for nothing, and the thing kept under that name before, if there is one, still counts. The next entry goes over the spoiled block.
+- **What a piece says never decides whether a block is an entry.** The notebook's end is found exactly as before pieces existed; bytes 24 to 31 only decide whether a thing counts. An entry whose eight bytes are neither zeros nor a sound piece (a piece number of 0, a count of 1 or above 74, a piece past the count, a piece before the last that is not full, an empty last piece, more than 32 KB in all) is an entry all the same, and belongs to no thing. So does a piece that does not follow the piece before it.
+- **The layout's version stayed 1.** A kernel from before pieces reads every piece as an entry of its own, under its thing's name, which it never asks for, and adds its own entries behind the end as before; nothing it keeps is long enough to need pieces. So both kinds of kernel can use one notebook without harm. A new version would have made the older kernel refuse the whole notebook, and would have meant writing block 0 again, the one block whose loss loses everything kept.
 
 ## Opening the notebook
 
@@ -60,7 +71,7 @@ All numbers have their lowest byte first. A name is made of plain signs only (th
    - The letters and a fitting check value, version 1: go on.
    - The letters and a fitting check value, another version: refuse with `the notebook is of a version this kernel does not know`. An older kernel must leave a newer layout alone.
    - Anything else: refuse with `the first block of my part holds something I do not know`.
-2. **Walk the entries** from block 1. A block counts as the next entry only if all of this is true: the 8 letters are there, its number is the number of the block, both lengths are within their limits, the name is plain signs, and the check value fits. The first block that is not the next entry is the notebook's end. For every entry the kernel remembers the name and the block, the newer entry for a name taking the place of the older, so `notebook_find` needs no search on the disk.
+2. **Walk the entries** from block 1. A block counts as the next entry only if all of this is true: the 8 letters are there, its number is the number of the block, both lengths are within their limits, the name is plain signs, and the check value fits. The first block that is not the next entry is the notebook's end. For every whole thing the kernel remembers the name, the block it begins in and how many entries it takes, the newer thing for a name taking the place of the older, so `notebook_find` needs no search on the disk. Pieces are put together as they come, and a thing in pieces is remembered only once its last piece is there and its check value fits (see "A thing in pieces"): opening reads every piece and checks every thing in pieces whole.
 3. **Look behind the end.** The block at the end itself may hold anything: zeros, or an entry that a power cut spoiled, and the next entry will be written over it. But the eight blocks behind that one must be zeros. If one of them holds something, then entries lie behind a block that cannot be read, and writing at the end would write over them. Such a notebook is called damaged: it is read as far as it goes, and nothing is added to it.
 
 Entries are found only by walking from block 1, one block after the other. The kernel never searches the part for something that looks like an entry, so data that happens to look like one, inside a thing that was kept, is never taken for one.
@@ -71,11 +82,13 @@ Everything read from the disk comes from outside the kernel. The two lengths in 
 
 ## Keeping and finding
 
-`notebook_keep(name, data)` refuses a name that is empty, longer than 32 bytes or not plain signs, data longer than 448 bytes, a full notebook (`the notebook is full`), and a notebook that cannot be added to. Otherwise it builds the entry's block, writes it with `part_write` to the block behind the last entry, and reads it back. **A thing counts as kept only if the block, read back, is exactly what was written.** Only then does the kernel remember the entry and move the end on. If the write fails, nothing has changed in what the kernel remembers, and the next try goes to the same block.
+`notebook_keep(name, data)` refuses a name that is empty, longer than 32 bytes or not plain signs, data longer than 32 KB (`the thing is too long for the notebook`), a notebook without room for all of the thing's entries (`the notebook is full`; then nothing is written), and a notebook that cannot be added to. Otherwise it builds the entry's block, or each piece's, writes it with `part_write` to the block behind the last entry, and reads it back. **An entry counts as written only if the block, read back, is exactly what was written, and a thing counts as kept only when all of its entries do.** Only then does the kernel remember the thing. If the write of a thing of one entry fails, nothing has changed in what the kernel remembers, and the next try goes to the same block. For a thing in pieces, once a piece is on the disk the next entry goes behind it, whatever happens to the rest: so what the kernel remembers is always what opening the notebook again would find. If a piece cannot be written, the pieces before it stay as entries of a thing that never got finished, and the thing kept under the name before still counts.
 
 `part_write` tells the disk to put the block down for good before it comes back (see [disk.md](disk.md)), so a thing that was kept is on the disk when `notebook_keep` returns.
 
-`notebook_find(name)` reads the name's newest entry again from the disk, checks it again, and gives back its data. It gives nothing for a name that was never kept.
+`notebook_find(name)` reads the name's newest thing again from the disk, checks every entry of it again (that it is still a whole entry under that name, and for a piece, the right piece of the same thing), puts the pieces together, checks the check value of all of the data, and gives back the data. It gives nothing for a name that was never kept.
+
+`notebook_names()` gives the names kept, in the order in which their newest whole things were kept, the oldest first.
 
 `notebook_ready()` says whether things can be kept: the notebook was opened and is not damaged.
 
@@ -93,7 +106,9 @@ The person's name is kept too, under the name `name`, by `onboarding.rs`: the an
 
 The model's key is kept under the name `locked key`, by `onboarding.rs`, and only locked with a password (see [lock.md](lock.md)): at most 250 bytes, a head, the scrambled key and a proof. An entry under `locked key` that holds no signs means that the question for the key was answered without one. Whether such an entry is there, and whether it holds a locked key, is what tells a start whether to ask for the key, for the password, or for nothing. A new key locked after `setup` is a new entry that counts from then on; the one before stays in the notebook, like every entry, and opens with the old password. See "The key and the password" in [chat.md](chat.md).
 
-The look the person picked, with the line `look` or at the onboarding's question, is kept under the name `look`, by `look.rs`, as the look's name (`Night`), not locked: a new entry each time a look is kept, and none while looks are only tried. An entry under `look` that holds no signs means that the question was answered without a pick. At startup the newest entry under `look` decides which look the screen shows, and whether the question is asked: with no entry, or with a name the kernel does not know (which leaves the first look), it is asked; an entry that holds no signs leaves the first look and asks nothing. See "Picking a look" in [chat.md](chat.md).
+The look the person picked, with the line `look` or at the onboarding's question, is kept under the name `look`, by `look.rs`, as the look's name (`Night`), not locked: a new entry each time a look is kept, and none while looks are only tried. An entry under `look` that holds no signs means that the question was answered without a pick; the line `setup` keeps one too, at once, when the notebook holds another look, so that the next start shows the first look. At startup the newest entry under `look` decides which look the screen shows, and whether the question is asked: with no entry, or with a name the kernel does not know (which leaves the first look), it is asked; an entry that holds no signs leaves the first look and asks nothing. See "Picking a look" in [chat.md](chat.md).
+
+Apps the model made are kept under the names `app 1`, `app 2` and so on, by `apps_kept.rs`, once they have run to their end: `app 1 script` holds the script, exactly as it ran, and `app 1` a note with the request it was made for. A script longer than 448 bytes is kept in pieces. See "Keeping an app" in [apps.md](apps.md).
 
 - If the line was kept, nothing is said about it.
 - If it could not be kept, the kernel says so in a row and in the terminal, `Kernel: I could not keep that line, because ...`, and the chat goes on as before.
@@ -115,12 +130,13 @@ And, after the count of starts, the chat box's rows from the notebook: the greet
 
 ## How long it takes
 
-Opening reads every entry, one block per command, so a start takes longer the more entries there are. The measured times are in [testing.md](testing.md).
+Opening reads every entry, one block per command, so a start takes longer the more entries there are. A piece is read like any entry. The measured times are in [testing.md](testing.md).
 
 ## Limits
 
 - **Nothing tidies the notebook.** Entries that a newer one has replaced stay, and a full notebook stays full: keeping is refused until tidying exists. The disk file in QEMU has room for 30,685 entries.
-- **A thing is at most 448 bytes**, and a name at most 32.
+- **A thing is at most 32 KB**, kept in at most 74 entries, and a name is at most 32 bytes.
+- **A thing in pieces that never got finished takes room for good,** like every entry a newer one replaced.
 - **A damaged notebook is not repaired.** It is read up to the damage and nothing is added.
 - **Only eight blocks behind the end are looked at.** Something further behind, with eight blocks of zeros before it, is not noticed, and entries written later would reach it.
 - **Nothing can be taken out.** A name, once kept, has a thing for good; it can only be replaced.
