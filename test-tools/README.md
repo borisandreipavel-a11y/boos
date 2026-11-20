@@ -8,12 +8,59 @@ what was verified with them and which traps they avoid.
 They are written in Python 3 and need nothing but its standard library, QEMU, and OpenSSL (the one that comes
 with Git does). They were written for Windows. Run them from this folder.
 
+## Running them
+
+```
+python run_tests.py              only what the change needs: the files changed since master, committed or not
+python run_tests.py all          everything: every suite once and every break on purpose, before a merge
+python run_tests.py --list       what would run and why, without running it (works with `all` and the options)
+```
+
+Options: `--workers N` (test machines at once; by default as many as the free memory and commit take, at most 4
+and at most one for each two processors), `--base REF` (compare with another branch than master), `--files
+PATH...` (run what a change to those files needs), `--to-the-end` (breaks on purpose run to the end instead of
+stopping at their first failure), `--only NAME...` (only the jobs whose names begin so).
+
+It builds the interpreter and the kernel once, then runs the jobs longest first: each suite once (the long ones
+split into their scenarios), and each break on purpose alone in a copy of the project. It opens no window and asks
+nothing. It prints a line for each job as it ends and a table at the end, keeps every job's output in
+`run-tests\<date-time>\` under the work folder, and ends with 0 only when every suite passed and every break was
+caught (the misses that `docs/testing.md` names excepted).
+
+- **What a change needs.** A test script or helper that changed runs every suite that uses it (read from the
+  scripts' imports). A kernel file runs the suites whose entry in `suites.py` watches it; any other kernel file
+  runs every suite, because nearly every file of the kernel runs at every start. A file that only holds words
+  (`.md`) boots nothing. A break on purpose runs when the file it breaks changed, or the test that must catch it,
+  or its own list.
+- **Several machines at once.** Each test machine gets a work folder of its own under this checkout's (`w1`,
+  `w2`, ...) and a range of stand-in ports of its own (`BOOS_PORT_BASE`, plus 100 for each). They share the
+  copies of the project (`copies\`), which are built one at a time.
+- **Turns for the whole computer** (`turns.py`): at most `BOOS_SEATS` test machines at once from all runs and
+  checkouts together (4 when not set); one copy of a machine's whole memory at a time, from copying to the end of
+  the search; one build with cargo at a time. A turn is a lock on a file in `boos-tests\turns`, which the
+  computer gives back however the program that held it ends.
+- **Breaks stop at their first failure.** One failure shows that a break is caught, so the runner stops the test
+  there. It counts the break as caught only when that first failure is the one in `suites.CAUGHT_BY`, recorded
+  from a run alone and to the end; any other first failure (a wait in vain while other machines ran, say) makes
+  it run that break again, alone and to the end.
+- **The table checks itself.** A `test_*.py` or `run_*_breaks.py` that is in no entry of `suites.py` and not
+  excused there, a list of breaks whose count differs from `suites.BREAK_COUNTS`, kinds of answer that differ from
+  what the tests know, and a break whose old text no longer stands exactly once in its file: each is reported at
+  every run, `--list` and "only what changed" included, and makes the run end with 1.
+- **To add a suite:** one entry in `suites.py`. **To add a break on purpose:** a line in one of the lists
+  (`run_key_breaks.py`, `run_look_breaks.py`, `run_try_breaks.py` with `test_try.py`, `app_breaks.py`,
+  `model_breaks.py`, `model_breaks5.py`), the count in `suites.BREAK_COUNTS`, and its first failure in
+  `suites.CAUGHT_BY` after one run with `--to-the-end`. A list of new breaks of the same kind (file, old text,
+  new text, the test that must catch it) can run in the break copy as the key's and the look's do
+  (`copy_break.py`): the project's own source is never changed.
+
 ## Where things go
 
 `places.py` finds everything, so no script names a folder of one particular computer:
 
 - the project is the folder above this one (`BOOS_PROJECT` names another);
-- QEMU is looked for in `C:\Program Files\qemu` (`QEMU_DIR` names another folder);
+- QEMU is looked for in `C:\Program Files\qemu` (`QEMU_DIR` names another folder), and its firmware is the
+  project's `edk2-x86_64-code.fd` (`BOOS_FIRMWARE` names another file);
 - everything a test makes (disk files, pictures, logs, copies of the project, test certificates) goes into a
   folder of its own under the computer's temporary folder, `boos-tests\<a mark of the project's folder>`
   (`BOOS_TEST_WORK` names another). Nothing is written inside the project, except by the scripts that change
@@ -46,13 +93,15 @@ Building and helpers:
 | `ports.py`, `places.py` | Ports and folders, as above |
 | `restore.py`, `crlf.py`, `export_check.py`, `make_lock_values.py` | Putting sources back after a break; Windows line ends; a clean export of a commit built from nothing; writing `src/lock_values.rs` |
 | `app_cases.py` | The stand-in's answers to a request for an app, and what the kernel is meant to say, list and show for each, worked out apart from the kernel's code |
+| `run_tests.py`, `suites.py` | The runner and its table, as above |
+| `turns.py`, `copy_break.py`, `verdict.py` | Turns shared by the whole computer (seats, the memory turn, the build turn); a break on purpose made in a copy of the project and built there; the list of failures, each printed the moment it happens (`FAILED: ...`) |
 
 Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 
 | Script | What it checks |
 | --- | --- |
-| `boot_count.py <tag>` | A start on a fresh divided disk reaches the prompt with only plain text |
-| `test_shift.py`, `test_more.py <tag>` | Typing with and without Shift, long rows, more rows than fit, every sign: every picture |
+| `boot_count.py <tag>` | A start on a fresh divided disk reaches the prompt with only plain text. `test_secret_keyed.py` makes the same report from its own start |
+| `test_shift.py`, `test_more.py <tag> [shift]` | Typing with and without Shift, long rows, more rows than fit, every sign: every picture. With `shift`, Shift's steps follow the chat box's in the same start |
 | `test_name3.py` | The name question at the first start and later starts |
 | `test_key.py`, `test_key_memory.py` | The key and the password; the made-up secrets searched for in the machine's memory |
 | `test_secret_keyed.py` | The secret line `key` |
@@ -64,7 +113,7 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `run_regress_try.py` | Most of the above, one after another |
 | `run_regress_look.py` | All of the above, the look's test included, one after another |
 | `run_key_breaks.py`, `run_try_breaks.py`, `model_breaks.py`, `model_breaks5.py` | Breaks on purpose, each alone, in a copy of the project, and whether the tests catch them |
-| `run_look_breaks.py` | Breaks of the look on purpose, each alone, in the project's own source, put back after each, and whether `test_look.py` catches them |
+| `run_look_breaks.py` | Breaks of the look on purpose, each alone, in a copy of the project, and whether `test_look.py` catches them |
 | `test_app.py <kinds> [dump]`, `test_app.py nocard` | `make` against the stand-in: the request, the script listed in the terminal, the app's run, the box in the middle and the rows, for the kinds in `app_cases.py`; a machine without a network card |
 | `test_app_first_start.py keylater\|keyfirst` | A request for an app at a first start on a fresh divided disk, with the key given either way |
 | `run_app_breaks.py`, `app_breaks.py` | The breaks on purpose for apps, each alone; a change to the interpreter is built into the copy too |
