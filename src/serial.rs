@@ -17,6 +17,16 @@ static mut SERIAL_FOUND: bool = false;
 // Sets the serial port's speed and letter format, then checks it is really there.
 // QEMU's port works without this. A real PC's port does not.
 pub fn serial_setup() {
+    // This runs first of all, while the firmware is still in charge, and the
+    // firmware's timer still runs the firmware's own code now and then. That
+    // code reads this port too: the firmware's console takes whatever comes in
+    // there. If it took the test byte below, the kernel would believe it has
+    // no serial port, and say nothing through it for the whole run. With
+    // device signals off the timer cannot step in, so nothing but this code
+    // touches the port until the check is over. The firmware does the same
+    // when its own code must not be interrupted.
+    let were_on = signals_off();
+
     port_write(COM1 + 1, 0x00); // The port must not send signals of its own.
     port_write(COM1 + 3, 0x80); // Unlock the speed setting.
     port_write(COM1, 0x01); // Speed: 115200 bits per second (low half of the setting),
@@ -35,6 +45,7 @@ pub fn serial_setup() {
 
     // Back to normal mode, telling the other side that this one is ready.
     port_write(COM1 + 4, 0x03);
+    signals_back(were_on);
     unsafe { SERIAL_FOUND = found };
 }
 
