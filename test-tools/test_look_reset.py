@@ -7,6 +7,7 @@ import sys
 
 from keyed_model import LOCKED
 from lockref import lock
+from look_standin import KEY as STANDIN_KEY, give_key, picked, stop_standin, with_standin
 from nb import BLOCK, put_block, put_notebook
 from reset_model import ResetChat
 from start_helper import Start, failures, fresh_disk
@@ -90,19 +91,20 @@ def unchanged():
 
 
 def no_notebook():
-    """A disk that is not divided: no notebook. A look tried with `look` lasts until the machine is switched off;
-    `setup` brings back look 1 at once, and says nothing about the disk, where nothing was kept."""
+    """A disk that is not divided: no notebook. A look the model picks (pick_look, through the stand-in) lasts until
+    the machine is switched off; `setup` brings back look 1 at once, and says nothing about the disk, where nothing
+    was kept."""
+    kernel = with_standin(["look=3"])
     disk = fresh_disk("reset-nonotebook", divided=False)
-    s = Start("nonotebook", disk, ResetChat(1280, notebook=None))
-    s.keys("look\n")
-    s.keys("3\n")
-    s.keys("\n")                 # Paper cannot be kept, and lasts until the machine is switched off
+    s = Start("nonotebook", disk, ResetChat(1280, notebook=None), kernel=kernel, network="open")
+    give_key(s)
+    picked(s, "paper please", 3)  # Paper cannot be kept, and lasts until the machine is switched off
     s.look("1-paper")
     s.keys("setup\n")
     s.look("2-blue-at-once")
     s.keys("\n")                 # "You" cannot be kept either; nothing is asked after the name
     s.look("3-blue")
-    s.end()
+    s.end(secrets=[STANDIN_KEY])
 
 
 def damaged():
@@ -186,7 +188,10 @@ SCENARIOS = dict(atonce=at_once, midway=midway, again=again, unchanged=unchanged
                  damaged=damaged, locked=locked, noscreen=no_screen, small=small)
 
 if __name__ == "__main__":
-    for name in sys.argv[1:] or list(SCENARIOS):
-        print("--- " + name)
-        SCENARIOS[name]()
+    try:
+        for name in sys.argv[1:] or list(SCENARIOS):
+            print("--- " + name)
+            SCENARIOS[name]()
+    finally:
+        stop_standin()
     print("FAILURES:", failures if failures else "none")

@@ -3,7 +3,7 @@ docs/notebook.md, "A thing in pieces"). Every scenario boots the stand-in copy o
 break on purpose (apps_kept_breaks.py, through BREAK) reaches all of them; the copy's edits point its network at the
 stand-in and touch neither the notebook nor the apps. What is meant comes from apps_kept_model.py, written from the
 notes, and the disk file is read from outside with Python's own CRC-32. Made-up key only. Every line goes to the model
-(docs/tools.md): the stand-in (chat_server.py) answers a line such as "make a dice" with the tool make_app and the
+(docs/tools.md): the stand-in (model_server.py) answers a line such as "make a dice" with the tool make_app and the
 request that follows "make ", and then the request for the app with the kind of answer the scenario names.
 
   first     as a person's first run in a new folder goes: a fresh disk, the questions of the onboarding (a name,
@@ -113,7 +113,7 @@ class Run:
             self.log = os.path.join(RUNS, tag + "-server.log")
             if os.path.exists(self.log):
                 os.remove(self.log)
-            self.server = subprocess.Popen([sys.executable, os.path.join(HERE, "chat_server.py"), str(PORT),
+            self.server = subprocess.Popen([sys.executable, os.path.join(HERE, "model_server.py"), str(PORT),
                                             os.path.join(tls, "a", "both-chain.pem"), os.path.join(tls, "a", "both.key"), self.log,
                                             json.dumps(list(behaviours))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=HERE)
             assert self.server.stdout.readline().strip() == "ready"

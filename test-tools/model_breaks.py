@@ -43,7 +43,9 @@ def toolong(text):
 
 
 def nokeycheck(text):
-    return swap(text, "                if secret_length() == 0 {\n", "                if false { // BREAK\n")
+    # Every line goes to the model; model_ask turns it away when no key is kept (docs/tools.md).
+    return swap(text, "    if secret_length() == 0 {\n        return String::from(\"Kernel: I cannot ask the model, because no key",
+                "    if false { // BREAK\n        return String::from(\"Kernel: I cannot ask the model, because no key")
 
 
 def othername(text):

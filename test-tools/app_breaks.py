@@ -25,12 +25,11 @@ BREAKS = {
     "nocut": {"apps.rs": swap("const SCRIPT_LINE_SHOWN: usize = 200;", "const SCRIPT_LINE_SHOWN: usize = 400;")},
     # The key is not hidden in the script.
     "nohide": {"model.rs": swap("                key_hide(&mut signs, key);\n", "")},
-    # The fixed question is asked with the app's limit of tokens.
-    "asktokens": {"model.rs": swap("json_text(QUESTION),\n        ANSWER_TOKENS", "json_text(QUESTION),\n        APP_TOKENS")},
-    # A word that only begins with "make" counts as a request.
-    "anyprefix": {"apps.rs": swap("if rest.is_empty() || rest.starts_with(' ') {", "if true {")},
-    # A request is sent without a kept key.
-    "nokeycheck": {"apps.rs": swap("    if secret_length() == 0 {\n        return String::from(\"Kernel: I cannot ask the model for an app", "    if false {\n        return String::from(\"Kernel: I cannot ask the model for an app")},
+    # A line is sent with the app's limit of tokens (every line goes to the model, docs/tools.md).
+    "asktokens": {"model.rs": swap("json_text(line),\n        tools,\n        ANSWER_TOKENS", "json_text(line),\n        tools,\n        APP_TOKENS")},
+    # (No break for the word `make` and for a request without a key: the word is an ordinary line now, and a line
+    # without a key is turned away before it reaches the model, which the breaks of model_breaks.py and
+    # chat_tools_breaks.py named nokeycheck show.)
     # The script is shown, but the request's words are sent without the lead in front.
     "nolead": {"model.rs": swap("json_text(&format!(\"{}{}\", APP_LEAD, wanted)),", "json_text(wanted),")},
     # --- The run ---
@@ -59,8 +58,6 @@ CATCH = {
     "nocut": "appodd",
     "nohide": "appecho",
     "asktokens": "app",
-    "anyprefix": "app",
-    "nokeycheck": "app",
     "nolead": "app",
     "norun": "app",
     "noseed": "runrandom,runrandom",

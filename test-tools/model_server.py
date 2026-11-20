@@ -3,21 +3,35 @@ fetch (a GET) with a small page, and each question to the model (a POST) with th
 It checks every POST with Python's own JSON code and writes down what it saw as one line of JSON per connection.
 
 Usage: python model_server.py <port> <chain.pem> <key.pem> <log file> <behaviour,behaviour,...>
+       python model_server.py <port> <chain.pem> <key.pem> <log file> <behaviours, as a JSON list>
+(a JSON list when a behaviour holds a comma, as "words=Hello there, I am ..." does)
 
 Behaviours: wrongkey, credit, echo, echopart, good, goodlong, chunked, page, nothttp, harmful, huge, cutoff,
 silent, empty, flaterror, nobody, keepopen, and more below; for a request for an app, the kinds of app_cases.py
-(app..., run...) and slowapp."""
+(app..., run...) and slowapp.
+
+A request that carries a list of tools is a line typed in the chat box, since every line but `key` and `setup`
+goes to the model (docs/tools.md). When the next behaviour is a kind of app, the line is answered first with the
+tool make_app (its request is what follows "make " in the line, or the whole line), and the kind waits for the
+request for the app that follows; so is one of the kinds above with "app:" in front (app:realrefusal, say), which
+then answers the request for the app. Otherwise the line gets the next behaviour: one of chat_cases.py's
+(words=..., run=..., ...) or any of the kinds above, which the kernel reads the same way for a line. With no
+behaviour left, a line gets "words=Hello." and anything else "wrongkey"."""
 import json
 import socket
 import ssl
 import sys
 import time
 
-# The answers to a request for an app, which test_app.py shares (in this folder).
+# The answers to a request for an app, which test_app.py shares (in this folder), and those to a line.
 import app_cases
+import chat_cases
 
 port, chain, key, log_path = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
-behaviours = sys.argv[5].split(",") if len(sys.argv) > 5 and sys.argv[5] else []
+if len(sys.argv) > 5 and sys.argv[5].startswith("["):
+    behaviours = json.loads(sys.argv[5])
+else:
+    behaviours = sys.argv[5].split(",") if len(sys.argv) > 5 and sys.argv[5] else []
 
 PAGE = b"<html>\n<head><title>The test server</title></head>\n<body>\n<p>Hello from the test server.</p>\n</body>\n</html>\n"
 MEANT = {"model": "deepseek/deepseek-v4.1-flash-1017", "messages": [{"role": "user", "content": "Say hello in five words."}], "max_tokens": 1000, "stream": False}
@@ -157,6 +171,36 @@ def answer_for(kind, bearer):
     raise SystemExit("unknown behaviour " + kind)
 
 
+def the_line(parsed):
+    """The text of the last message from the person, or None."""
+    try:
+        return [m["content"] for m in parsed["messages"] if m.get("role") == "user"][-1]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def an_app_kind(kind, bearer):
+    return kind.startswith("app:") or kind == "slowapp" or app_cases.answer(kind, bearer) is not None
+
+
+def choose(parsed, bearer, note):
+    """Gives (bytes to send, how to end) for one request, and notes what it was for and which behaviour answered it."""
+    chat = isinstance(parsed, dict) and "tools" in parsed
+    note["request for"] = "a line" if chat else "an app"
+    if chat and behaviours and an_app_kind(behaviours[0], bearer):
+        note["behaviour"] = "makeline, for " + behaviours[0]
+        return chat_cases.answer("makeline", the_line(parsed) or "", bearer)
+    kind = behaviours.pop(0) if behaviours else ("words=Hello." if chat else "wrongkey")
+    note["behaviour"] = kind
+    if kind.startswith("app:"):
+        kind = kind[len("app:"):]
+    if chat:
+        found = chat_cases.answer(kind, the_line(parsed) or "", bearer)
+        if found is not None:
+            return found
+    return answer_for(kind, bearer)
+
+
 names = []
 listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -212,6 +256,7 @@ with open(log_path, "a") as log:
                     body += piece
                 note["body bytes"] = len(body)
                 note["length note right"] = len(body) == length
+                parsed = None
                 try:
                     parsed = json.loads(body.decode())
                     note["body as meant"] = parsed == MEANT
@@ -224,9 +269,7 @@ with open(log_path, "a") as log:
                 bearer = notes.get("authorization", "")
                 note["key came as"] = bearer
                 bearer = bearer[len("Bearer "):] if bearer.startswith("Bearer ") else ""
-                kind = behaviours.pop(0) if behaviours else "wrongkey"
-                note["behaviour"] = kind
-                answer, ending = answer_for(kind, bearer)
+                answer, ending = choose(parsed, bearer, note)
                 if answer:
                     link.sendall(answer)
                 note["sent"] = len(answer)

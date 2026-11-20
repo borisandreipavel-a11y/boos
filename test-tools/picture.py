@@ -31,7 +31,11 @@ CHAT_PERSON = (0, 0, 0)
 CHAT_KERNEL = (0, 60, 140)
 CHAT_LINE_LIMIT = 50
 SECRET_WORD = "key"
-FETCH_WORD = "fetch"
+# Every other line but `setup` goes to the model, and the kernel says at once one of these (docs/tools.md).
+ASKING = "Kernel: I am asking the model."
+NO_KEY = 'Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.'
+NO_ADDRESS = "Kernel: I cannot ask the model, because this machine has no address on the network"
+BUSY = "Kernel: I cannot ask the model, because the answer to what I asked before has not come yet"
 STARS_SHOWN = 30
 SECRET_LIMIT = 200
 import os
@@ -182,21 +186,13 @@ class Chat:
             if self.line == "":
                 return
             mine = self.person() + ": " + self.line
-            answer = 'Kernel: you said "' + self.line + '"'
-            if self.line == FETCH_WORD:
-                answer = {"ready": "Kernel: I am asking the network for the page of example.com.",
-                          "none": "Kernel: I cannot ask the network, because this machine has no address on the network",
-                          "busy": "Kernel: I cannot ask the network, because the answer to what I asked before has not come yet"}[self.network]
-            if self.line == "ask":
-                if not self.secret_held:
-                    answer = 'Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.'
-                else:
-                    answer = {"ready": 'Kernel: I am asking the model "Say hello in five words."',
-                              "none": "Kernel: I cannot ask the model, because this machine has no address on the network",
-                              "busy": "Kernel: I cannot ask the model, because the answer to what I asked before has not come yet"}[self.network]
             if self.line == SECRET_WORD:
                 answer = "Kernel: type the secret and press Enter. It shows as stars."
                 self.secret_asked = True
+            elif not self.secret_held:
+                answer = NO_KEY
+            else:
+                answer = {"ready": ASKING, "none": NO_ADDRESS, "busy": BUSY}[self.network]
             self.said += [mine, answer]
             self.add("person", mine)
             self.add("kernel", answer)
@@ -209,6 +205,11 @@ class Chat:
         """A row the kernel says by itself, such as the answer to an errand."""
         self.said.append("Kernel: " + text)
         self.add("kernel", "Kernel: " + text)
+
+    def row(self, text):
+        """A whole row as it is, such as the model's words, which begin with "Model:"."""
+        self.said.append(text)
+        self.add("kernel", text)
 
     def keys(self, text):
         for sign in text:

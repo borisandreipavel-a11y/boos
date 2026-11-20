@@ -1,12 +1,12 @@
 """The stand-in's answers to a line typed in the chat box, which comes with the list of tools (docs/tools.md), in
 the shape the provider's documentation gives and the model's maker shows: `choices[0].message` with `content`
 and `tool_calls` (each with an id, the type "function", and a function with a name and its arguments as a text of
-JSON), `finish_reason`, and `usage` with the counts the kernel reads. Shared by chat_server.py, which sends them,
+JSON), `finish_reason`, and `usage` with the counts the kernel reads. Shared by model_server.py, which sends them,
 and test_chat_tools.py, which judges what the kernel makes of them.
 
 A behaviour is a name, or a name, "=" and what it needs: "words=Hello there." answers in words, "make=a dice
 that rolls" asks for the tool make_app with that request, "run=1" for run_app with the app 1, "look=2" for
-pick_look, "page=2" for turn_page; "fullrun=1" asks for run_app in the fuller shape a real answer may have
+pick_look, "turn=2" for turn_page (not "page", which is a kind of model_server.py's own); "fullrun=1" asks for run_app in the fuller shape a real answer may have
 (`full_body`). Nothing runs when this file is imported."""
 import json
 import time
@@ -111,7 +111,7 @@ def answer(kind, line, bearer):
         return good(body(message("Rolling it for you.", [call("run_app", {"app": int(given)})]), "tool_calls")), "goodbye"
     if name == "look":
         return good(body(message(None, [call("pick_look", {"look": int(given)})]), "tool_calls")), "goodbye"
-    if name == "page":
+    if name == "turn":
         return good(body(message(None, [call("turn_page", {"page": int(given)})]), "tool_calls")), "goodbye"
     if name == "two":
         calls = [call("pick_look", {"look": 3}, 0), call("pick_look", {"look": 4}, 1)]

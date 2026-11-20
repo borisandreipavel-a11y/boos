@@ -6,6 +6,7 @@ import re
 
 from app_cases import clean, hide
 from keyed_model import ORDER, KeyedChat
+from picture import ASKING, BUSY, NO_ADDRESS, NO_KEY  # noqa: F401 (the rows a line gets at once, for the tests)
 
 MODEL = "deepseek/deepseek-v4.1-flash-1017"
 LIMIT = 1000
@@ -79,12 +80,8 @@ def body_meant(line, apps, shown=1):
             "tools": tools_meant(apps, shown), "max_tokens": LIMIT, "stream": False}
 
 
-# ---------- Rows ----------
+# ---------- Rows (those a line gets at once are in picture.py) ----------
 
-ASKING = "Kernel: I am asking the model."
-NO_KEY = 'Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.'
-NO_ADDRESS = "Kernel: I cannot ask the model, because this machine has no address on the network"
-BUSY = "Kernel: I cannot ask the model, because the answer to what I asked before has not come yet"
 MORE = "Kernel: the model asked for more than one thing at once, so I do only the first."
 CANNOT_READ = {
     "make_app": "Kernel: the model asked for an app, but I could not read what the app should do.",
@@ -144,56 +141,12 @@ def refused_row(message):
 
 
 class ToolsChat(KeyedChat):
-    """keyed_model.KeyedChat where every line but `key` and `setup` goes to the model (docs/chat.md): the row the
-    kernel says at once. What comes later is added with say() (a row of the kernel's), model() (the model's words)
-    and pick() (the tool pick_look)."""
-
-    def key(self, sign):
-        busy = self.secret_asked or self.waiting or self.look_asking
-        if not busy and sign == "\n" and self.line and self.line not in ("key", "setup"):
-            mine = self.person() + ": " + self.line
-            if not self.secret_held:
-                reply = NO_KEY
-            elif self.network == "none":
-                reply = NO_ADDRESS
-            elif self.network == "busy":
-                reply = BUSY
-            else:
-                reply = ASKING
-            self.said += [mine, reply]
-            self.add("person", mine)
-            self.add("kernel", reply)
-            if self.can_keep:
-                self.kept.append(("last line", self.line.encode()))
-            self.line = ""
-            return
-        super().key(sign)
-
-    def row(self, text):
-        """A whole row as it is, such as one that begins with "Model:"."""
-        self.said.append(text)
-        self.add("kernel", text)
+    """keyed_model.KeyedChat, where every line but `key` and `setup` goes to the model (picture.Chat) and the model may
+    pick a look (KeyedChat.pick). What comes later is added with say() (a row of the kernel's), row() (a whole row)
+    and model() (the model's words, as the kernel shows them)."""
 
     def model(self, words, key=""):
         self.row(model_row(words, key))
-
-    def pick(self, number):
-        """The tool pick_look: the look in use and kept, and the row about it."""
-        if not 1 <= number <= len(ORDER):
-            self.say("the model asked for look %d, but there are only %d looks." % (number, len(ORDER)))
-            return
-        name = ORDER[number - 1]
-        self.look = name
-        named = "look %d, %s" % (number, name)
-        if not self.can_keep:
-            self.say("this is %s. It lasts until the machine is switched off, because there is no notebook to keep it in." % named)
-        elif self.look_kept == name:
-            self.say("this is %s, which is kept on the disk already." % named)
-        else:
-            self.look_kept = name
-            self.look_answered = True
-            self.kept.append(("look", name.encode()))
-            self.say("this is %s. It is kept on the disk." % named)
 
 
 def tokens_lines(lines):

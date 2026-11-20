@@ -1,6 +1,7 @@
-"""Picking a look: with the line `look`, and as the onboarding's question once its questions about the key are over.
-Every picture against the model (look_model.py, the onboarding's model with the look), the terminal's lines, and the
-notebook read from outside, across starts on the same disk.
+"""Picking a look: as the onboarding's question once its questions about the key are over, and at any other time
+by the model, whose tool pick_look the stand-in for the provider asks for (docs/tools.md); a line goes to the model
+once the line `key` and a made-up key are given. Every picture against the model (look_model.py, the onboarding's
+model with the look), the terminal's lines, and the notebook read from outside, across starts on the same disk.
 Usage: python test_look.py [scenario ...]   (default: all)"""
 import os
 import sys
@@ -8,10 +9,10 @@ import sys
 from keyed_model import LOCKED
 from lockref import lock
 from look_model import LookChat
+from look_standin import KEY, give_key, picked, stop_standin, with_standin
 from nb import BLOCK, put_block, put_notebook
 from start_helper import Start, failures, fresh_disk
 
-KEY = "sk-orca-TEST_Look-Made-Up-Key-4321"
 PW = "green door"
 
 
@@ -21,8 +22,8 @@ def locked_from_outside(password=PW, key=KEY, rounds=600000):
 
 def pick():
     """A first start on a new disk: a name, Enter alone at the key, and the onboarding's question for a look; every
-    number shown at once; Night kept. The next start in Night; there `look` and Enter alone keep nothing, and then
-    Paper is kept; a third start in Paper."""
+    number shown at once; Night kept. The next start in Night; there the model picks Night, which is kept already,
+    and then Paper, which is kept; a third start in Paper."""
     disk = fresh_disk("look-pick")
     s = Start("pick-1", disk, LookChat(1280))
     s.look("1-name-question")
@@ -44,18 +45,18 @@ def pick():
     s.look("8-a-line-in-night")
     s.end()
 
-    s = Start("pick-2", disk, LookChat(1280, kept_name=b"Ada", key_entry=b"", last_line=b"hello", kept_look=b"Night"))
+    kernel = with_standin(["look=2", "look=3"])
+    s = Start("pick-2", disk, LookChat(1280, kept_name=b"Ada", key_entry=b"", last_line=b"hello", kept_look=b"Night"),
+              kernel=kernel, network="open")
     s.look("1-next-start-in-night-no-question")
-    s.keys("look\n")
-    s.keys("\n")                 # Enter alone: Night stays, nothing more is kept
+    give_key(s)
+    picked(s, "night please", 2)  # the look kept already: nothing more is kept
     s.look("2-stays")
-    s.keys("look\n")
-    s.keys("3\n")
-    s.keys("\n")                 # another look kept at a later start: a second entry under "look"
+    picked(s, "paper please", 3)  # another look kept at a later start: a second entry under "look"
     s.look("3-paper-kept")
-    s.end()
+    s.end(secrets=[KEY])
 
-    s = Start("pick-3", disk, LookChat(1280, kept_name=b"Ada", key_entry=b"", last_line=b"look", kept_look=b"Paper"))
+    s = Start("pick-3", disk, LookChat(1280, kept_name=b"Ada", key_entry=b"", last_line=b"paper please", kept_look=b"Paper"))
     s.look("1-third-start-in-paper")
     s.end()
 
@@ -141,17 +142,13 @@ def no_random():
 
 
 def stays():
-    """Numbers that are not on the list, back to the first look, and keeping a look the notebook already holds,
-    with the line `look`, after the onboarding's question was answered with Enter alone."""
+    """At the onboarding's question at the start (the notebook holds no answer about the look): numbers that are not
+    on the list, back to the first look, and the first look kept; then `setup` asks the question again, and keeping
+    the look the notebook already holds writes nothing."""
     disk = fresh_disk("look-stays")
     put_notebook(disk, [("name", b"Bea"), ("locked key", b"")])
     s = Start("stays", disk, LookChat(1280, kept_name=b"Bea", key_entry=b""))
     s.look("1-question-at-startup")
-    s.keys("\n")                 # the onboarding's question: look 1 stays, and an entry with no signs is kept
-    s.keys("look\n")
-    s.keys("\n")                 # nothing tried: look 1 stays, nothing written
-    s.look("2-stays-at-once")
-    s.keys("look\n")
     s.keys("7\n")
     s.keys("x\n")
     s.keys("0\n")
@@ -164,7 +161,9 @@ def stays():
     s.look("5-blue-tried")
     s.keys("\n")                 # tried, and the notebook holds no look: Blue is kept
     s.look("6-blue-kept")
-    s.keys("look\n")
+    s.keys("setup\n")
+    s.keys("\n")                 # the name stays
+    s.keys("\n")                 # no key
     s.keys("4\n")
     s.keys("1\n")
     s.keys("\n")                 # Blue tried again, and the notebook holds it already: nothing kept
@@ -173,18 +172,20 @@ def stays():
 
 
 def no_notebook():
-    """A disk that is not divided: no notebook, so nothing is asked. A look can be tried with `look`, and lasts until
-    the machine is switched off."""
+    """A disk that is not divided: no notebook, so nothing is asked. The model picks a look, which lasts until the
+    machine is switched off, and a line after it is answered in that look."""
+    kernel = with_standin(["look=3", "words=Still in Paper."])
     disk = fresh_disk("look-nonotebook", divided=False)
-    s = Start("nonotebook", disk, LookChat(1280, notebook=None))
-    s.keys("look\n")
-    s.keys("3\n")
+    s = Start("nonotebook", disk, LookChat(1280, notebook=None), kernel=kernel, network="open")
+    give_key(s)
+    picked(s, "paper please", 3)
     s.look("1-paper")
-    s.keys("\n")
-    s.look("2-not-kept")
+    s.mark()
     s.keys("hi\n")
+    s.wait_text("Model: ")
+    s.chat.row("Model: Still in Paper.")
     s.look("3-still-paper")
-    s.end()
+    s.end(secrets=[KEY])
 
 
 def odd_entries():
@@ -258,18 +259,19 @@ def locked():
 
 def damaged():
     """A damaged notebook (something behind its end) that holds a name and a look: the look is put in use at the
-    start, nothing is asked, and another look can be tried but not kept."""
+    start, nothing is asked, and another look the model picks lasts until the machine is switched off."""
+    kernel = with_standin(["look=4"])
     disk = fresh_disk("look-damaged")
     put_notebook(disk, [("name", b"Hal"), ("look", b"Paper")])
     put_block(disk, 5, b"junk".ljust(BLOCK, b"\0"))
-    s = Start("damaged", disk, LookChat(1280, notebook="damaged", kept_name=b"Hal", kept_look=b"Paper"))
+    s = Start("damaged", disk, LookChat(1280, notebook="damaged", kept_name=b"Hal", kept_look=b"Paper"),
+              kernel=kernel, network="open")
     s.damaged = True
     s.look("1-paper-from-a-damaged-notebook")
-    s.keys("look\n")
-    s.keys("4\n")
-    s.keys("\n")
+    give_key(s)
+    picked(s, "contrast please", 4)
     s.look("2-contrast-not-kept")
-    s.end()
+    s.end(secrets=[KEY])
 
 
 def small_screen():
@@ -309,7 +311,10 @@ SCENARIOS = dict(pick=pick, atonce=at_once, his=his, setup=setup, norandom=no_ra
                  noscreen=no_screen)
 
 if __name__ == "__main__":
-    for name in sys.argv[1:] or list(SCENARIOS):
-        print("--- " + name)
-        SCENARIOS[name]()
+    try:
+        for name in sys.argv[1:] or list(SCENARIOS):
+            print("--- " + name)
+            SCENARIOS[name]()
+    finally:
+        stop_standin()
     print("FAILURES:", failures if failures else "none")

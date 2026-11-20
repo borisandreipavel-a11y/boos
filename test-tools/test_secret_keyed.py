@@ -27,6 +27,17 @@ chat = NamedChat(width, kept_look=None)  # a fresh disk: nothing under "look" ei
 failures = Failures()
 NAMES = {"-": "minus", "=": "equal", "/": "slash", "+": "shift-equal", "_": "shift-minus", "#": "shift-3", " ": "spc", chr(10): "ret", chr(8): "backspace"}
 ENTER, BACK = chr(10), chr(8)
+# Every line but `key` and `setup` goes to the model once a secret is held (docs/tools.md); this machine's network
+# names no name server, so the answer is this row.
+NO_ANSWER = "no answer came, because the network named no name server"
+
+
+def answered(count):
+    """Waits until the kernel has said for the `count`-th time that no answer came to a line, and adds the row."""
+    end = time.time() + 30
+    while time.time() < end and machine.serial().count(("Kernel: " + NO_ANSWER).encode()) < count:
+        time.sleep(0.1)
+    chat.say(NO_ANSWER)
 
 
 def press(text):
@@ -97,6 +108,7 @@ try:
     press(ENTER)
     look("5 handed over", [("secret", SECRET, 1, 0)])
     press("hello after" + ENTER)
+    answered(1)
     look("6 a normal line after it", [("secret", SECRET, 1, 0)])
     press("key" + ENTER)
     press(OTHER)
@@ -108,7 +120,12 @@ try:
     look("9 asked again, nothing given", [("secret", SECRET, 0, 0), ("second", OTHER, 1, 0)])
     press("key" + ENTER + "x" + ENTER)
     look("10 a secret of one sign", [("secret", SECRET, 0, 0), ("second", OTHER, 0, 0)])
-    press("keys" + ENTER + "Key" + ENTER)
+    # Lines that only look like the word go to the model; each answer is awaited before the next line, which would
+    # otherwise be turned away while it is awaited.
+    press("keys" + ENTER)
+    answered(2)
+    press("Key" + ENTER)
+    answered(3)
     look("11 lines that only look like the word", [("second", OTHER, 0, 0)], check_memory=False)
 finally:
     raw = machine.quit()

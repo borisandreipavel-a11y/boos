@@ -1,8 +1,8 @@
 """Every line to the model (docs/tools.md, docs/chat.md, docs/model.md): each line typed in the chat box but `key`
 and `setup` goes to the model with the list of tools, and the kernel says the model's words or does the tool it
 asked for. Every scenario boots the stand-in copy of the project (net_copy.py), so that a break on purpose
-(chat_tools_breaks.py, through BREAK) reaches all of them; the stand-in is chat_server.py, with the answers of
-chat_cases.py. What is meant comes from chat_tools_model.py and apps_kept_model.py, written from the notes; every
+(chat_tools_breaks.py, through BREAK) reaches all of them; the stand-in is model_server.py, with the answers of
+chat_cases.py for a line. What is meant comes from chat_tools_model.py and apps_kept_model.py, written from the notes; every
 request the stand-in saw is compared with what the notes say is sent, and the disk file is read from outside.
 Made-up key only.
 
@@ -201,7 +201,7 @@ def scenario_pages():
         items += app_things(number, "app number %d of seven" % number, SCRIPT)
     disk, _ = answered_disk("tools-pages", items)
     apps = [(n, "app number %d of seven" % n) for n in range(7, 0, -1)]
-    run = Run("tools-pages", disk, behaviours=["page=2", "run=3", "page=5"])
+    run = Run("tools-pages", disk, behaviours=["turn=2", "run=3", "turn=5"])
     chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
     give_key(run, chat)
     exchange(run, chat, "show me the next page", [chat_cases.TOKENS_LINE, page_row(2, 2)])
@@ -220,7 +220,7 @@ def scenario_odd():
     print("odd: what the model may send that must not be believed")
     disk, _ = answered_disk("tools-odd", app_things(1, "a dice that rolls", SCRIPT))
     behaviours = ["wordsrun=1", "two", "unknown", "oddname", "badinputs", "noinputs", "biginputs", "runtext=1", "run=7", "look=9",
-                  "page=3", "keyrequest", "app", "longrequest", "app", "oddrequest", "app", "emptyrequest"]
+                  "turn=3", "keyrequest", "app", "longrequest", "app", "oddrequest", "app", "emptyrequest"]
     run = Run("tools-odd", disk, behaviours=behaviours)
     chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
     give_key(run, chat)

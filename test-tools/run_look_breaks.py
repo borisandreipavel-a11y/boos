@@ -22,7 +22,7 @@ BREAKS = {
     "a number one off": ("look.rs", "                IN_USE = number - 1;\n", "                IN_USE = number % LOOKS.len();\n", ["pick"]),
     "a tried look not shown at once": ("chat.rs", "            if look_changed {\n                look_paint();\n",
         "            if false {\n                look_paint();\n", ["pick"]),
-    "the kept look not written": ("look.rs", "notebook_keep(LOOK_ENTRY, look().name.as_bytes())", "Ok::<(), &'static str>(())", ["pick"]),
+    "the kept look not written": ("look.rs", "return match notebook_keep(LOOK_ENTRY, look().name.as_bytes())", "return match Ok::<(), &'static str>(())", ["pick"]),
     "the kept look not read at startup": ("look.rs", "    match notebook_find(LOOK_ENTRY) {\n",
         "    match Ok::<Option<Vec<u8>>, &'static str>(None) {\n", ["pick"]),
     "the screen not painted again at startup": ("chat.rs", "    if look_changed {\n        look_paint();\n",

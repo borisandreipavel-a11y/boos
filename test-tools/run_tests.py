@@ -219,6 +219,12 @@ def break_jobs():
         add("kept", name, ["test_apps_kept.py", apps_kept_breaks.CATCH[name]], {"BREAK": name},
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["apps_kept_breaks.py"], 60)
+    # Every line to the model: in the stand-in copy, through test_chat_tools.py with BREAK.
+    import chat_tools_breaks
+    for name, changes in chat_tools_breaks.BREAKS.items():
+        add("tools", name, ["test_chat_tools.py", chat_tools_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["chat_tools_breaks.py"], 60)
     # `setup` bringing back the first look: in the break copy, test_look_reset.py's scenarios booting the copy's kernel.
     import run_reset_breaks
     for name, (file, old, new, scenarios) in run_reset_breaks.BREAKS.items():
@@ -275,7 +281,7 @@ def table_problems(jobs):
 
 
 CATALOGUE_FILES = {"run_key_breaks.py", "run_try_breaks.py", "run_look_breaks.py", "run_app_breaks.py", "run_apps_kept_breaks.py",
-                   "run_reset_breaks.py", "run_lines_breaks.py"}
+                   "run_reset_breaks.py", "run_lines_breaks.py", "run_chat_tools_breaks.py"}
 
 
 # ---------------------------------------------------------------- what a change needs

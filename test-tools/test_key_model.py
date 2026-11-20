@@ -1,6 +1,7 @@
 """The unlocked key is the key that was typed: against the stand-in for the provider on this computer (in a copy
-of the project, see net_copy.py), a made-up key is locked at one start, unlocked at the next, and `ask` is sent
-each time. The stand-in writes down the key each request carried; it must be the typed key, byte for byte.
+of the project, see net_copy.py), a made-up key is locked at one start, unlocked at the next, and a line is sent
+each time, which goes to the model (docs/tools.md) and comes back as the model's words. The stand-in writes down
+the key each request carried; it must be the typed key, byte for byte.
 At the second start the password is typed while the start's own page fetch is at work.
 Usage: python test_key_model.py"""
 import json
@@ -33,7 +34,7 @@ def press(machine, text, pause=0.22):
 
 def rows(machine):
     text = machine.serial().decode(errors="replace")
-    return [line for line in text.split("\r\n") if line.startswith(("Kernel:", "Ada:", "Network:"))]
+    return [line for line in text.split("\r\n") if line.startswith(("Kernel:", "Model:", "Ada:", "Network:"))]
 
 
 def wait_row(machine, words, timeout=40):
@@ -64,8 +65,8 @@ try:
     assert wait_row(m, "pick a look by number"), rows(m)[-5:]
     press(m, "\n")
     assert wait_row(m, "look 1, Blue, stays"), rows(m)[-5:]
-    press(m, "ask\n")
-    ok = wait_row(m, "the model answered")
+    press(m, "hello\n")
+    ok = wait_row(m, "Model: Hello there, how are you?")
     serial = m.quit()
     print("start 1:")
     for row in rows(m)[-6:]:
@@ -87,8 +88,8 @@ try:
     print("start 2: unlocking began %s the page had come, and ended %s it" % (
         "before" if at_unlocking < at_fetch else "after", "before" if at_unlocked < at_fetch else "after"))
     assert m.wait_for(b"repeated here:", 60)
-    press(m, "ask\n")
-    ok = wait_row(m, "the model answered")
+    press(m, "hello\n")
+    ok = wait_row(m, "Model: Hello there, how are you?")
     m.quit()
     for row in rows(m)[-8:]:
         print("   ", row)
