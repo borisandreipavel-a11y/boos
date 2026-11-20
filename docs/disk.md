@@ -196,7 +196,7 @@ In QEMU the disk is a file on the building computer, `disk.img` in the project f
 
 ## The boot disk
 
-A PC starts from a disk, not from a folder: its startup program, the firmware, looks on a disk for a part of the start kind, reads the file system in it, and starts the file `EFI\BOOT\BOOTX64.EFI` it finds there. `make-boot-disk.ps1` makes such a disk as one file, `boot.img`, and `run-boot-disk.bat` starts QEMU from that file with no folder (see "Starting from the boot disk" in [startup.md](startup.md)). The same file is meant for VirtualBox and, later, a USB stick.
+A PC starts from a disk, not from a folder: its startup program, the firmware, looks on a disk for a part of the start kind, reads the file system in it, and starts the file `EFI\BOOT\BOOTX64.EFI` it finds there. `make-boot-disk.ps1` makes such a disk as one file, `boot.img`, and `run-boot-disk.bat` starts QEMU from that file with no folder (see "Starting from the boot disk" in [startup.md](startup.md)). The same file serves VirtualBox, through a copy in its own format (see "In VirtualBox" in [startup.md](startup.md)), and is meant for a USB stick later.
 
 ```
 powershell -NoProfile -File make-boot-disk.ps1 boot.img target\x86_64-unknown-uefi\debug\boos.efi
