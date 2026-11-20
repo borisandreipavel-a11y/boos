@@ -34,8 +34,8 @@ BREAKS = {
     # The script is shown, but the request's words are sent without the lead in front.
     "nolead": {"model.rs": swap("json_text(&format!(\"{}{}\", APP_LEAD, wanted)),", "json_text(wanted),")},
     # --- The run ---
-    # The script is shown but not run.
-    "norun": {"chat.rs": swap("            chat_say(&app_run(script));\n", "")},
+    # The script is shown but not run: no run, no row about it, nothing kept.
+    "norun": {"chat.rs": swap("            let (sentence, ran) = app_run(script);\n            chat_say(&sentence);\n", "            let ran = false;\n")},
     # No new seed: every run starts its random numbers from the same place.
     "noseed": {"apps.rs": swap("let seed = random_number().map(|number| (number >> 1) as i64);", "let seed: Option<i64> = None;")},
     # The interpreter takes the seed but does not use it.
@@ -47,7 +47,7 @@ BREAKS = {
     "gaveupkind": {"app_box.rs": swap("Some(TrapCode::UnreachableCodeReached) => StopKind::GaveUp,", "Some(TrapCode::UnreachableCodeReached) => StopKind::Other,")},
     "mistakekind": {"app_box.rs": swap("kind: StopKind::Mistake }),", "kind: StopKind::Other }),")},
     # A run that showed nothing is said as one that did.
-    "shownothing": {"apps.rs": swap("Ok(0) => String::from(", "Ok(9999) => String::from(")},
+    "shownothing": {"apps.rs": swap("Ok(0) => (String::from(", "Ok(9999) => (String::from(")},
 }
 
 CATCH = {

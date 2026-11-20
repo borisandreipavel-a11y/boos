@@ -28,6 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 # Nothing from outside may change what the jobs test: a KERNEL_FILE left set would have every suite boot another kernel.
 STRIPPED = ("KERNEL_FILE", "BREAK", "DIVIDED_DISK", "BOOS_PROJECT", "RAW", "KEY_PAUSE", "BREAKS_MODULE", "CHAT_LOOK", "BOOS_COPIES")
+CLEARED = [_name for _name in STRIPPED if _name in os.environ]  # said at the start of main(), so that it is not missed
 for _name in STRIPPED:
     os.environ.pop(_name, None)
 
@@ -115,6 +116,8 @@ def suite_jobs():
                       needs=needs_of(script))
         if entry.get("split"):
             for scenario in scenarios_of(script):
+                if scenario in entry.get("leave_out", {}):
+                    continue
                 share = seconds.get(scenario, 60) if isinstance(seconds, dict) else 60
                 jobs.append(Job("%s %s" % (entry["name"], scenario), entry["command"] + [scenario], seconds=share, **common))
         else:
@@ -193,6 +196,17 @@ def break_jobs():
     for name, (file, old, new, scenarios) in run_look_breaks.BREAKS.items():
         add("look", name, ["test_look.py"] + list(scenarios), {}, [(file, lambda file, o=old, n=new: copy_check(file, o, n))],
             "caught", ["run_look_breaks.py", "copy_break.py"], 60, prepare=(file, old, new))
+    # Apps kept on the disk: in the stand-in copy, through test_apps_kept.py with BREAK.
+    import apps_kept_breaks
+    for name, changes in apps_kept_breaks.BREAKS.items():
+        add("kept", name, ["test_apps_kept.py", apps_kept_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["apps_kept_breaks.py"], 60)
+    # `setup` bringing back the first look: in the break copy, test_look_reset.py's scenarios booting the copy's kernel.
+    import run_reset_breaks
+    for name, (file, old, new, scenarios) in run_reset_breaks.BREAKS.items():
+        add("reset", name, ["test_look_reset.py"] + list(scenarios), {}, [(file, lambda file, o=old, n=new: copy_check(file, o, n))],
+            "caught", ["run_reset_breaks.py", "copy_break.py"], 60, prepare=(file, old, new))
     return jobs, problems
 
 
@@ -205,6 +219,10 @@ def table_problems(jobs):
         if (name.startswith("test_") and name.endswith(".py")) or (name.startswith("run_") and name.endswith("_breaks.py")):
             if name not in listed and name not in suites.EXCUSED and name not in CATALOGUE_FILES:
                 problems.append("%s is in no entry of suites.py and not excused there" % name)
+    for entry in suites.SUITES:
+        unknown = set(entry.get("leave_out", {})) - set(scenarios_of(entry["command"][0]) if entry.get("split") else [])
+        if unknown:
+            problems.append("the entry '%s' leaves out scenarios its script does not have: %s" % (entry["name"], sorted(unknown)))
     kinds = suites.APP_KINDS.split(",")
     if len(kinds) != 46:
         problems.append("suites.APP_KINDS holds %d kinds, not the 46 of app_cases.py" % len(kinds))
@@ -221,7 +239,8 @@ def table_problems(jobs):
     return problems
 
 
-CATALOGUE_FILES = {"run_key_breaks.py", "run_try_breaks.py", "run_look_breaks.py", "run_app_breaks.py"}
+CATALOGUE_FILES = {"run_key_breaks.py", "run_try_breaks.py", "run_look_breaks.py", "run_app_breaks.py", "run_apps_kept_breaks.py",
+                   "run_reset_breaks.py"}
 
 
 # ---------------------------------------------------------------- what a change needs
@@ -440,7 +459,7 @@ class Worker:
             tail = [l for l in lines if l.strip()][-3:]
             return "error", first, seconds, "no verdict line: " + " | ".join(tail)[-300:], False
         last = verdicts[-1].strip()
-        if last in ("FAILURES: none", "all as meant"):
+        if last in ("FAILURES: none", "all as meant", "FAILURES: none (all as meant)"):
             if first is not None:
                 return "error", first, seconds, "the verdict says none, but a failure was printed", False
             return "passed", None, seconds, "", False
@@ -566,6 +585,8 @@ def kernel_mark():
 
 
 def main():
+    if CLEARED:
+        print("cleared from the environment, as every run does: %s" % ", ".join(CLEARED), flush=True)
     args = sys.argv[1:]
     everything = "all" in args
     listing = "--list" in args

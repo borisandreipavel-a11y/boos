@@ -7,6 +7,7 @@ A suite entry says:
   to a kernel file that no entry watches runs every suite, because nearly every file of the kernel runs at every
   start; a change to a test script runs every suite that uses it (read from the scripts' imports, nothing to list);
 - split (optional): run each scenario of the script's SCENARIOS as a job of its own, so that they can run at once;
+- leave_out (optional, with split): scenarios that are not run, each with the reason, as {scenario: why};
 - env (optional): environment for the script, as {name: value};
 - alone (optional): nothing else of the same run at the same time (for a script that changes the project's own
   source for a moment);
@@ -55,6 +56,13 @@ SUITES = [
          seconds=dict(pick=66, atonce=33, his=42, setup=39, norandom=18, stays=38, nonotebook=22, odd=86, locked=55, damaged=20,
                       small=35, noscreen=29)),
     dict(name="look on a person's path", command=["test_look_his.py"], watches=["make-disk.ps1"] + SECRET, seconds=120),
+    dict(name="look reset", command=["test_look_reset.py"], split=True, watches=SECRET,
+         seconds=dict(atonce=40, midway=35, again=40, unchanged=40, nonotebook=22, damaged=40, locked=55, noscreen=32, small=21)),
+    # Every scenario boots the stand-in copy. "older" builds the kernel of an older commit from a clean export of it.
+    dict(name="apps kept", command=["test_apps_kept.py"], split=True, watches=STAND_IN + APPS,
+         leave_out={"times": "a measurement of how long keeping and opening take, with no verdict"},
+         seconds=dict(first=55, make=85, echo=35, outside=20, requests=60, look=25, small=20, damaged=20, full=95, failing=50,
+                      cut=360, older=90)),
 ]
 
 # Scripts named test_*.py or run_*_breaks.py that are no entry of their own, and why.
@@ -63,6 +71,7 @@ EXCUSED = {
     "run_regress_try.py": "an older list of suites, run one after another; run_tests.py all covers it",
     "run_regress_look.py": "an older list of suites, run one after another; run_tests.py all covers it",
     "run_regress_apps.py": "an older list of suites, run one after another; run_tests.py all covers it",
+    "run_regress_kept.py": "an older list of suites, run one after another; run_tests.py all covers it",
 }
 
 # Files no test runs or reads: a change to them alone boots nothing. Anything not named here or in an entry, and not
@@ -73,7 +82,7 @@ NO_TEST = [".github/", "lua/", "run.bat", "test-tools/check_lua.py", "test-tools
 WORDS = [".md", "LICENSE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 19, "try": 10, "key": 11, "look": 24, "model": 17}
+BREAK_COUNTS = {"apps": 19, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8}
 
 # The first failure that caught each break on purpose when it was run alone and to the end. A run that stops at the
 # first failure counts a break as caught only when its first failure is this one; any other first failure (a wait in
@@ -156,4 +165,29 @@ CAUGHT_BY = {
     'break model: no5xx': 'upstream',
     'break model: nostrict': 'nochoices',
     'break model: nothought': 'lengthempty',
+    'break kept: nowholecheck': 'kept-outside start',
+    'break kept: noorder': 'kept-outside start',
+    'break kept: nopiecelimits': 'kept-outside start',
+    'break kept: nofullpieces': 'kept-outside start',
+    'break kept: nothinglimit': 'kept-outside start',
+    'break kept: piecesdecideend': 'kept-outside start',
+    'break kept: noroom': 'kept-full-script entries added',
+    'break kept: nopieceadvance': 'failing the next line not kept',
+    'break kept: nokeep': "kept-make kept 'a dice that rolls'",
+    'break kept: keepstopped': "kept-make not kept 'an app with a mistak'",
+    'break kept: nosamerequest': 'make entries added',
+    'break kept: oldestfirst': 'kept-make-again start',
+    'break kept: requestnotcleaned': 'kept-requests start',
+    'break kept: leadingzero': 'kept-requests start',
+    'break kept: notwholelisted': 'kept-outside start',
+    'break kept: nolookrepaint': 'kept-look paper-tried',
+    'break kept: sixapps': 'kept-small start',
+    'break reset: setup leaves the look as it was': 'at-once-1 2-blue-at-once',
+    'break reset: the first look not put in use': 'at-once-1 2-blue-at-once',
+    'break reset: the screen not painted again at setup': 'at-once-1 2-blue-at-once',
+    'break reset: the first look not kept on the disk': 'midway-1 terminal/disk',
+    'break reset: the look kept before still counted as kept': 'again-1 2-night-kept',
+    'break reset: an entry although look 1 is kept': 'unchanged-blue terminal/disk',
+    'break reset: nothing said when the first look cannot be kept': 'damaged-1 3-rows-about-the-look',
+    'break reset: the rows about the look without the closing words': 'damaged-1 3-rows-about-the-look',
 }

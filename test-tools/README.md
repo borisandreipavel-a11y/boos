@@ -48,8 +48,9 @@ caught (the misses that `docs/testing.md` names excepted).
   what the tests know, and a break whose old text no longer stands exactly once in its file: each is reported at
   every run, `--list` and "only what changed" included, and makes the run end with 1.
 - **To add a suite:** one entry in `suites.py`. **To add a break on purpose:** a line in one of the lists
-  (`run_key_breaks.py`, `run_look_breaks.py`, `run_try_breaks.py` with `test_try.py`, `app_breaks.py`,
-  `model_breaks.py`, `model_breaks5.py`), the count in `suites.BREAK_COUNTS`, and its first failure in
+  (`run_key_breaks.py`, `run_look_breaks.py`, `run_reset_breaks.py`, `run_try_breaks.py` with `test_try.py`,
+  `app_breaks.py`, `apps_kept_breaks.py`, `model_breaks.py`, `model_breaks5.py`), the count in
+  `suites.BREAK_COUNTS`, and its first failure in
   `suites.CAUGHT_BY` after one run with `--to-the-end`. A list of new breaks of the same kind (file, old text,
   new text, the test that must catch it) can run in the break copy as the key's and the look's do
   (`copy_break.py`): the project's own source is never changed.
