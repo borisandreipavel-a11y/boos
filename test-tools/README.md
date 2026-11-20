@@ -48,6 +48,7 @@ Building and helpers:
 | `restore.py`, `crlf.py`, `export_check.py`, `make_lock_values.py` | Putting sources back after a break; Windows line ends; a clean export of a commit built from nothing; writing `src/lock_values.rs` |
 | `app_cases.py` | The stand-in's answers to a request for an app, and what the kernel is meant to say, list and show for each, worked out apart from the kernel's code |
 | `apps_kept_model.py` | Apps kept on the disk, worked out from the notes apart from the kernel's code: notebooks with things in pieces written and read from outside, the apps a start finds and the lines it prints, the panel of apps in the picture, and the chat box with `make` |
+| `boot_disk_checks.py` | The boot disk: a reader of its start part's FAT32 file system, worked out from Microsoft's FAT specification and the reference firmware's checks apart from the script; a machine that QEMU starts from a disk file alone |
 | `lines_model.py`, `lines_checks.py`, `lines_copy.py` | The kernel's own lines on the screen: the pictures that are meant (the start screen, the lines after F1, the stop screen); the checks that boot and judge them; a copy of the project with a failure or a break on purpose |
 
 Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
@@ -81,4 +82,6 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `test_lines.py [start] [early] [small] [noscreen] [noserial] [later] [held]` | The kernel's own lines: the start screen, judged dot by dot with the machine paused at moments along the way; the usual picture at the prompt; F1, a key, Enter; a key during the start; a screen of 800 by 600, where the lines move up; no screen; no serial port; lines printed while F1 shows them; F1 held down (pressed again without being let go, through QEMU's machine protocol) |
 | `test_lines_stop.py` | The stop screen after a failure or a panic made on purpose in a copy: right after the takeover, after the kernel's own page tables, in the middle of the start, with the usual picture, with the lines after F1, and in a task of its own while the start screen shows |
 | `run_lines_breaks.py` | Breaks of the kernel's lines on purpose, each alone, in a copy, and whether those checks catch them |
+| `test_boot_disk.py [made] [start] [again] [refuses]` | The boot disk: a new one read from outside, QEMU started from it alone, a new kernel that leaves boos's part alone, and the files the script must refuse |
+| `run_boot_disk_breaks.py` | Breaks of `make-boot-disk.ps1` on purpose, each alone, in a copy of the script, and whether `test_boot_disk.py` catches them |
 | `time_lines.py [boots] [commit]` | How much later the lines of a start arrive than with another commit's kernel, built from a clean export |

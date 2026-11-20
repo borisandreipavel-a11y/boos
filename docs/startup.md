@@ -142,3 +142,12 @@ The lines about the page come from the network stack's task as well. The name li
 The heap line and the task lines are demonstrations kept from the work that added them. They can go when something better shows that those pieces work. The task lines replaced three `Timer: N s` lines that the main loop used to print; the tasks now show that the timer works, because they pace themselves by its ticks. The rest count shows that a waiting task uses no processor time. Fetching the page at every start is a demonstration too.
 
 When apps made on request are kept in the notebook, `chat_begin` ends by finding them, and lines that begin with `Apps:` follow the rows of the chat box: how many are kept, and the request each was made for, the one kept last first. The panel of apps, part of the usual picture, appears near the top left of the screen when the start is over (see "The kernel's lines" in [screen.md](screen.md)). Without kept apps there are no such lines and no panel. See "Keeping an app" in [apps.md](apps.md).
+
+## Starting from the boot disk
+
+`run-boot-disk.bat` starts the same kernel from the boot disk, `boot.img`, instead of the `esp` folder; see "The boot disk" in [disk.md](disk.md). The start is the same. The two lines that QEMU's firmware prints before the kernel's first name the disk it started from: `BdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00005 " from PciRoot(0x0)/Pci(0x4,0x0)/Sata(0x0,0xFFFF,0x0)` and `BdsDxe: starting` with the same words, where a start from the folder names the folder's disk on the IDE controller, `PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)`. The kernel then finds its own part on that same disk:
+
+```
+Disk: ready, "QEMU HARDDISK", 80 MB, in socket 0 of its controller
+Disk: my own part is 14 MB, from block 133120 to block 163806
+```
