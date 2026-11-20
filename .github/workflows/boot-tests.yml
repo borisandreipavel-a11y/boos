@@ -1,8 +1,7 @@
 # The boot tests. GitHub boots the kernel in QEMU on one of its own Windows computers and runs tests of
-# test-tools/ there, for every pull request into master. For now it runs one short suite, the chat box's and
-# Shift's (the entry "chat box and shift" in test-tools/suites.py): it shows that QEMU, its firmware and the
-# tools work on GitHub's computer, and how long getting ready takes there. See docs/testing.md, "Boot tests on
-# GitHub".
+# test-tools/ there, for every pull request into master. For now it runs the whole set once, every suite and
+# every break on purpose (run_tests.py all), to see how long each job takes on GitHub's computer and how much of
+# its disk the tests use. See docs/testing.md, "Boot tests on GitHub".
 #
 # QEMU comes from the installer for 64-bit Windows that qemu.org names (qemu.weilnetz.de), version 11.1.0. The
 # installer is refused unless its SHA-512 is the one written below, which is the one the site gives beside it.
@@ -28,7 +27,8 @@ concurrency:
 jobs:
   boot:
     runs-on: windows-latest
-    timeout-minutes: 30
+    # About twice what the whole set is expected to take here.
+    timeout-minutes: 210
     env:
       QEMU_INSTALLER: qemu-w64-setup-20260811.exe
       QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
@@ -101,12 +101,33 @@ jobs:
       - name: Build the interpreter and the kernel
         run: python test-tools/build_all.py
 
+      - name: How much disk is free before the tests
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Used } | ForEach-Object {
+            "{0}: {1:N1} GB free of {2:N1} GB" -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB)
+          }
+
       # Through the same runner as on any other computer (test-tools/run_tests.py), with two test machines side by
-      # side. What the tests make (disk files, pictures, logs) goes to the runner's temporary folder.
-      - name: Boot the kernel and test the chat box and Shift
+      # side. What the tests make (disk files, pictures, logs, copies of the project) goes to the runner's
+      # temporary folder.
+      - name: Boot the kernel and run every test
         env:
           BOOS_TEST_WORK: ${{ runner.temp }}\boos-tests
-        run: python test-tools/run_tests.py all --only "chat box and shift" --workers 2
+        run: python test-tools/run_tests.py all --workers 2
+
+      # Also after a run that did not pass: what the tests and the builds left on the disk.
+      - name: How much disk the tests used
+        if: always()
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Used } | ForEach-Object {
+            "{0}: {1:N1} GB free of {2:N1} GB" -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB)
+          }
+          foreach ($folder in "$env:RUNNER_TEMP\boos-tests", "$env:GITHUB_WORKSPACE\target", "$env:GITHUB_WORKSPACE\interpreter\target") {
+            if (Test-Path -LiteralPath $folder) {
+              $bytes = (Get-ChildItem -LiteralPath $folder -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+              "{0}: {1:N2} GB" -f $folder, ($bytes / 1GB)
+            }
+          }
 
       # When the tests failed or ran out of time: their logs, the kernel's lines and the pictures that were not as
       # meant, to look at afterwards. Anyone signed in to GitHub can download them, for 90 days; every name and key

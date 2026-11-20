@@ -121,7 +121,7 @@ Outside `src/`:
 - `run.bat` builds the interpreter and then the kernel, copies the kernel to `esp\EFI\BOOT\BOOTX64.EFI` (where the firmware looks) and starts QEMU with a processor that can make random numbers, a virtio network card on QEMU's built-in network, and a disk controller with one disk, which is the file `disk.img`. It makes that file the first time and has `make-disk.ps1` divide it into parts.
 - `make-disk.ps1` divides a new, empty disk file into parts, with one part for the kernel; see [disk.md](disk.md). It is written in PowerShell, which comes with Windows.
 - `README.md` in the project's root is the front page for a visitor: what the project is for, what the kernel does today, what a start looks like, how to run it, and where the outside code comes from. It repeats, shortly, what these notes say, and some of the lines a boot prints. When the kernel's abilities, its boot lines or the way to run it change, change it too.
-- `test-tools/` holds the scripts that build, boot and check the kernel in QEMU, `.github/workflows/build.yml` has GitHub build it for every pull request, and `.github/workflows/boot-tests.yml` has GitHub boot it there for a short suite; see [testing.md](testing.md).
+- `test-tools/` holds the scripts that build, boot and check the kernel in QEMU, `.github/workflows/build.yml` has GitHub build it for every pull request, and `.github/workflows/boot-tests.yml` has GitHub boot it there and run the tests; see [testing.md](testing.md).
 - Not in the repository: `esp/`, `target/` and `interpreter/target/` (build output), `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder) and `disk.img` (the machine's disk, which holds what was stored on it).
 
 ## Conventions
