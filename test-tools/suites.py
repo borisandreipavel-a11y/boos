@@ -71,6 +71,14 @@ SUITES = [
     # The stop screen after a failure or a panic made on purpose, each in a copy built for it.
     dict(name="lines stop", command=["test_lines_stop.py"], split="lines_checks.py STOP_CASES", watches=[],
          seconds={"stop-firmware": 15, "stop-own": 15, "stop-panic": 15, "stop-picture": 20, "stop-view": 20, "stop-task": 40}),
+    # The boot disk (make-boot-disk.ps1): a new one read from outside, QEMU started from it alone, another kernel
+    # written into it, and the files the script must refuse.
+    dict(name="boot disk", command=["test_boot_disk.py"], split=["made", "start", "again", "refuses"],
+         watches=["make-boot-disk.ps1", "make-disk.ps1"], seconds=dict(made=20, start=40, again=60, refuses=60)),
+    # The script's breaks on purpose: each made in a copy of the script, which the boot disk's test must catch. They
+    # change no file of the kernel, so they run as one job, through their own list.
+    dict(name="boot disk breaks", command=["run_boot_disk_breaks.py"], watches=["make-boot-disk.ps1", "make-disk.ps1"],
+         seconds=300),
 ]
 
 # Scripts named test_*.py or run_*_breaks.py that are no entry of their own, and why.
@@ -84,7 +92,7 @@ EXCUSED = {
 
 # Files no test runs or reads: a change to them alone boots nothing. Anything not named here or in an entry, and not
 # words only (WORDS), runs everything.
-NO_TEST = [".github/", "lua/", "run.bat", "test-tools/check_lua.py", "test-tools/export_check.py", "test-tools/time_look.py",
+NO_TEST = [".github/", "lua/", "run.bat", "run-boot-disk.bat", "test-tools/check_lua.py", "test-tools/export_check.py", "test-tools/time_look.py",
            "test-tools/time_repaint.py", "test-tools/time_lines.py", "test-tools/make_lock_values.py", "test-tools/restore.py",
            "test-tools/crlf.py"]
 # Words only: a change to these boots nothing.
