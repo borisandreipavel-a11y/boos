@@ -1,4 +1,4 @@
-"""Breaks made on purpose in the reading of a good answer (the real question), each in a copy of the project only.
+"""Breaks made on purpose in the reading of a good answer (to a line sent to the model), each in a copy of the project only.
 They are added to model_breaks.BREAKS, so that test_model.py can run them with BREAK=<name>.
 
 Usage: python model_breaks5.py      runs every break against the cases that should catch it, on a disk that is not
@@ -12,17 +12,21 @@ from model_breaks import swap
 
 
 def noending(text):
-    # In model_sentence, the question's path: app_sentence reads the ending the same way.
-    return swap(text, "    // What stands there is compared and never said itself.\n    let ending = json_find_text(body, ENDING).ok();\n",
-                "    // What stands there is compared and never said itself.\n    let ending: Option<String> = None; // BREAK\n")
+    # In chat_reply, the path of a line, which test_model.py sends. app_sentence reads the ending in the same words,
+    # so the lines after them, which only chat_reply has, find the place. model_sentence (the fixed question's path,
+    # which only the try of a key takes now) reads it the same way too.
+    return swap(text, "    let ending = json_find_text(body, ENDING).ok();\n    let out_of_room = ending.as_deref() == Some(\"length\");\n"
+                      "    let held_back = ending.as_deref() == Some(\"content_filter\");\n\n    // The first tool the model asked for.",
+                "    let ending: Option<String> = None; // BREAK\n    let out_of_room = ending.as_deref() == Some(\"length\");\n"
+                "    let held_back = ending.as_deref() == Some(\"content_filter\");\n\n    // The first tool the model asked for.")
 
 
 def notrim(text):
-    # In model_sentence, the question's path: app_sentence takes the spaces off the same way.
-    return swap(text, "    // The model's words, without the spaces and line ends before and after.\n    let found = model_words(body);\n"
-                      "    let words = match &found {\n        Ok(words) => Ok(words.trim()),\n",
-                "    // The model's words, without the spaces and line ends before and after.\n    let found = model_words(body);\n"
-                "    let words = match &found {\n        Ok(words) => Ok(words.as_str()), // BREAK\n")
+    # In chat_reply, the path of a line, which test_model.py sends: both of its trims, the one that finds words of
+    # spaces only and the one that takes the spaces off what is shown. model_sentence (the fixed question's path,
+    # which only the try of a key takes now) and app_sentence take the spaces off the same way.
+    return swap(text, "        Ok(words) if !words.trim().is_empty() => Some(words_shown(words.trim(), key)),\n",
+                "        Ok(words) if !words.is_empty() => Some(words_shown(words, key)), // BREAK\n")
 
 
 def nopieces(text):
