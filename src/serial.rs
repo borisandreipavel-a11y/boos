@@ -1,8 +1,11 @@
-//! Printing through the serial port. It works before and after the takeover,
-//! and it is the kernel's only way to say anything. Notes: `docs/startup.md`.
+//! Printing through the serial port. It works before and after the takeover.
+//! Everything the kernel says goes through here, and is kept for the screen
+//! too (`lines.rs`), because a PC may have no serial port. Notes:
+//! `docs/startup.md`.
 
 use core::fmt::{self, Write};
 
+use crate::lines::lines_keep;
 use crate::processor::{port_read, port_write, signals_back, signals_off};
 
 // The PC's first serial port answers at this port number.
@@ -36,17 +39,19 @@ pub fn serial_setup() {
 }
 
 pub fn serial_print(text: &str) {
-    // Without a serial port there is nowhere to print to.
-    if !unsafe { SERIAL_FOUND } {
-        return;
-    }
     // Keep the text in one piece: with device signals off, the timer cannot
     // switch to another task that prints in the middle of it.
     let were_on = signals_off();
-    for byte in text.bytes() {
-        // Wait until the serial port is ready for the next letter.
-        while port_read(COM1 + 5) & 0x20 == 0 {}
-        port_write(COM1, byte);
+    // The lines are kept for the screen whether or not there is a serial
+    // port.
+    lines_keep(text);
+    // Without a serial port there is nowhere else to print to.
+    if unsafe { SERIAL_FOUND } {
+        for byte in text.bytes() {
+            // Wait until the serial port is ready for the next letter.
+            while port_read(COM1 + 5) & 0x20 == 0 {}
+            port_write(COM1, byte);
+        }
     }
     signals_back(were_on);
 }

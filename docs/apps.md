@@ -169,7 +169,7 @@ Apps: page 1 of 2
 - ...
 ```
 
-- **It is there only while at least one app is kept.** It appears at a start that finds kept apps, and when the first app is kept. A screen without kept apps looks as it did before.
+- **It is there only while at least one app is kept.** It appears at a start that finds kept apps, with the rest of the usual picture when the start is over (see "The kernel's lines" in [screen.md](screen.md)), and when the first app is kept. A screen without kept apps looks as it did before.
 - **The first row says which page is shown and how many there are,** and below it come the apps of that page, five a page, the one kept last first, each as `- ` and its request. A row holds 47 signs, so a request of 45 always fits whole.
 - **It shows the first page,** at every start and again whenever an app is kept. Nothing turns the page yet.
 - **Its sizes are kept in one place,** `APPS_PANEL_STYLE` in `apps_kept.rs`: its top left corner 40 dots from the left and 80 from the top, 600 dots across, a frame 3 dots thick, the text 10 dots from the frame, letters at size 2 and 4 dots between rows, and five apps a page. That makes it 158 dots high: on QEMU's usual screen of 1280 by 800 dots it covers columns 40 to 639 and rows 80 to 237. It keeps that size whatever the page shown holds. It lies under the sentence and above the box with an app's text, which begins at row 270 on a screen of 800 by 600 dots and lower on larger ones; on a smaller screen the two could overlap.

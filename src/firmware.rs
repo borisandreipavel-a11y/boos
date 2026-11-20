@@ -3,6 +3,7 @@
 
 use core::ffi::c_void;
 
+use crate::lines::lines_keep;
 use crate::serial::serial_print;
 
 // The firmware service that writes text to the screen.
@@ -115,6 +116,9 @@ pub static mut MEMORY_MAP: [u64; 4096] = [0; 4096];
 // ---------- Printing through the firmware (only before the takeover) ----------
 
 pub fn print(table: *mut SystemTable, text: &str) {
+    // Kept for the kernel's own lines on the screen too (`lines.rs`), which
+    // take the firmware's text's place after the takeover.
+    lines_keep(text);
     let out = unsafe { (*table).console_out };
     for unit in text.encode_utf16() {
         let letter = [unit, 0];
