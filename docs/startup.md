@@ -152,3 +152,23 @@ When apps made on request are kept in the notebook, `chat_begin` ends by finding
 Disk: ready, "QEMU HARDDISK", 80 MB, in socket 0 of its controller
 Disk: my own part is 14 MB, from block 133120 to block 163806
 ```
+
+### In VirtualBox
+
+VirtualBox starts a machine from a copy of the boot disk in its own format. The steps, with VirtualBox's own command-line program `VBoxManage`, which lies in VirtualBox's install folder, as checked against version 7.2.22; `<machines>` stands for VirtualBox's folder for machines, which `VBoxManage list systemproperties` names ("Default machine folder"):
+
+```
+.\run-boot-disk.bat
+VBoxManage createvm --name=boos --platform-architecture=x86 --ostype=Other_64 --register
+VBoxManage modifyvm boos --firmware=efi --memory=256 --nic1=nat --nic-type1=virtio --keyboard=ps2
+VBoxManage convertfromraw boot.img "<machines>\boos\boot.vdi" --format=VDI
+VBoxManage storagectl boos --name=SATA --add=sata --controller=IntelAhci
+VBoxManage storageattach boos --storagectl=SATA --port=0 --device=0 --type=hdd --medium="<machines>\boos\boot.vdi"
+VBoxManage startvm boos --type=gui
+```
+
+- `run-boot-disk.bat` makes `boot.img`; its QEMU is closed at the prompt, so that the file is free. `convertfromraw` makes a copy of it in VirtualBox's own format, so the notebook in VirtualBox is that copy's: a new kernel means a new copy, which begins with an empty notebook.
+- The machine gets firmware of the UEFI kind, 256 MB, its disk on a SATA controller that is an AHCI controller, the virtio network card on VirtualBox's built-in network (NAT), and a PS/2 keyboard. VirtualBox's default network card is another, for which the kernel has no driver. `Other_64` is VirtualBox's "Other/Unknown (64-bit)", and `createvm` asks for the architecture as well.
+- Secure Boot must be off, since the kernel is not signed. If a start is refused for that: `VBoxManage modifynvram boos secureboot --disable`.
+- On a Windows computer where Windows' own hypervisor runs, VirtualBox's guide asks for the Windows feature "Windows Hypervisor Platform"; see "Virtual machines" in [open-points.md](open-points.md).
+- The machine stops when its window is closed with "Power off the machine". Later starts need only the last line.
