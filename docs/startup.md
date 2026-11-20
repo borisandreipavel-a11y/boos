@@ -87,7 +87,7 @@ State of the processor at handover, as seen in QEMU with its UEFI firmware. The 
 - `serial_print` hands every text to `lines_keep` first, whether or not a port was found, and `print` does the same: the kernel's lines are kept for the screen and shown there (see "The kernel's lines" in [screen.md](screen.md)).
 - `serial_print` waits without limit for the port to be ready for each letter.
 - `serial_print` switches device signals off while it keeps and sends a text, so that the text stays in one piece when several tasks print; see [tasks.md](tasks.md). While the machine starts, a whole line is also painted on the screen then.
-- Tested only in QEMU, with and without a serial port. Never run on real hardware.
+- Tested only in QEMU, with and without a serial port. In VirtualBox the kernel started twice, as a person reported (see [testing.md](testing.md)), but its printing was not checked there. Never run on real hardware.
 
 ## What a normal boot prints
 
@@ -170,5 +170,5 @@ VBoxManage startvm boos --type=gui
 - `run-boot-disk.bat` makes `boot.img`; its QEMU is closed at the prompt, so that the file is free. `convertfromraw` makes a copy of it in VirtualBox's own format, so the notebook in VirtualBox is that copy's: a new kernel means a new copy, which begins with an empty notebook.
 - The machine gets firmware of the UEFI kind, 256 MB, its disk on a SATA controller that is an AHCI controller, the virtio network card on VirtualBox's built-in network (NAT), and a PS/2 keyboard. VirtualBox's default network card is another, for which the kernel has no driver. `Other_64` is VirtualBox's "Other/Unknown (64-bit)", and `createvm` asks for the architecture as well.
 - Secure Boot must be off, since the kernel is not signed. If a start is refused for that: `VBoxManage modifynvram boos secureboot --disable`.
-- On a Windows computer where Windows' own hypervisor runs, VirtualBox's guide asks for the Windows feature "Windows Hypervisor Platform"; see "Virtual machines" in [open-points.md](open-points.md).
+- VirtualBox's guide asks for the Windows feature "Windows Hypervisor Platform" on a Windows computer where Windows' own hypervisor runs. These steps were tried on such a computer while Windows' list of its features read that feature as off, and the machine started both times (see [testing.md](testing.md)); see also "Virtual machines" in [open-points.md](open-points.md).
 - The machine stops when its window is closed with "Power off the machine". Later starts need only the last line.
