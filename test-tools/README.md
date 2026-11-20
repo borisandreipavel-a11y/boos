@@ -19,7 +19,9 @@ python run_tests.py --list       what would run and why, without running it (wor
 Options: `--workers N` (test machines at once; by default as many as the free memory and commit take, at most 4
 and at most one for each two processors), `--base REF` (compare with another branch than master), `--files
 PATH...` (run what a change to those files needs), `--to-the-end` (breaks on purpose run to the end instead of
-stopping at their first failure), `--only NAME...` (only the jobs whose names begin so).
+stopping at their first failure), `--only NAME...` (only the jobs whose names begin so), `--share I/N` (only the
+I-th of N shares of the jobs it picked, dealt longest first by the table's seconds in the same way on every
+computer, so that N computers together run each job once; the boot tests on GitHub use three).
 
 It builds the interpreter and the kernel once, then runs the jobs longest first: each suite once (the long ones
 split into their scenarios), and each break on purpose alone in a copy of the project. It opens no window and asks
