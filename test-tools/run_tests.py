@@ -6,7 +6,8 @@
     options: --workers N (test machines at once; by default as many as the free memory takes, at most 4),
              --base REF (compare with REF instead of master), --files PATH... (run what a change to these files
              needs, whatever git says), --to-the-end (breaks run to the end, not stopped at their first failure),
-             --only NAME... (only the jobs whose names start so)
+             --only NAME... (only the jobs whose names start so), --share I/N (only the I-th of N shares of the
+             jobs picked, dealt the same way on every computer, so that N computers together run each job once)
 
 No window, no question. Folders and ports come from the environment as for every test (places.py, ports.py): each
 test machine gets a work folder of its own under this checkout's (w1, w2, ...) and a range of stand-in ports of its
@@ -649,6 +650,27 @@ def default_workers():
     return max(1, count)
 
 
+def share_of(jobs, text):
+    """The I-th of N shares of the jobs, for --share I/N: dealt longest first by the table's seconds (then by name),
+    each to the share with the least time so far. Recorded times are not used, so that every computer deals the
+    same table the same way and N computers that each run one share run every job exactly once."""
+    try:
+        number, count = (int(part) for part in text.split("/"))
+    except ValueError:
+        raise SystemExit("--share takes I/N, such as 2/3")
+    if not 1 <= number <= count:
+        raise SystemExit("--share takes I/N with I from 1 to N, such as 2/3")
+    shares = [[] for _ in range(count)]
+    loads = [0] * count
+    for job in sorted(jobs, key=lambda job: (-job.seconds, job.name)):
+        i = loads.index(min(loads))
+        shares[i].append(job)
+        loads[i] += job.seconds
+    mine = shares[number - 1]
+    return mine, "share %d of %d: %d of the %d jobs picked (about %d of %d minutes by the table)" % (
+        number, count, len(mine), len(jobs), loads[number - 1] / 60, sum(loads) / 60)
+
+
 def kernel_mark():
     return hashlib.sha256(open(KERNEL, "rb").read()).hexdigest()[:16] if os.path.exists(KERNEL) else "none"
 
@@ -669,6 +691,7 @@ def main():
         rest = args[args.index(option) + 1:]
         return rest[:next((i for i, word in enumerate(rest) if word.startswith("--")), len(rest))]
     only = words_after("--only")
+    share = words_after("--share")
     given = [path.replace("\\", "/") for path in words_after("--files")]
 
     jobs = suite_jobs()
@@ -693,6 +716,10 @@ def main():
             picked = plan_changed(jobs, files, point)
     if only:
         picked = [job for job in picked if any(job.name.startswith(word) for word in only)]
+    if share:
+        # Dealt before recorded times replace the table's seconds below.
+        picked, note = share_of(picked, share[0])
+        say(note)
     if to_the_end:
         for job in picked:
             job.stop_early = False

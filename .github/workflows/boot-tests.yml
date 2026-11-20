@@ -1,0 +1,192 @@
+# The boot tests. GitHub boots the kernel in QEMU on one of its own Windows computers and runs the tests of
+# test-tools/ there through test-tools/run_tests.py:
+# - for a pull request into master, what its changes need (the runner's own pick, as on any other computer), on
+#   the pull request merged with master as master is when the run starts. A pull request that changes this file
+#   gets the whole set, since the runner's table boots nothing for a change under .github/;
+# - after each change that lands on master, the whole set: every suite and every break on purpose.
+# The jobs are spread over three of GitHub's computers at once, each running one share of them (run_tests.py
+# --share N/3); the job "boot" is the one check for all three, green only when all three are.
+# See docs/testing.md, "Boot tests on GitHub".
+#
+# QEMU comes from the installer for 64-bit Windows that qemu.org names (qemu.weilnetz.de), version 11.1.0. The
+# installer is refused unless its SHA-512 is the one written below, which is the one the site gives beside it.
+# The UEFI firmware the tests start is the one that comes in that installer. The tests use no secret: every
+# name, key and password they type is made up, and the kernel talks only to the stand-in for the provider on
+# the same computer.
+
+name: Boot tests
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# The tests only read the repository.
+permissions:
+  contents: read
+
+# A newer push to the same pull request stops the run for the older one. On master a run is never stopped: a newer
+# change waits for it, and of several waiting only the newest runs.
+concurrency:
+  group: boot-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  share:
+    name: boot ${{ matrix.share }} of 3
+    runs-on: windows-latest
+    # About twice what one share of the whole set is expected to take (about 30 minutes); what a pull request
+    # needs is the whole set at most.
+    timeout-minutes: 60
+    strategy:
+      # A share that fails does not stop the other two: their results are wanted too.
+      fail-fast: false
+      matrix:
+        share: [1, 2, 3]
+    env:
+      QEMU_INSTALLER: qemu-w64-setup-20260811.exe
+      QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
+      # Where the installer puts QEMU, and the firmware file it brings; test-tools/places.py reads both.
+      QEMU_DIR: C:\Program Files\qemu
+      BOOS_FIRMWARE: C:\Program Files\qemu\share\edk2-x86_64-code.fd
+    steps:
+      # The whole history: a test of the apps kept on the disk builds the kernel of an older commit from it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # GitHub keeps the installer between runs, so that it is not downloaded every time.
+      - name: Take the QEMU installer kept by an earlier run
+        id: kept
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}\qemu-installer
+          key: qemu-installer-${{ env.QEMU_INSTALLER }}
+
+      - name: Download the QEMU installer
+        if: steps.kept.outputs.cache-hit != 'true'
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\qemu-installer" | Out-Null
+          Invoke-WebRequest -Uri "https://qemu.weilnetz.de/w64/2026/$env:QEMU_INSTALLER" -OutFile "$env:RUNNER_TEMP\qemu-installer\$env:QEMU_INSTALLER"
+
+      # Every time, also when it was kept: an installer that differs by a single byte is refused and never run.
+      - name: See that the installer is the one meant
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA512 -LiteralPath "$env:RUNNER_TEMP\qemu-installer\$env:QEMU_INSTALLER").Hash.ToLower()
+          Write-Output $hash
+          if ($hash -cne $env:QEMU_SHA512) { exit 1 }
+
+      # The three computers may all try to keep it at once; one is enough, so a refused save is no failure.
+      - name: Keep the installer for later runs
+        if: steps.kept.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}\qemu-installer
+          key: qemu-installer-${{ env.QEMU_INSTALLER }}
+
+      # /S: the installer asks nothing. It puts QEMU in C:\Program Files\qemu.
+      - name: Install QEMU
+        run: |
+          $installer = Start-Process -FilePath "$env:RUNNER_TEMP\qemu-installer\$env:QEMU_INSTALLER" -ArgumentList "/S" -Wait -PassThru
+          Write-Output "The installer ended with $($installer.ExitCode)"
+          if ($installer.ExitCode -ne 0) { exit 1 }
+
+      - name: See that QEMU 11.1.0 and its firmware are there
+        run: |
+          $version = & "$env:QEMU_DIR\qemu-system-x86_64.exe" --version
+          Write-Output $version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not ($version -match "version 11\.1\.0")) { exit 1 }
+          if (-not (Test-Path -LiteralPath $env:BOOS_FIRMWARE)) { exit 1 }
+          Write-Output ("Firmware SHA-256: " + (Get-FileHash -Algorithm SHA256 -LiteralPath $env:BOOS_FIRMWARE).Hash)
+
+      # The same Rust as the build check (build.yml), with the two targets the project needs.
+      - name: Install Rust 1.100.0
+        run: rustup toolchain install 1.100.0 --profile minimal --target x86_64-unknown-uefi --target wasm32-unknown-unknown
+
+      - name: Use Rust 1.100.0
+        run: rustup default 1.100.0
+
+      - name: See that Rust 1.100.0 is the one in use
+        run: |
+          $version = rustc --version
+          Write-Output $version
+          if ($version -notlike "rustc 1.100.0 *") { exit 1 }
+
+      - name: Build the interpreter and the kernel
+        run: python test-tools/build_all.py
+
+      - name: How much disk is free before the tests
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Used } | ForEach-Object {
+            "{0}: {1:N1} GB free of {2:N1} GB" -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB)
+          }
+
+      # This computer's share of the jobs, with two test machines side by side. What the tests make (disk files,
+      # pictures, logs, copies of the project) goes to the runner's temporary folder. In a pull request's trial
+      # merge, HEAD^1 is master as the merge took it.
+      - name: Boot the kernel and run this share of the tests
+        env:
+          BOOS_TEST_WORK: ${{ runner.temp }}\boos-tests
+          SHARE: ${{ matrix.share }}/3
+        run: |
+          if ($env:GITHUB_EVENT_NAME -ne "pull_request") {
+            Write-Output "A change on master: the whole set."
+            python test-tools/run_tests.py all --workers 2 --share $env:SHARE
+          } else {
+            $changed = git diff --name-only HEAD^1 HEAD
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            if ($changed -contains ".github/workflows/boot-tests.yml") {
+              Write-Output "This pull request changes the boot tests themselves: the whole set."
+              python test-tools/run_tests.py all --workers 2 --share $env:SHARE
+            } else {
+              python test-tools/run_tests.py --base HEAD^1 --workers 2 --share $env:SHARE
+            }
+          }
+
+      # Also after a run that did not pass: what the tests and the builds left on the disk.
+      - name: How much disk the tests used
+        if: always()
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Where-Object { $null -ne $_.Used } | ForEach-Object {
+            "{0}: {1:N1} GB free of {2:N1} GB" -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB)
+          }
+          foreach ($folder in "$env:RUNNER_TEMP\boos-tests", "$env:GITHUB_WORKSPACE\target", "$env:GITHUB_WORKSPACE\interpreter\target") {
+            if (Test-Path -LiteralPath $folder) {
+              $bytes = (Get-ChildItem -LiteralPath $folder -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+              "{0}: {1:N2} GB" -f $folder, ($bytes / 1GB)
+            }
+          }
+
+      # When the tests failed or ran out of time: their logs, the kernel's lines and the pictures that were not as
+      # meant, to look at afterwards. Anyone signed in to GitHub can download them, for 90 days; every name and key
+      # in them is made up.
+      - name: Keep the logs of a run that did not pass
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: boot-tests-logs-${{ matrix.share }}
+          path: |
+            ${{ runner.temp }}\boos-tests\run-tests
+            ${{ runner.temp }}\boos-tests\w*\runs
+            !${{ runner.temp }}\boos-tests\**\*.img
+            !${{ runner.temp }}\boos-tests\**\*.ppm
+            !${{ runner.temp }}\boos-tests\**\*.efi
+          if-no-files-found: ignore
+
+  # The one check for the whole run: it waits for the three shares, also when one failed, and is green only when
+  # all three passed.
+  boot:
+    needs: share
+    if: always()
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: See that all three shares passed
+        env:
+          SHARES: ${{ needs.share.result }}
+        run: |
+          Write-Output "The three shares together: $env:SHARES"
+          if ($env:SHARES -ne "success") { exit 1 }
