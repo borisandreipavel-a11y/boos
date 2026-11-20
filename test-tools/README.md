@@ -46,6 +46,7 @@ Building and helpers:
 | `ports.py`, `places.py` | Ports and folders, as above |
 | `restore.py`, `crlf.py`, `export_check.py`, `make_lock_values.py` | Putting sources back after a break; Windows line ends; a clean export of a commit built from nothing; writing `src/lock_values.rs` |
 | `app_cases.py` | The stand-in's answers to a request for an app, and what the kernel is meant to say, list and show for each, worked out apart from the kernel's code |
+| `apps_kept_model.py` | Apps kept on the disk, worked out from the notes apart from the kernel's code: notebooks with things in pieces written and read from outside, the apps a start finds and the lines it prints, the panel of apps in the picture, and the chat box with `make` |
 
 Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 
@@ -70,3 +71,6 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `run_app_breaks.py`, `app_breaks.py` | The breaks on purpose for apps, each alone; a change to the interpreter is built into the copy too |
 | `check_lua.py <script> [boots]` | A Lua script of `lua/` in place of the greeting script, in a copy: what the interpreter really does |
 | `run_regress_apps.py` | Everything for apps, then the try of a key and `run_regress_try.py`'s list, one after another |
+| `test_apps_kept.py [scenario ...]` | Apps kept on the disk and the panel of apps, in the stand-in copy: a first run in a new folder and a restart, keeping after `make`, notebooks with things in pieces written from outside, looks, a small screen, a damaged, a full and a failing disk, QEMU killed while an app is kept, the kernel from before pieces on such a disk, and how long keeping and opening take |
+| `run_apps_kept_breaks.py`, `apps_kept_breaks.py` | The breaks on purpose for apps kept on the disk, each alone, in the copy |
+| `run_regress_kept.py` | Everything for apps kept on the disk, then the app tests, the try of a key, the locked key against the stand-in, the look's test and `run_regress_try.py`'s list, one after another: every suite of the two lists above, each once |
