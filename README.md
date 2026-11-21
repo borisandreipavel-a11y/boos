@@ -51,7 +51,7 @@ kernel                      shares the processor and the memory, talks to device
 
 **The network**
 
-- Finds its network card on the PCI list and drives it.
+- Finds its network card on the PCI list and drives it: a virtio card, or one of Intel's 82540EM and 82545EM cards.
 - Is given an address, looks up a name, and fetches a web page over an encrypted link (TLS). The site proves who it is with a certificate, and the kernel checks it against a list of trusted roots it carries.
 - Gets random numbers from the processor and the date from the clock chip, which encryption needs.
 
@@ -232,7 +232,7 @@ Said plainly, because a list of what works is only half the picture:
 - The model is told the same fixed text with every request for an app, and whether it keeps to it is not checked: an answer in words instead of a script is taken as the script.
 - Every line is a paid question that needs the internet and takes seconds. The model sees that line and a record of up to 10 lines before it, with what came of each, and nothing older; the record is gone when the machine is switched off. Only the first tool it asks for is done, and what the tool did reaches the model only with the next line, in the record.
 - It has run in QEMU and, from its boot disk, in VirtualBox, and nowhere else. What a real PC may do differently is collected in [docs/open-points.md](docs/open-points.md).
-- Its network card is a virtio card, a kind that exists only in virtual machines.
+- Its network card is a virtio card, a kind that exists only in virtual machines, or one of Intel's 82540EM and 82545EM, which QEMU and VMware play and some older PCs have. The Intel driver has run only in QEMU.
 - The mouse is switched off, and the look of the screen is one of four built into the kernel.
 
 Start with [docs/README.md](docs/README.md) if you want to read the code or change it.
