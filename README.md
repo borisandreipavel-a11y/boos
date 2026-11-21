@@ -156,7 +156,7 @@ The QEMU window shows what the kernel paints. Drawn here with signs; in the firs
 
 ## Run it
 
-**To try it without building anything,** download `boos-0.1.0.zip`, an early test version, from [the releases page](../../releases). It holds the same disk twice, `boot.vdi` for VirtualBox and `boot.img` for QEMU, with the licences and the notices; the release page says how to start it and gives the file's checksum. Anything the model does needs a key of your own from the provider, OrcaRouter, since every line you type goes to the model and is paid for with that key. A used disk keeps what boos stored on it, so pass on the download, not your disk.
+**To try it without building anything,** download `boos-0.1.0.zip`, an early test version, from [the releases page](../../releases). It holds the same disk twice, `boot.vdi` for VirtualBox and `boot.img` for QEMU, with the licences and the notices; the release page says how to start it and gives the file's checksum. Anything the model does needs a key of your own from the provider, OrcaRouter, since every line you type goes to the model and is paid for with that key. You can sign up through [the author's referral link](https://www.orcarouter.ai/ref/ref_3f5501c7dd1f98cb4f25), which earns the author a share of what you spend there, or directly at [orcarouter.ai](https://www.orcarouter.ai). A used disk keeps what boos stored on it, so pass on the download, not your disk.
 
 To build it yourself from the source: the run script is written for Windows. You need:
 
