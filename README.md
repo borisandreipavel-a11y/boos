@@ -51,13 +51,13 @@ kernel                      shares the processor and the memory, talks to device
 
 **The network**
 
-- Finds its network card on the PCI list and drives it.
+- Finds its network card on the PCI list and drives it: a virtio card, or one of Intel's 82540EM and 82545EM cards.
 - Is given an address, looks up a name, and fetches a web page over an encrypted link (TLS). The site proves who it is with a certificate, and the kernel checks it against a list of trusted roots it carries.
 - Gets random numbers from the processor and the date from the clock chip, which encryption needs.
 
 **The model**
 
-- Sends every line typed in the chat box to a model, together with a short fixed text and a list of four tools: make an app, run a kept app, pick a look, and turn the page of the panel of apps. The model answers in words, which appear in the chat box as a row that begins with `Model:`, or asks for a tool, which the kernel checks and does, saying in its own sentence how that went. The model is `deepseek/deepseek-v4.1-flash-1017`, reached through the provider OrcaRouter, a service on the internet that passes questions on to models. The fixed text and the tools are in [docs/tools.md](docs/tools.md).
+- Sends every line typed in the chat box to a model, together with a short fixed text, a record of what was said before it, and a list of tools: make an app, run a kept app, pick a look, turn the page of the panel of apps, and forget what was said. The model answers in words, which appear in the chat box as a row that begins with `Model:`, or asks for a tool, which the kernel checks and does, saying in its own sentence how that went. The record holds the last 10 lines that went to the model, each with what came of it, and lasts until the machine is switched off; asked to forget, the model uses the tool, and the next line starts afresh. The model is `deepseek/deepseek-v4.1-flash-1017`, reached through the provider OrcaRouter, a service on the internet that passes questions on to models. The fixed text, the record and the tools are in [docs/tools.md](docs/tools.md).
 - When the model asks for a new app, asks it for the app itself: the request the model wrote, cut at 45 signs, together with a fixed text that tells the model how an app for this kernel is written (the language, the two things an app can ask for, and their limits). The text is in [docs/apps.md](docs/apps.md).
 - Sends the key that the provider asks for, which you type yourself, to that one site only, over a link whose certificate was checked. If the provider repeats the key in its answer, stars are shown in its place.
 - The real provider has answered it: in runs with a real key, the model's answer appeared in the chat box, and an app the real model wrote ran and its text appeared on the screen. The tests use a stand-in for the provider and a made-up key.
@@ -156,7 +156,7 @@ The QEMU window shows what the kernel paints. Drawn here with signs; in the firs
 
 ## Run it
 
-**To try it without building anything,** download `boos-0.1.0.zip`, an early test version, from [the releases page](../../releases). It holds the same disk twice, `boot.vdi` for VirtualBox and `boot.img` for QEMU, with the licences and the notices; the release page says how to start it and gives the file's checksum. Anything the model does needs a key of your own from the provider, OrcaRouter, since every line you type goes to the model and is paid for with that key. A used disk keeps what boos stored on it, so pass on the download, not your disk.
+**To try it without building anything,** download `boos-0.1.0.zip`, an early test version, from [the releases page](../../releases). It holds the same disk twice, `boot.vdi` for VirtualBox and `boot.img` for QEMU, with the licences and the notices; the release page says how to start it and gives the file's checksum. Anything the model does needs a key of your own from the provider, OrcaRouter, since every line you type goes to the model and is paid for with that key. You can sign up through [the author's referral link](https://www.orcarouter.ai/ref/ref_3f5501c7dd1f98cb4f25), which earns the author a share of what you spend there, or directly at [orcarouter.ai](https://www.orcarouter.ai). A used disk keeps what boos stored on it, so pass on the download, not your disk.
 
 To build it yourself from the source: the run script is written for Windows. You need:
 
@@ -186,7 +186,7 @@ To start from one disk file instead, the way a PC starts, run `.\run-boot-disk.b
 Three things to know before the first run:
 
 - **The first build needs the internet** to fetch the outside crates. After that, building works without it.
-- **Every start reaches the internet, and so does every line you send.** At every start the kernel looks up one name and fetches the page of example.com over an encrypted link. Every line you send, except the few words the kernel keeps for itself, goes with the secret you typed as the key to the provider's site, `api.orcarouter.ai`, and to nobody else, together with the model's name, a fixed text and the list of tools, which names the apps kept on the disk by the words they were made for; the provider passes it on to the model. A new app adds a second request to the same site, with the fixed text about apps and the request the model wrote. Each request is paid for.
+- **Every start reaches the internet, and so does every line you send.** At every start the kernel looks up one name and fetches the page of example.com over an encrypted link. Every line you send, except the few words the kernel keeps for itself, goes with the secret you typed as the key to the provider's site, `api.orcarouter.ai`, and to nobody else, together with the model's name, a fixed text, a record of the last lines said before it and the list of tools, which names the apps kept on the disk by the words they were made for; the provider passes it on to the model. A new app adds a second request to the same site, with the fixed text about apps and the request the model wrote. Each request is paid for.
 - **The first run makes a file, `disk.img`**, 16 MB, in the project's root. It is the machine's disk. The kernel writes to it at every start and at every line you send, and to nothing else: inside QEMU it can reach only the files QEMU is given. A PowerShell script divides the new file into parts; on a computer whose settings refuse to run script files, `run.bat` stops there and says that the disk file could not be divided.
 
 [docs/testing.md](docs/testing.md) says how to build by hand and how to boot without a window.
@@ -230,9 +230,9 @@ Said plainly, because a list of what works is only half the picture:
 - Whether the model runs a kept app or has a new one written is its own choice, and nothing checks it.
 - An app can show one line of 40 signs and print to the terminal, and nothing else. It cannot wait or read a key. A request for one has at most 45 signs.
 - The model is told the same fixed text with every request for an app, and whether it keeps to it is not checked: an answer in words instead of a script is taken as the script.
-- Every line is a paid question that needs the internet and takes seconds. The model sees only that line, not what was said before; only the first tool it asks for is done, and what the tool did is not told to it.
+- Every line is a paid question that needs the internet and takes seconds. The model sees that line and a record of up to 10 lines before it, with what came of each, and nothing older; the record is gone when the machine is switched off. Only the first tool it asks for is done, and what the tool did reaches the model only with the next line, in the record.
 - It has run in QEMU and, from its boot disk, in VirtualBox, and nowhere else. What a real PC may do differently is collected in [docs/open-points.md](docs/open-points.md).
-- Its network card is a virtio card, a kind that exists only in virtual machines.
+- Its network card is a virtio card, a kind that exists only in virtual machines, or one of Intel's 82540EM and 82545EM, which QEMU and VMware play and some older PCs have. The Intel driver has run only in QEMU.
 - The mouse is switched off, and the look of the screen is one of four built into the kernel.
 
 Start with [docs/README.md](docs/README.md) if you want to read the code or change it.
