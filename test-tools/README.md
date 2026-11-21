@@ -59,7 +59,9 @@ caught (the misses that `docs/testing.md` names excepted).
   `docs/testing.md` gives, goes into `suites.KNOWN_MISSES` with that reason: it is still made and run, and counted
   as missed, as meant. A list of new breaks of the same kind (file, old text,
   new text, the test that must catch it) can run in the break copy as the key's and the look's do
-  (`copy_break.py`): the project's own source is never changed.
+  (`copy_break.py`): the project's own source is never changed. `run_tests.py` and `run_look_breaks.py` hand the
+  test the break itself too (`KERNEL_BREAK`, beside the kernel in `KERNEL_FILE`), so that a copy of the kernel it
+  builds of its own, as the look's stand-in does (`look_standin.py`), carries the same break.
 
 ## Where things go
 
@@ -97,7 +99,7 @@ Building and helpers:
 | `disk_helpers.py`, `gpt.py`, `nb.py` | Test disk files, dividing them into parts, reading and writing the notebook from outside |
 | `lockref.py`, `keyref.py` | The lock worked out by other code (Python's own PBKDF2 and a ChaCha20-Poly1305 written from RFC 8439), to judge the kernel's |
 | `net_copy.py`, `certs.py`, `model_server.py` | A copy of the project whose kernel talks to the stand-in for the provider on this computer, with test certificates; the stand-in itself, which answers the try of a key, a line (with words, a tool call, or any of its kinds of answer) and a request for an app |
-| `look_standin.py` | Picking a look through the model for the look's tests: the stand-in, its copy of the kernel, and the line `key` with a made-up key |
+| `look_standin.py` | Picking a look through the model for the look's tests: the stand-in, its copy of the kernel (with the break on purpose that the test's kernel has, if any), and the line `key` with a made-up key |
 | `interp_helpers.py`, `raw_print.py` | Boot and output helpers |
 | `ports.py`, `places.py` | Ports and folders, as above |
 | `restore.py`, `crlf.py`, `export_check.py`, `make_lock_values.py` | Putting sources back after a break; Windows line ends; a clean export of a commit built from nothing; writing `src/lock_values.rs` |

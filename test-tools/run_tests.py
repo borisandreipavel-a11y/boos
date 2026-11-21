@@ -28,7 +28,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 # Nothing from outside may change what the jobs test: a KERNEL_FILE left set would have every suite boot another kernel.
-STRIPPED = ("KERNEL_FILE", "BREAK", "DIVIDED_DISK", "BOOS_PROJECT", "RAW", "KEY_PAUSE", "BREAKS_MODULE", "CHAT_LOOK", "BOOS_COPIES")
+STRIPPED = ("KERNEL_FILE", "KERNEL_BREAK", "BREAK", "DIVIDED_DISK", "BOOS_PROJECT", "RAW", "KEY_PAUSE", "BREAKS_MODULE", "CHAT_LOOK", "BOOS_COPIES")
 CLEARED = [_name for _name in STRIPPED if _name in os.environ]  # said at the start of main(), so that it is not missed
 for _name in STRIPPED:
     os.environ.pop(_name, None)
@@ -459,6 +459,8 @@ class Worker:
                 file, old, new = job.prepare
                 try:
                     env["KERNEL_FILE"] = make(file, old, new, os.path.join(self.work, "runs", "break-kernel.efi"))
+                    # The break itself too, for a copy of the kernel that the test builds of its own (look_standin.py).
+                    env["KERNEL_BREAK"] = json.dumps([file, old, new])
                 except CopyNotMade as reason:
                     log.write("NOT MADE: %s\n" % reason)
                     return "not made", None, time.time() - started, str(reason), False

@@ -3,6 +3,7 @@ test_look.py catches each one, booting the copy's kernel: the looks and the line
 at the end of the onboarding. The project itself is only read, so other tests can run beside these.
 Usage: python run_look_breaks.py [break ...]   (default: all)
 BREAKS is data: run_tests.py runs the same breaks."""
+import json
 import os
 import subprocess
 import sys
@@ -75,7 +76,7 @@ def main():
             print("   THE BREAK WAS NOT MADE |", str(reason)[-400:], flush=True)
             continue
         run = subprocess.run([sys.executable, "test_look.py"] + scenarios, cwd=HERE, capture_output=True, text=True,
-                             env=dict(os.environ, KERNEL_FILE=kernel))
+                             env=dict(os.environ, KERNEL_FILE=kernel, KERNEL_BREAK=json.dumps([file, old, new])))
         last = [l for l in run.stdout.splitlines() if l.startswith("FAILURES:")]
         caught = bool(last) and last[-1] != "FAILURES: none"
         wrong = [l.strip() for l in run.stdout.splitlines() if ("dots wrong" in l or ("terminal and disk" in l and "as meant" not in l) or "VAIN" in l)]
