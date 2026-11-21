@@ -1,8 +1,9 @@
 //! Asking the model: one question goes to the provider, a service on the
 //! internet that passes it on to a model, and the answer comes back as text.
 //! The question is a line typed in the chat box, sent with the list of what
-//! the kernel can do (see `tools.rs`), whose answer is the model's words or
-//! a tool it asks for; a request for an app, whose answer is a script (see
+//! the kernel can do (see `tools.rs`) and the record of what was said before
+//! it (see `conversation.rs`), whose answer is the model's words or a tool it
+//! asks for; a request for an app, whose answer is a script (see
 //! `apps.rs`); or the one fixed question, with which a key typed at the
 //! onboarding is tried. The provider wants a key with every question, which
 //! is the secret that the person at the machine typed. This is the one file
@@ -20,7 +21,7 @@ use smoltcp::wire::Ipv4Address;
 
 use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_number, json_find_text, json_text};
-use crate::tools::CHAT_INSTRUCTIONS;
+use crate::tools::{CHAT_INSTRUCTIONS, RECORD_LEAD};
 use crate::network::Card;
 use crate::page::{plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
@@ -141,13 +142,16 @@ pub fn model_tell(
 
 // Sends a line typed in the chat box to the model, with the list of what the
 // kernel can do for it (`tools`, the JSON that `chat_tools` in `tools.rs`
-// made when the line was sent). Gives back what the kernel has to say about
-// the answer in one sentence: nothing when the model answered as it should,
-// otherwise why the provider turned the line down, why no answer came, or
-// what was wrong with it. Beside it, what the model answered, and the
-// terminal's line about how many tokens that took. The key is the one that is
-// kept, borrowed as for the fixed question. Called by the network's task when
-// it runs an errand.
+// made when the line was sent) and the record of what was said before it
+// (`record`, from `conversation.rs`, empty when nothing was). Gives back what
+// the kernel has to say about the answer in one sentence: nothing when the
+// model answered as it should, otherwise why the provider turned the line
+// down, why no answer came, or what was wrong with it. Beside it, what the
+// model answered, the terminal's line about how many tokens that took, and
+// the line as it was sent, with the key starred, which the conversation
+// remembers; nothing when no request was put together. The key is the one
+// that is kept, borrowed as for the fixed question. Called by the network's
+// task when it runs an errand.
 pub fn model_chat(
     interface: &mut Interface,
     card: &mut Card,
@@ -155,13 +159,14 @@ pub fn model_chat(
     name_server: Option<Ipv4Address>,
     line: &str,
     tools: &str,
-) -> (String, Option<ChatReply>, Option<String>) {
+    record: &str,
+) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
     let key_length = key_copy(false, &mut key_room);
     let told = if key_length == 0 {
-        (String::from("no answer came, because no key is kept"), None, None)
+        (String::from("no answer came, because no key is kept"), None, None, None)
     } else {
-        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools)
+        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools, record)
     };
     wipe(&mut key_room);
     told
@@ -236,9 +241,13 @@ fn question_ask(
 
 // A line typed in the chat box, with the key in hand. The request holds two
 // messages: first the instruction text, as the "system" message, which tells
-// a model how to behave before it reads what it is asked; then the line, as
-// the "user" message, exactly as it was typed. Behind them comes the list of
-// tools: what the kernel can do when the model asks for it.
+// a model how to behave before it reads what it is asked, with the record of
+// what was said before the line behind it; then the line, as the "user"
+// message, as it was typed. Behind them comes the list of tools: what the
+// kernel can do when the model asks for it. The key goes to the provider in
+// the notes only: a key typed into a line by mistake, or remembered in the
+// record, is starred in both before they go, as in the provider's answer
+// (see `key_hide`).
 fn chat_question_ask(
     interface: &mut Interface,
     card: &mut Card,
@@ -247,22 +256,39 @@ fn chat_question_ask(
     key: &[u8],
     line: &str,
     tools: &str,
-) -> (String, Option<ChatReply>, Option<String>) {
+    record: &str,
+) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
+    let sent = key_starred(line, key);
+    let mut told = String::from(CHAT_INSTRUCTIONS);
+    if !record.is_empty() {
+        told.push_str(RECORD_LEAD);
+        told.push_str(&key_starred(record, key));
+    }
     let body = format!(
         "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"tools\":{},\"max_tokens\":{},\"stream\":false}}",
         json_text(MODEL_NAME),
-        json_text(CHAT_INSTRUCTIONS),
-        json_text(line),
+        json_text(&told),
+        json_text(&sent),
         tools,
         ANSWER_TOKENS
     );
     match provider_exchange(interface, card, sockets, name_server, key, &body) {
-        Err(sentence) => (sentence, None, None),
+        Err(sentence) => (sentence, None, None, Some(sent)),
         Ok((answer, whole)) => {
             let (sentence, reply) = chat_reply(&answer, whole, key);
-            (sentence, reply, answer_tokens(&answer))
+            (sentence, reply, answer_tokens(&answer), Some(sent))
         }
     }
+}
+
+// A text of the kernel's that goes to the provider, with a star over every
+// piece of the key in it (see `key_hide`). A line typed in the chat box and
+// the remembered rows hold plain signs only, one byte each, and a key's signs
+// are plain too, so the stars leave proper text.
+fn key_starred(text: &str, key: &[u8]) -> String {
+    let mut signs = text.as_bytes().to_vec();
+    key_hide(&mut signs, key);
+    String::from_utf8_lossy(&signs).into_owned()
 }
 
 // The request for an app, with the key in hand. It holds two messages: first
