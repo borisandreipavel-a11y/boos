@@ -16,6 +16,8 @@ Made-up key only.
   odd       what the model may send that must not be believed: words beside a tool, two tools, a tool the kernel does
             not have, an odd name, inputs that cannot be read, numbers as text, numbers that fit nothing, and
             requests for an app that are long, odd, empty or hold the key.
+  results   a failed app corrected, repeated inputs, a failed follow-up and the final round without tools.
+  cancel    a stopped kept app, its key-starred output, and setup during the follow-up.
   busy      a line sent while the answer to the one before is awaited.
   nocard    a machine without a network card.
   nodisk    a disk that is not divided: no notebook, so a look picked by the model lasts until the machine is off.
@@ -49,6 +51,7 @@ from test_apps_kept import (KEY, SCRIPT, Run, answer_row, answered_disk, failure
 
 SHOWN = ("You:", "Kernel:", "Model:", "Tokens:", "Apps:")
 # The check of JSON at startup, with its six checks of whole numbers (docs/json.md).
+FOLLOW = [model_row("Done."), chat_cases.TOKENS_LINE]
 JSON_LINE = "JSON: 19 of 19 checks of making and reading it are right"
 APP_BODY = {"model": "deepseek/deepseek-v4.1-flash-1017",
             "messages": [{"role": "system", "content": app_cases.INSTRUCTIONS}, {"role": "user", "content": None}],
@@ -82,7 +85,7 @@ def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
     run.press(line + "\n", chat)
     pressed = time.time()
     meant = chat.said[-2:] + after
-    wanted = last or (after[-1] if after else meant[-1])
+    wanted = last or (after[-2] if after[-2:] == FOLLOW else meant[-1])
     end = time.time() + timeout
     while time.time() < end and wanted not in run.since():
         time.sleep(0.02)
@@ -92,9 +95,18 @@ def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
     got = shown_since(run, shown)
     report(run.tag + " %r" % line[:24], got == meant, None if got == meant else "got %r, meant %r" % (got[-8:], meant[-8:]))
     for row in after:
+        if row == FOLLOW[0] and run_row("app") in after and any(r.startswith("Kernel: I am asking the model to make") for r in after):
+            app_lines = [l for l in run.since() if l.startswith("App: ")]
+            for detail in dice_output(app_lines):
+                chat.memory.row(detail)
         if row.startswith(("Kernel:", "Model:")):
             chat.row(row)
     return got
+
+
+def dice_output(lines):
+    shown = app_cases.run_expect("app", KEY)[2](lines)
+    return ["App showed: " + shown[0]] if shown else []
 
 
 def check_body(tag, note_, meant):
@@ -107,7 +119,7 @@ def check_body(tag, note_, meant):
 def app_after(request, kind="app", kept=True):
     """What the terminal shows after the model asked for make_app with `request`, up to the line about keeping."""
     rows = [chat_cases.TOKENS_LINE, making(request), answer_row(kind), "Tokens: 12 in; 1000 out", run_row(kind)]
-    return rows + ([kept_line(request)] if kept else [])
+    return rows + ([kept_line(request)] if kept else []) + FOLLOW
 
 
 def no_key_in(tag, lines):
@@ -178,10 +190,16 @@ def scenario_dice():
     run.shot("made", screen(1280, 800, chat, ["a dice that rolls"], panel_text=shown[0] if shown else ""))
     run.end()
     seen = posts(run)
-    report("dice two requests", len(seen) == 2, "%d requests" % len(seen))
-    if len(seen) == 2:
+    report("dice three requests", len(seen) == 3, "%d requests" % len(seen))
+    if len(seen) == 3:
         check_body("dice the request for the line", seen[0], body_meant(line, []))
         check_body("dice the request for the app", seen[1], app_body("a dice that rolls"))
+        body = seen[2]["body"]
+        result = body["messages"][0]["content"]
+        report("dice sends the actual roll", bool(shown) and "App showed: " + shown[0] in result)
+        report("dice follows the same line with the new app available",
+               body["messages"][1] == {"role": "user", "content": line} and
+               "run_app" in [tool["function"]["name"] for tool in body["tools"]])
     after = read_things(disk)
     things = after["things"]
     report("dice script byte for byte", things.get("app 1 script", (0, b""))[1] == kept_script("app", KEY))
@@ -221,11 +239,11 @@ def scenario_pages():
     exchange(run, chat, "show me the next page", [chat_cases.TOKENS_LINE, page_row(2, 2)])
     run.shot("page-2", screen(1280, 800, chat, [r for _, r in apps], page=1))
     exchange(run, chat, "run the third one", [chat_cases.TOKENS_LINE, running("app number 3 of seven"), run_row("app")])
-    exchange(run, chat, "page five", [chat_cases.TOKENS_LINE, no_page_row(5, 2)])
+    exchange(run, chat, "page five", [chat_cases.TOKENS_LINE, no_page_row(5, 2)] + FOLLOW)
     run.end()
     seen = posts(run)
-    report("pages requests", len(seen) == 3, "%d requests" % len(seen))
-    if len(seen) == 3:
+    report("pages requests", len(seen) == 4, "%d requests" % len(seen))
+    if len(seen) == 4:
         check_body("pages the first request", seen[0], body_meant("show me the next page", apps, shown=1))
         # The second line goes with the first and what came of it (docs/tools.md, "What the model remembers").
         check_body("pages the second request", seen[1], body_meant("run the third one", apps, shown=2, record=chat.records[1]))
@@ -241,33 +259,98 @@ def scenario_odd():
     give_key(run, chat)
     t = chat_cases.TOKENS_LINE
     exchange(run, chat, "roll it", [model_row("Rolling it for you."), t, running("a dice that rolls"), run_row("app")])
-    exchange(run, chat, "two looks", [t, MORE, "Kernel: this is look 3, Paper. It is kept on the disk."])
+    exchange(run, chat, "two looks", [t, MORE, "Kernel: this is look 3, Paper. It is kept on the disk."] + FOLLOW)
     chat.look, chat.look_kept = "Paper", "Paper"
-    exchange(run, chat, "format it", [t, cannot_do("format_disk")])
-    exchange(run, chat, "odd name", [t, cannot_do("\u0007" + chat_cases.LONG_NAME)])
-    exchange(run, chat, "which", [t, CANNOT_READ["run_app"]])
-    exchange(run, chat, "no inputs", [t, CANNOT_READ["pick_look"]])
-    exchange(run, chat, "too much", [t, CANNOT_READ["make_app"]])
+    exchange(run, chat, "format it", [t, cannot_do("format_disk")] + FOLLOW)
+    exchange(run, chat, "odd name", [t, cannot_do("\u0007" + chat_cases.LONG_NAME)] + FOLLOW)
+    exchange(run, chat, "which", [t, CANNOT_READ["run_app"]] + FOLLOW)
+    exchange(run, chat, "no inputs", [t, CANNOT_READ["pick_look"]] + FOLLOW)
+    exchange(run, chat, "too much", [t, CANNOT_READ["make_app"]] + FOLLOW)
     exchange(run, chat, "as text", [t, running("a dice that rolls"), run_row("app")])
-    exchange(run, chat, "app seven", [t, no_such_app(7)])
-    exchange(run, chat, "look nine", [t, "Kernel: the model asked for look 9, but there are only 4 looks."])
-    exchange(run, chat, "page three", [t, no_page_row(3, 1)])
+    exchange(run, chat, "app seven", [t, no_such_app(7)] + FOLLOW)
+    exchange(run, chat, "look nine", [t, "Kernel: the model asked for look 9, but there are only 4 looks."] + FOLLOW)
+    exchange(run, chat, "page three", [t, no_page_row(3, 1)] + FOLLOW)
     keyed = request_cleaned(app_cases.hide("an app about " + KEY, KEY))
     exchange(run, chat, "an app with my key", app_after(keyed), timeout=150)
     long_request = request_cleaned(chat_cases.LONG_REQUEST)
     exchange(run, chat, "a long request", app_after(long_request), timeout=150)
     odd_request = request_cleaned(chat_cases.ODD_REQUEST)
     exchange(run, chat, "an odd request", app_after(odd_request), timeout=150)
-    exchange(run, chat, "an empty request", [t, NO_REQUEST])
+    exchange(run, chat, "an empty request", [t, NO_REQUEST] + FOLLOW)
     lines = run.end()
     seen = posts(run)
-    report("odd requests", len(seen) == len(behaviours), "%d requests" % len(seen))
+    report("odd requests", len(seen) == len(behaviours) + 13, "%d requests" % len(seen))
     apps_asked = [n["body"]["messages"][1]["content"] for n in seen if n.get("request for") == "an app"]
     meant = [app_cases.LEAD + r for r in (keyed, long_request, odd_request)]
     report("odd the requests for apps as sent", apps_asked == meant, None if apps_asked == meant else "%r" % apps_asked)
     no_key_in("odd", lines)
     things = read_things(disk)["things"]
     report("odd no piece of the key on the disk", not any(key_pieces(data.decode("latin-1"), KEY) for _, data in things.values()))
+
+
+def scenario_results():
+    print("results: fix a failed app, refuse a repeated action, and stop at the last answer")
+    disk, _ = answered_disk("tools-results")
+    behaviours = ["make=first try", "runmistake", "follow:make=fixed app", "runshow", "follow:words=It works.",
+                  "run=99", "follow:runtext=99", "follow:look=3", "unknown", "follow:wrongkey", "look=2"]
+    run = Run("tools-results", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    for line, ending in [("make a greeting", "Model: It works."),
+                         ("try twice", "Kernel: the model asked for another tool on its last answer"),
+                         ("missing tool", "Kernel: the provider turned the question down"),
+                         ("change look", "Kernel: this is look 2")]:
+        run.mark()
+        run.press(line + "\n")
+        report("results " + line, run.wait_line(ending, timeout=60) is not None)
+    lines = run.end()
+    seen = posts(run)
+    kinds = [n.get("request for") for n in seen]
+    report("results requests in order", kinds == ["a line", "an app", "a follow-up", "an app", "a follow-up",
+           "a line", "a follow-up", "a follow-up", "a line", "a follow-up", "a line"], str(kinds))
+    if len(seen) == 11:
+        bodies = [n["body"] for n in seen]
+        told = [b["messages"][0]["content"] for b in bodies]
+        report("results actual Lua error and corrected output",
+               'App error: Lua stopped: [string "app"]:3:' in told[2] and "App showed: Hello from the app" in told[4])
+        report("results three asks repeat the typed line",
+               all(bodies[n]["messages"][1]["content"] == "make a greeting" for n in (0, 2, 4)))
+        report("results last ask has no tools", "tools" in bodies[2] and "tools" not in bodies[4] and "tools" not in bodies[7])
+        report("results single memory entry", told[5].count("Person: make a greeting") == 1 and "Model: It works." in told[5])
+        report("results same effective inputs refused", "same tool with the same inputs" in told[7] and
+               lines.count("Kernel: the model asked for app 99, but no kept app has that number.") == 1)
+        report("results failed follow-up remembered", "provider turned the question down" in told[10])
+    report("results terminal names each follow-up round", lines.count("Model round: 2 of 3.") == 3 and lines.count("Model round: 3 of 3.") == 2)
+    report("results only corrected app kept", kept_script("runshow", KEY) == read_things(disk)["things"].get("app 1 script", (0, b""))[1])
+    report("results final tool did not run", not any(l.startswith("Kernel: this is look 3") for l in lines))
+
+
+def scenario_cancel():
+    print("cancel: a stopped kept app reports its own output, and setup ends its pending follow-up")
+    piece = KEY[8:16]
+    numbers = ",".join(str(ord(c)) for c in piece)
+    script = ('local s = string.char(%s)\nshow(s)\nerror("bad value " .. s)' % numbers).encode()
+    disk, _ = answered_disk("tools-cancel", app_things(1, "a stopped app", script))
+    run = Run("tools-cancel", disk, behaviours=["run=1", "follow:slowwords=Old answer."])
+    give_key(run)
+    run.mark()
+    run.press("try it\n")
+    report("cancel started the follow-up", run.wait_line("Model round: 2 of 3.") is not None)
+    run.press("busy\n")
+    report("cancel turned away the other line", BUSY in run.since())
+    run.press("setup\n")
+    deadline = time.time() + 30
+    while time.time() < deadline and len(posts(run)) < 2:
+        time.sleep(0.1)
+    time.sleep(1)
+    lines = run.end()
+    seen = posts(run)
+    report("cancel only the pending follow-up reached the server", [n.get("request for") for n in seen] == ["a line", "a follow-up"])
+    if len(seen) == 2:
+        told = seen[1]["body"]["messages"][0]["content"]
+        report("cancel reported the failed kept app without the key", "App showed: ********" in told and
+               "App error: Lua stopped:" in told and not key_pieces(told, KEY))
+    report("cancel dropped the late answer", "Model: Old answer." not in lines)
 
 
 def scenario_busy():
@@ -335,6 +418,18 @@ def record_of(note_):
     return record.split("\n", 1)[1] if lead else ""
 
 
+def bounded_follow_up(note):
+    system, user = note["body"]["messages"]
+    earlier, mark, newest = system["content"].partition("\n\nWhat your tools did for the newest line follows.")
+    if not mark or "\n" not in newest:
+        return False
+    _, record_lead, history = earlier.partition("\n\nWhat was said before the newest line, oldest first. ")
+    rows = history.splitlines()[1:] if record_lead else []
+    rows.append("Person: " + user["content"])
+    rows.extend(newest.splitlines()[1:])
+    return sum(len(row.encode()) + 1 for row in rows) <= BYTES_REMEMBERED
+
+
 def scenario_remember():
     print("remember: a second line that only makes sense with the first goes together with the first")
     disk, _ = answered_disk("tools-remember")
@@ -346,16 +441,17 @@ def scenario_remember():
     exchange(run, chat, second, [model_row("Two dice it is."), chat_cases.TOKENS_LINE])
     lines = run.end()
     seen = posts(run)
-    report("remember three requests", len(seen) == 3, "%d requests" % len(seen))
+    report("remember four requests", len(seen) == 4, "%d requests" % len(seen))
     # What the second line is meant to go with, written out from the notes: the first line as the person's, and the
     # kernel's three rows about it; not the row said at once, not the terminal's lines, not the script.
-    meant = "\n".join(["Person: " + first, making("a dice that rolls"), answer_row("app"), run_row("app")])
+    output = dice_output([l for l in lines if l.startswith("App: You rolled a ")])
+    meant = "\n".join(["Person: " + first, making("a dice that rolls"), answer_row("app"), run_row("app")] + output + [FOLLOW[0]])
     report("remember the chat model keeps the same record", chat.records == ["", meant], "%r" % chat.records)
-    if len(seen) == 3:
+    if len(seen) == 4:
         check_body("remember the first request", seen[0], body_meant(first, []))
-        check_body("remember the second request goes with the first", seen[2],
+        check_body("remember the second request goes with the first", seen[3],
                    body_meant(second, [(1, "a dice that rolls")], record=meant))
-        got = record_of(seen[2])
+        got = record_of(seen[3])
         report("remember exactly the remembered rows", got == meant, None if got == meant else "got %r" % got)
     no_key_in("remember", lines)
 
@@ -475,7 +571,7 @@ def scenario_bound():
         took.append((run.answered_after, len(chat.records[-1])))
     refusal = refused_row(words_cut(chat_cases.LONG_REASON, KEY, 300))
     for line in longs:
-        exchange(run, chat, line, [model_row(chat_cases.LONG_WORDS, KEY), CUT_OFF, t, MORE, making(chat_cases.REQUEST_45), refusal],
+        exchange(run, chat, line, [model_row(chat_cases.LONG_WORDS, KEY), CUT_OFF, t, MORE, making(chat_cases.REQUEST_45), refusal] + FOLLOW,
                  timeout=120)
     exchange(run, chat, "the last one", [model_row("Done."), t], last=model_row("Done."))
     took.append((run.answered_after, len(chat.records[-1])))
@@ -494,10 +590,12 @@ def scenario_bound():
         people = [row for row in last.split("\n") if row.startswith("Person: ")]
         report("bound the last line goes with at most %d bytes" % BYTES_REMEMBERED, size <= BYTES_REMEMBERED, "%d bytes" % size)
         report("bound the oldest long lines went first", people == ["Person: " + line for line in longs[1:]], "got %r" % people)
+    follows = [n for n in posts(run) if n.get("request for") == "a follow-up"]
+    report("bound includes the pending results", len(follows) == len(longs) and all(bounded_follow_up(n) for n in follows))
     no_key_in("bound", lines)
 
 
-SCENARIOS = {"nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
+SCENARIOS = {"cancel": scenario_cancel, "results": scenario_results, "nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
              "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
              "forgetting": scenario_forgetting, "bound": scenario_bound}
 

@@ -14,7 +14,7 @@ use alloc::string::String;
 
 use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
-use crate::chat::chat_say;
+use crate::chat::{chat_app_result, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
@@ -140,50 +140,90 @@ pub fn chat_tools() -> String {
     tools
 }
 
-// Does what the model asked for with a tool, and says in the chat box how
-// that went. Only the names of the tools above count. What the model gave the
-// tool is read with the JSON reader, which takes nothing on trust; a number
-// may come written as a text of digits.
-pub fn tool_do(call: &ToolCall) {
-    match call.name.as_str() {
-        "make_app" => match input_text(&call.inputs, "request") {
-            Some(request) => chat_say(&app_make(&request_cleaned(&request))),
-            None => chat_say("the model asked for an app, but I could not read what the app should do."),
-        },
-        "run_app" => match input_number(&call.inputs, "app") {
-            Some(number) => match app_kept(number) {
-                Ok((request, script)) => {
-                    chat_say(&format!("I am running the app made for \"{}\".", request));
-                    let (sentence, _) = app_run(&script);
-                    chat_say(&sentence);
-                }
-                Err(sentence) => chat_say(&sentence),
-            },
-            None => chat_say("the model asked to run a kept app, but I could not read which one."),
-        },
-        "pick_look" => match input_number(&call.inputs, "look") {
-            Some(number) => {
-                let (said, changed) = look_pick(number);
-                chat_say(&said);
-                if changed {
-                    look_paint();
-                }
+// Compare the action the kernel would actually take. Whitespace in JSON,
+// numbers sent as text and a request clipped to its limit change no action.
+#[derive(PartialEq)]
+pub enum Tool {
+    Make(String),
+    Run(u64),
+    Look(u64),
+    Page(u64),
+    Forget,
+    Refused(String),
+}
+
+pub fn tool_read(call: &ToolCall) -> Tool {
+    let missing = match call.name.as_str() {
+        "make_app" => {
+            if let Some(request) = input_text(&call.inputs, "request") {
+                return Tool::Make(request_cleaned(&request));
             }
-            None => chat_say("the model asked for another look, but I could not read which one."),
+            "the model asked for an app, but I could not read what the app should do."
+        }
+        "run_app" => {
+            if let Some(number) = input_number(&call.inputs, "app") { return Tool::Run(number); }
+            "the model asked to run a kept app, but I could not read which one."
+        }
+        "pick_look" => {
+            if let Some(number) = input_number(&call.inputs, "look") { return Tool::Look(number); }
+            "the model asked for another look, but I could not read which one."
+        }
+        "turn_page" => {
+            if let Some(number) = input_number(&call.inputs, "page") { return Tool::Page(number); }
+            "the model asked for another page of the panel of apps, but I could not read which one."
+        }
+        "forget" => return Tool::Forget,
+        other => return Tool::Refused(format!("the model asked for something I cannot do: \"{}\".", other)),
+    };
+    Tool::Refused(String::from(missing))
+}
+
+pub enum ToolResult { Done, Report, AwaitApp }
+
+// A new app finishes later, when the script comes back. Other tools can
+// say at once whether the model needs to hear what happened.
+pub fn tool_do(tool: &Tool, more: bool) -> ToolResult {
+    let refusal = match tool {
+        Tool::Make(request) => match app_make(request) {
+            Ok(said) => {
+                chat_say(&said);
+                return ToolResult::AwaitApp;
+            }
+            Err(reason) => reason,
         },
-        "turn_page" => match input_number(&call.inputs, "page") {
-            Some(page) => chat_say(&apps_page_turn(page)),
-            None => chat_say("the model asked for another page of the panel of apps, but I could not read which one."),
+        Tool::Run(number) => match app_kept(*number) {
+            Ok((request, script)) => {
+                chat_say(&format!("I am running the app made for \"{}\".", request));
+                let run = app_run(&script);
+                chat_app_result(&run, more || !run.ran);
+                return if run.ran { ToolResult::Done } else { ToolResult::Report };
+            }
+            Err(reason) => reason,
         },
-        // Everything said is forgotten first, the line that asked for it
-        // too, so the row that says so is not remembered either.
-        "forget" => {
+        Tool::Look(number) => match look_pick(*number) {
+            Ok((said, changed)) => {
+                chat_say(&said);
+                if changed { look_paint(); }
+                return ToolResult::Done;
+            }
+            Err(reason) => reason,
+        },
+        Tool::Page(page) => match apps_page_turn(*page) {
+            Ok(said) => {
+                chat_say(&said);
+                return ToolResult::Done;
+            }
+            Err(reason) => reason,
+        },
+        Tool::Forget => {
             conversation_forget();
             chat_say("I forgot what was said so far. The next line starts afresh.");
+            return ToolResult::Done;
         }
-        // The name was cleaned and cut by `model.rs`.
-        other => chat_say(&format!("the model asked for something I cannot do: \"{}\".", other)),
-    }
+        Tool::Refused(reason) => reason.clone(),
+    };
+    chat_say(&refusal);
+    ToolResult::Report
 }
 
 // The text that the model gave a tool under this name, if it gave one.

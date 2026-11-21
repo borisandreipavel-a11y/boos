@@ -5,6 +5,8 @@ name."""
 from apps_kept_breaks import swap
 
 BREAKS = {
+    # The final chat round still invites the model to call a tool.
+    "lasttools": {"chat.rs": swap("if round.number < LAST_ROUND { chat_tools() }", "if round.number <= LAST_ROUND { chat_tools() }")},
     # --- Where a line goes ---
     # The old echo stays: a line is given back instead of going to the model.
     "echo": {"chat.rs": swap("                // Every other line goes to the model.\n                model_ask(&said)\n",
@@ -33,11 +35,10 @@ BREAKS = {
     "nokeyhide": {"model.rs": swap("        key_hide(&mut inputs, key);\n", "")},
     # --- Doing the tools ---
     # A kept app asked for is made again instead of being run.
-    "remake": {"tools.rs": swap('                Ok((request, script)) => {\n                    chat_say(&format!("I am running the app made for \\"{}\\".", request));\n'
-                                '                    let (sentence, _) = app_run(&script);\n                    chat_say(&sentence);\n                }\n',
-                                "                Ok((request, _)) => chat_say(&app_make(&request)),\n")},
+    "remake": {"tools.rs": swap("            Ok((request, script)) => {",
+                               "            Ok((request, _)) => return tool_do(&Tool::Make(request), more),\\n            #[allow(unreachable_patterns)]\\n            Ok((request, script)) => {")},
     # The request the model gave is not cleaned or cut.
-    "rawrequest": {"tools.rs": swap("Some(request) => chat_say(&app_make(&request_cleaned(&request))),", "Some(request) => chat_say(&app_make(&request)),")},
+    "rawrequest": {"tools.rs": swap("return Tool::Make(request_cleaned(&request));", "return Tool::Make(request);")},
     # A number written as a text is not taken.
     "nonumbertext": {"tools.rs": swap("    digits.parse().ok()\n", "    None\n")},
     # A look picked by the model is not kept.
@@ -74,6 +75,7 @@ BREAKS = {
 }
 
 CATCH = {
+    "lasttools": "results",
     "echo": "nokey",
     "nokeycheck": "nokey",
     "nolooktool": "words",

@@ -15,8 +15,9 @@ goes to the model (docs/tools.md). When the next behaviour is a kind of app, the
 tool make_app (its request is what follows "make " in the line, or the whole line), and the kind waits for the
 request for the app that follows; so is one of the kinds above with "app:" in front (app:realrefusal, say), which
 then answers the request for the app. Otherwise the line gets the next behaviour: one of chat_cases.py's
-(words=..., run=..., ...) or any of the kinds above, which the kernel reads the same way for a line. With no
-behaviour left, a line gets "words=Hello." and anything else "wrongkey"."""
+(words=..., run=..., ...) or any of the kinds above, which the kernel reads the same way for a line. For a
+follow-up on the same line, a behaviour prefixed with "follow:" answers it. The default is "words=Done."
+without taking the next typed line's behaviour. With no behaviour left, a line gets "words=Hello." and anything else "wrongkey"."""
 import json
 import socket
 import ssl
@@ -188,6 +189,14 @@ def an_app_kind(kind, bearer):
 
 def choose(parsed, bearer, note):
     """Gives (bytes to send, how to end) for one request, and notes what it was for and which behaviour answered it."""
+    messages = parsed.get("messages", []) if isinstance(parsed, dict) else []
+    system = messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
+    # Follow-ups have their own optional behaviours, including the final
+    # words-only request. Leave the next typed line's behaviour in place.
+    if "\n\nWhat your tools did for the newest line follows." in system:
+        kind = behaviours.pop(0)[len("follow:"):] if behaviours and behaviours[0].startswith("follow:") else "words=Done."
+        note.update({"request for": "a follow-up", "behaviour": kind})
+        return chat_cases.answer(kind, the_line(parsed) or "", bearer) or answer_for(kind, bearer)
     chat = isinstance(parsed, dict) and "tools" in parsed
     note["request for"] = "a line" if chat else "an app"
     if chat and behaviours and an_app_kind(behaviours[0], bearer):

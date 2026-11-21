@@ -205,10 +205,11 @@ static mut PANEL_TEXT_LENGTH: usize = 0;
 // Shows a text in the panel: paints the panel and writes the text in it, on
 // one line, and remembers what it wrote. Painting the whole panel each time
 // wipes out what it showed before. Where the panel sits is decided here as
-// well: in the middle of the screen.
-pub fn screen_panel(text: &str) {
+// well: in the middle of the screen. Give the caller the length painted,
+// so the result of this run can give the model the same text.
+pub fn screen_panel(text: &str) -> Option<usize> {
     if (unsafe { SCREEN }).is_none() {
-        return;
+        return None;
     }
     let shown = panel_paint(text);
 
@@ -225,6 +226,7 @@ pub fn screen_panel(text: &str) {
         PANEL_TEXT_LENGTH = length;
         PANEL_SHOWN = true;
     }
+    Some(length)
 }
 
 // Paints the panel again with the text it showed last, in the look in use.

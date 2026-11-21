@@ -292,9 +292,21 @@ def main():
                         run_note += "\n      app lines: %s" % app_lines[:4]
             elif run_row is not None:
                 failures.append(behaviour + ": a run that was not meant")
+            end = time.time() + 40
+            while time.time() < end and terminal_lines(machine).count("Model: Done.") <= number:
+                time.sleep(0.1)
+            # The picture decides which of the possible random displays appeared.
+            # The display and mistake precede the follow-up in the written record.
+            chat.said.append("Model: Done.")
+            chat.add("kernel", "Model: Done.")
             picture, matched = look(machine, chat, "after-%d-%s" % (number, behaviour), failures, candidates)
             if matched is not None:
                 panel = matched
+                if runs and expect and expect[2](app_lines):
+                    chat.memory.row("App showed: " + hide(matched, KEY))
+            if runs and run_row == app_cases.MISTAKE and app_lines:
+                chat.memory.row("App error: " + hide(app_lines[-1].removeprefix("App: "), KEY))
+            chat.memory.row("Model: Done.")
             if behaviour == "runrandom":
                 randoms.append(tuple(app_lines))
             if behaviour == "runslow":
@@ -324,7 +336,7 @@ def main():
         press(machine, chat, LINE + ENTER)
         sent.append(LINE)
         end = time.time() + 40
-        while time.time() < end and not any(line.startswith("Model: ") for line in terminal_lines(machine)):
+        while time.time() < end and model_row(LAST_WORDS, KEY) not in terminal_lines(machine):
             time.sleep(0.1)
         words = [line for line in terminal_lines(machine) if line.startswith("Model: ")]
         said = words[-1] if words else "(no row came)"
@@ -365,7 +377,10 @@ def main():
     notes = [json.loads(line) for line in open(log).read().splitlines()]
     posts = [note for note in notes if not note.get("first line", "").startswith("GET")]
     lines_seen = [note for note in posts if note.get("request for") == "a line"]
-    apps_seen = [note for note in posts if note.get("request for") != "a line"]
+    apps_seen = [note for note in posts if note.get("request for") == "an app"]
+    follows = [note for note in posts if note.get("request for") == "a follow-up"]
+    if len(follows) != len(behaviours):
+        failures.append("wrong number of tool results")
     print("the stand-in's notes: %d requests for a line, %d for an app" % (len(lines_seen), len(apps_seen)))
 
     def judged(note, want, label, what):

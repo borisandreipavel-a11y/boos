@@ -268,10 +268,12 @@ def make_app(run, request, kind, kept, chat=None):
         time.sleep(2.5)
         extra = [l for l in run.since() if l.startswith("Apps: ") or l.startswith("Kernel: I could not keep the app")]
         report(run.tag + " not kept %r" % request[:20], not extra, None if not extra else "got %r" % extra)
+    report(run.tag + " follow-up", run.wait_line("Model: Done.", timeout=35) is not None)
     if chat is not None:
         chat.row(making(request))
         chat.say(app_cases.outcome(kind, KEY)[0])
         chat.say(app_cases.run_expect(kind, KEY)[0])
+        chat.row("Model: Done.")
     return [l for l in run.since() if l.startswith("App: ")]
 
 
@@ -500,6 +502,7 @@ def scenario_requests():
     trouble = run.wait_line("Kernel: I could not keep", timeout=20)
     meant_row = not_kept_row("the numbers for apps have run out")
     report("requests no number left", trouble == meant_row, None if trouble == meant_row else "got %r" % trouble)
+    run.wait_line("Model: Done.")
     # The note of app 8 has no script: an app made for its request takes its number, and its note is not written again.
     run.mark()
     run.press("make no script at all\n")
@@ -748,6 +751,7 @@ def scenario_times():
     run = Run("kept-times", disk, behaviours=["app", "appexact"])
     give_key(run)
     one = keep_time(run, "a dice that rolls", "app")
+    run.wait_line("Model: Done.")
     long = keep_time(run, "a long app of comments", "appexact")
     run.end()
     print("    keeping one entry took %s s, and 74 pieces %s s (from the row about the run to the line about keeping)"

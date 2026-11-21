@@ -216,6 +216,8 @@ struct AppState {
     limits: StoreLimits,
     texts_printed: usize,
     texts_shown: usize,
+    last_shown: Option<String>,
+    last_printed: String,
 }
 
 // Fetches a text that an app handed over, for the two calls below. The app
@@ -266,6 +268,7 @@ fn kernel_print(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Re
     }
     let text = app_text(&caller, start, length, APP_TEXT_LIMIT, "print")?;
     serial_print(&format!("App: {}\r\n", text));
+    caller.data_mut().last_printed = text;
     caller.data_mut().texts_printed += 1;
     Ok(())
 }
@@ -279,8 +282,11 @@ fn kernel_show(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Res
     if caller.data().texts_shown >= APP_SHOW_LIMIT {
         return Err(Error::new("it showed too many texts"));
     }
-    let text = app_text(&caller, start, length, APP_SHOWN_TEXT_LIMIT, "show")?;
-    screen_panel(&text);
+    let mut text = app_text(&caller, start, length, APP_SHOWN_TEXT_LIMIT, "show")?;
+    caller.data_mut().last_shown = screen_panel(&text).map(|painted| {
+        text.truncate(painted);
+        text
+    });
     caller.data_mut().texts_shown += 1;
     Ok(())
 }
@@ -312,7 +318,7 @@ fn box_start(program: &[u8]) -> Result<(Store<AppState>, Instance), String> {
         .tables(1)
         .instances(1)
         .build();
-    let mut store = Store::new(&engine, AppState { limits, texts_printed: 0, texts_shown: 0 });
+    let mut store = Store::new(&engine, AppState { limits, texts_printed: 0, texts_shown: 0, last_shown: None, last_printed: String::new() });
     store.limiter(|state| &mut state.limits);
     store.set_fuel(APP_FUEL).map_err(reason)?;
 
@@ -363,6 +369,8 @@ pub fn box_accepts(program: &[u8], functions: &[&str]) -> Result<(), String> {
 pub struct ScriptStop {
     pub reason: String,
     pub kind: StopKind,
+    pub last_shown: Option<String>,
+    pub mistake: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -382,7 +390,7 @@ pub enum StopKind {
 
 // A stop for a reason of the kernel's own.
 fn script_stop(reason: String) -> ScriptStop {
-    ScriptStop { reason, kind: StopKind::Other }
+    ScriptStop { reason, kind: StopKind::Other, last_shown: None, mistake: None }
 }
 
 // A stop for an error that came from running the program. wasmi says which
@@ -393,7 +401,7 @@ fn script_stopped(error: Error) -> ScriptStop {
         Some(TrapCode::UnreachableCodeReached) => StopKind::GaveUp,
         _ => StopKind::Other,
     };
-    ScriptStop { reason: reason(error), kind }
+    ScriptStop { reason: reason(error), kind, last_shown: None, mistake: None }
 }
 
 // Hands a script to a program in the box that can carry scripts out, and has
@@ -411,8 +419,8 @@ fn script_stopped(error: Error) -> ScriptStop {
 // same limits and the same system API. Nothing it says is taken on trust:
 // the place it names for the script is written to through `write`, which
 // refuses if any byte of it lies outside the program's memory. Gives back
-// how many texts the script showed on the screen.
-pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<usize, ScriptStop> {
+// the last text this run showed, if it showed one.
+pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<Option<String>, ScriptStop> {
     if script.len() > SCRIPT_LIMIT {
         return Err(script_stop(String::from("the script is too long")));
     }
@@ -433,9 +441,17 @@ pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<usi
         let seed_function = app.get_typed_func::<i64, ()>(&store, "seed").map_err(script_stopped)?;
         seed_function.call(&mut store, value).map_err(script_stopped)?;
     }
-    match run.call(&mut store, length).map_err(script_stopped)? {
-        0 => Ok(store.data().texts_shown),
-        _ => Err(ScriptStop { reason: String::from("the script made a mistake, which is told in the line before"), kind: StopKind::Mistake }),
+    let result = run.call(&mut store, length);
+    let last_shown = store.data_mut().last_shown.take();
+    match result {
+        Ok(0) => Ok(last_shown),
+        Ok(_) => Err(ScriptStop {
+            reason: String::from("the script made a mistake, which is told in the line before"),
+            kind: StopKind::Mistake,
+            last_shown,
+            mistake: Some(core::mem::take(&mut store.data_mut().last_printed)),
+        }),
+        Err(error) => Err(ScriptStop { last_shown, ..script_stopped(error) }),
     }
 }
 

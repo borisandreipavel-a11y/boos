@@ -85,7 +85,7 @@ What that check proves and what it does not: the file is a whole WebAssembly pro
 
 ## Running a script
 
-`script_run(script)` in `interpreter.rs` runs a script: it hands the interpreter's program and the script's text to `box_script` (see [box.md](box.md)), which gets the program ready in the box, asks it for room, writes the script there and tells it to run. Each run starts from nothing: the program is checked and translated again, and nothing of one script is left for the next. `script_run_seeded(script, seed)` does the same with a number for `seed` before the run, and gives back how many texts the script showed, or why it was stopped and what kind of stop it was; apps made on request are run with it (see [apps.md](apps.md)).
+`script_run(script)` in `interpreter.rs` runs a script: it hands the interpreter's program and the script's text to `box_script` (see [box.md](box.md)), which gets the program ready in the box, asks it for room, writes the script there and tells it to run. Each run starts from nothing: the program is checked and translated again, and nothing of one script is left for the next. `script_run_seeded(script, seed)` does the same with a number for `seed` before the run, and returns the last text this run showed, if any. A stopped run also returns its reason and, for a Lua mistake, the error the interpreter printed. Apps made on request are run with it (see [apps.md](apps.md)).
 
 What comes back:
 

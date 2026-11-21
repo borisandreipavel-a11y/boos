@@ -23,7 +23,9 @@ pub enum Errand {
     // the kernel can do for it: the JSON that `chat_tools` in `tools.rs` made
     // when the line was sent; and with the record of what was said before it
     // (`conversation_record` in `conversation.rs`), which may be empty.
-    ChatLine { line: String, tools: String, record: String },
+    // Follow-ups keep the same line and put this line's results in their own block.
+    // The final round leaves the tool list empty.
+    ChatLine { line: String, tools: String, record: String, results: String },
     // Ask the model to write an app. The text says which app: the request the
     // model gave with the tool `make_app` (see `tools.rs`).
     AppRequest(String),

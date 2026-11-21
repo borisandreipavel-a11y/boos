@@ -143,6 +143,12 @@ pub fn conversation_remembers() -> bool {
 // line (see `tools.rs`). Empty when nothing is remembered.
 pub fn conversation_record() -> String {
     let exchanges = exchanges_take();
+    let record = rows_of(&exchanges);
+    exchanges_put(exchanges);
+    record
+}
+
+fn rows_of(exchanges: &[Vec<String>]) -> String {
     let mut record = String::new();
     for row in exchanges.iter().flatten() {
         if !record.is_empty() {
@@ -150,6 +156,20 @@ pub fn conversation_record() -> String {
         }
         record.push_str(row);
     }
-    exchanges_put(exchanges);
     record
+}
+
+// A follow-up repeats the person's line once. Earlier exchanges stay in
+// their usual place. Only this line's answers go in the tool-result block.
+// Both parts come from the same list, after its line and byte limits.
+pub fn conversation_follow_up() -> Option<(String, String, String)> {
+    let exchanges = exchanges_take();
+    let request = exchanges.split_last().and_then(|(latest, earlier)| {
+        let (person, rows) = latest.split_first()?;
+        let line = String::from(person.strip_prefix("Person: ")?);
+        let record = rows_of(earlier);
+        Some((line, record, rows.join("\n")))
+    });
+    exchanges_put(exchanges);
+    request
 }

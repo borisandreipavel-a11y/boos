@@ -225,18 +225,18 @@ pub fn apps_pages() -> (usize, usize) {
 
 // The tool `turn_page`: shows the page of the panel of apps with this
 // number, counted from 1, if there is one. Gives back what the kernel says.
-pub fn apps_page_turn(page: u64) -> String {
+pub fn apps_page_turn(page: u64) -> Result<String, String> {
     let (pages, _) = apps_pages();
     if pages == 0 {
-        return String::from("the model asked for another page of the panel of apps, but no app is kept.");
+        return Err(String::from("the model asked for another page of the panel of apps, but no app is kept."));
     }
     match usize::try_from(page) {
         Ok(page) if (1..=pages).contains(&page) => {
             unsafe { PAGE = page - 1 };
             apps_panel_again();
-            format!("the panel of apps shows page {} of {}.", page, pages)
+            Ok(format!("the panel of apps shows page {} of {}.", page, pages))
         }
-        _ => format!("the model asked for page {} of the panel of apps, but it has {} {}.", page, pages, if pages == 1 { "page" } else { "pages" }),
+        _ => Err(format!("the model asked for page {} of the panel of apps, but it has {} {}.", page, pages, if pages == 1 { "page" } else { "pages" })),
     }
 }
 

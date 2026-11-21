@@ -10,9 +10,9 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::apps::{app_print_script, app_run};
+use crate::apps::{AppRun, app_print_script, app_run};
 use crate::apps_kept::{app_keep, apps_kept_begin};
-use crate::conversation::{conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent};
+use crate::conversation::{conversation_follow_up, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent};
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -25,7 +25,8 @@ use crate::onboarding::{
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
 use crate::serial::serial_print;
-use crate::tools::{chat_tools, tool_do};
+use crate::tools::{Tool, ToolResult, chat_tools, tool_do, tool_read};
+use crate::model::model_safe_output;
 
 // The longest line that can be typed, in signs. A key pressed after that is
 // ignored, until a sign is taken away again or the line is sent with Enter.
@@ -409,12 +410,53 @@ fn model_ask(said: &str) -> String {
     if secret_length() == 0 {
         return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
     }
-    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record() }) {
+    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record(), results: String::new() }) {
         Ok(()) => {
+            unsafe { ROUND = Some(Round { number: 1, previous: None }) };
             conversation_sent();
             String::from("Kernel: I am asking the model.")
         }
         Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
+    }
+}
+
+// Only the main loop touches this. A round lives here while the network
+// task is answering. Taking it out lets setup cancel pending tool work.
+struct Round {
+    number: u8,
+    previous: Option<Tool>,
+}
+static mut ROUND: Option<Round> = None;
+const LAST_ROUND: u8 = 3;
+
+fn take_round() -> Option<Round> {
+    unsafe { (*(&raw mut ROUND)).take() }
+}
+
+fn ask_again(mut round: Round) {
+    let Some((line, record, results)) = conversation_follow_up() else { return };
+    round.number += 1;
+    let tools = if round.number < LAST_ROUND { chat_tools() } else { String::new() };
+    match errand_ask(Errand::ChatLine { line, tools, record, results }) {
+        Ok(()) => {
+            serial_print(&format!("Model round: {} of {}.\r\n", round.number, LAST_ROUND));
+            unsafe { ROUND = Some(round) };
+        }
+        Err(reason) => chat_say(&format!("I cannot ask the model again, because {}", reason)),
+    }
+}
+
+// Only output from this particular run goes into the result. Its last
+// display and its Lua error are already plain and bounded by the box.
+pub fn chat_app_result(run: &AppRun, report: bool) {
+    chat_say(&run.sentence);
+    if report {
+        if let Some(text) = &run.shown {
+            conversation_row(&format!("App showed: {}", model_safe_output(text)));
+        }
+        if let Some(text) = &run.mistake {
+            conversation_row(&format!("App error: {}", model_safe_output(text)));
+        }
     }
 }
 
@@ -430,8 +472,13 @@ fn model_ask(said: &str) -> String {
 // that failed (see `apps_kept.rs`). The terminal's line about the tokens a
 // good answer took follows the row about the answer.
 pub fn chat_answer(answer: Answer) {
-    if let Errand::ChatLine { .. } = &answer.errand {
-        conversation_line(answer.sent.as_deref());
+    if let Errand::ChatLine { results, .. } = &answer.errand {
+        let pending = take_round();
+        if results.is_empty() {
+            conversation_line(answer.sent.as_deref());
+        } else if pending.is_none() {
+            return;
+        }
         let reply = answer.reply;
         if let Some(words) = reply.as_ref().and_then(|reply| reply.words.as_deref()) {
             model_say(words);
@@ -444,29 +491,50 @@ pub fn chat_answer(answer: Answer) {
         }
         if let Some(reply) = reply {
             if let Some(call) = &reply.tool {
+                let Some(mut round) = pending else { return };
+                if round.number >= LAST_ROUND {
+                    chat_say("the model asked for another tool on its last answer, so I stopped here.");
+                    return;
+                }
                 if reply.more {
                     chat_say("the model asked for more than one thing at once, so I do only the first.");
                 }
-                tool_do(call);
+                let tool = tool_read(call);
+                if round.previous.as_ref() == Some(&tool) {
+                    chat_say("the model asked for the same tool with the same inputs again, so I did not do it twice.");
+                    ask_again(round);
+                    return;
+                }
+                let outcome = tool_do(&tool, reply.more);
+                if tool == Tool::Forget { return; }
+                round.previous = Some(tool);
+                match outcome {
+                    ToolResult::AwaitApp => unsafe { ROUND = Some(round) },
+                    ToolResult::Report => ask_again(round),
+                    ToolResult::Done if reply.more => ask_again(round),
+                    ToolResult::Done => {}
+                }
             }
         }
         return;
     }
     if let Errand::AppRequest(request) = &answer.errand {
+        let Some(round) = take_round() else { return };
         chat_say(&answer.sentence);
         if let Some(tokens) = &answer.tokens {
             serial_print(&format!("{}\r\n", tokens));
         }
         if let Some(script) = &answer.script {
             app_print_script(script);
-            let (sentence, ran) = app_run(script);
-            chat_say(&sentence);
-            if ran {
+            let run = app_run(script);
+            chat_app_result(&run, true);
+            if run.ran {
                 if let Some(trouble) = app_keep(request, script) {
                     chat_say(&trouble);
                 }
             }
         }
+        ask_again(round);
         return;
     }
     let mut rows = onboarding_tried(answer.key, &answer.sentence);
@@ -571,6 +639,7 @@ pub fn chat_key(letter: u8) {
                 // again: the kernel asks for the person's name, and the next
                 // line is the answer. Another person may be at the machine
                 // now, so what was said before is forgotten.
+                take_round();
                 conversation_forget();
                 onboarding_again()
             } else {

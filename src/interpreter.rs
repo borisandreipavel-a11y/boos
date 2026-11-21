@@ -52,8 +52,8 @@ pub fn script_run(script: &str) -> Result<(), String> {
 
 // Runs a script that came from outside the kernel, such as an app the model
 // wrote, in the same way, with `seed` as the number its random numbers start
-// from, if there is one. Gives back how many texts it showed on the screen,
+// from, if there is one. Gives back the last text it showed,
 // or why it was stopped and what kind of stop it was (see `ScriptStop`).
-pub fn script_run_seeded(script: &str, seed: Option<i64>) -> Result<usize, ScriptStop> {
+pub fn script_run_seeded(script: &str, seed: Option<i64>) -> Result<Option<String>, ScriptStop> {
     box_script(INTERPRETER, script, seed)
 }

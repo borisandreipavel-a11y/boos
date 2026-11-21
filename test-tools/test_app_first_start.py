@@ -112,7 +112,8 @@ def main():
         before = len(lines_of(machine)) - 1
         press(machine, "make " + REQUEST + ENTER)
         wait_line(machine, "Kernel: the model wrote an app", 40)
-        time.sleep(1.0)
+        if not wait_line(machine, "Model: Done."):
+            failures.append("no follow-up answer")
         machine.shot("end")
     finally:
         raw = machine.quit()
@@ -148,7 +149,13 @@ def main():
                 {"role": "user", "content": LEAD + REQUEST}], "max_tokens": 4000, "stream": False}
     # The try of the key asks the fixed question; the line goes with the list of tools (no app is kept yet).
     wanted = ([MEANT_ASK] if scenario == "keyfirst" else []) + [body_meant("make " + REQUEST, []), app_body]
-    got = [note.get("body") for note in posts]
+    if not posts or posts[-1].get("request for") != "a follow-up":
+        failures.append("missing tool result")
+    elif rolled:
+        result = posts[-1]["body"]["messages"]
+        if result[1]["content"] != "make " + REQUEST or ("App showed: Dice: " + rolled[0].split()[-1]) not in result[0]["content"]:
+            failures.append("wrong tool result")
+    got = [note.get("body") for note in posts[:-1]]
     keys = [note.get("key came as") == "Bearer " + KEY for note in posts]
     print("stand-in: %d requests, bodies as meant %s, each with the whole key %s" % (len(posts), got == wanted, all(keys)))
     if got != wanted or not all(keys):
