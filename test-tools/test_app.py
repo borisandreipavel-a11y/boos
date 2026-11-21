@@ -1,11 +1,14 @@
 """Asking the model for an app, and running it, against the stand-in for the provider on this computer. The edits
 that point the kernel at the stand-in (and add a trusted test root) are made in a copy of the project only
-(net_copy.py). A made-up key is typed through QEMU's keys. Then `make` and a request are sent once for each
-behaviour of the stand-in, and the row the kernel says, the script it shows in the terminal and every dot of the
+(net_copy.py). A made-up key is typed through QEMU's keys. Then a line that asks for an app ("make " and a
+request) is sent once for each behaviour of the stand-in. Every line goes to the model (docs/tools.md): the stand-in
+answers it with the tool make_app and the request, and then the request for the app with the behaviour; a
+behaviour of model_server.py's own (OTHER below) is given to it with "app:" in front, so that it too answers the
+request for the app and not the line. The kernel's rows, the script it shows in the terminal and every dot of the
 screen are compared with what is meant (app_cases.py, written apart from the kernel). A script that is taken is
 run: the lines it prints, the row that says how the run went, and the text the box in the middle shows are
-compared too. The lines that must not count as a request, the refusals before a key is kept and while an answer
-is awaited, and at the end one `ask`, which must still send the fixed question as before, are part of every run.
+compared too. A line before a key is kept, lines while an answer is awaited, and at the end one line that the model
+answers in words are part of every run; so is every request the stand-in saw, compared with what the notes say.
 
 Usage: python test_app.py <behaviour,behaviour,...> [dump]      (behaviours: the kinds in app_cases.py and
                                                                 some of model_server.py's, see OTHER below)
@@ -18,14 +21,16 @@ import subprocess
 import sys
 import time
 
-# A test disk that is not divided: no notebook is opened, so nothing is asked at the start and `key`, `ask` and
-# `make` are ordinary lines. Set before interp_helpers is imported, which would otherwise ask for a divided one.
+# A test disk that is not divided: no notebook is opened, so nothing is asked at the start, no app is kept, and the
+# request for a line offers no kept app. Set before interp_helpers is imported, which would otherwise ask for a
+# divided one.
 os.environ["DIVIDED_DISK"] = ""
 
 import app_cases
 from app_cases import INSTRUCTIONS, LEAD, clean, hide, outcome
 from boot import HERE, RUNS, Machine
 from certs import test_keys
+from chat_tools_model import body_meant, making, model_row, request_cleaned
 from interp_helpers import odd_bytes
 from net_copy import build
 from picture import Chat, compare, expected
@@ -42,6 +47,8 @@ REQUESTS = ["a dice", "a clock that says hello", 'a "quoted" \\ app', "a times t
             "a coin to flip", "a fortune cookie", "a word that is reversed", "a list of three colours"]
 WAIT = {"silent": 150}
 MODEL = "deepseek/deepseek-v4.1-flash-1017"
+LINE = "hello"  # the last line, which the model answers in words
+LAST_WORDS = "Hello there, how are you?"  # model_server.py's "good"
 
 
 def W(words):
@@ -53,7 +60,8 @@ def B(body):
     return Q + hide(clean(body), KEY)[:160] + Q
 
 
-# What the kernel is meant to say to answers that are not good ones: exactly what it says to `ask`.
+# What the kernel is meant to say when the request for an app gets an answer that is not a good one: exactly what it
+# says to such an answer to a line.
 OTHER = {
     "realrefusal": "the provider turned the question down (401): %s." % W("Invalid API key (request id: 20261119120000123456789TEST)"),
     "upstream": "the provider could not answer (502): %s." % W("All upstream providers failed"),
@@ -76,35 +84,10 @@ def meant(behaviour):
     return OTHER.get(behaviour), []
 
 
-def wanted_of(line):
-    """The model of the rule for a request: the word alone, or the word, a space and what to make."""
-    if not line.startswith("make"):
-        return None
-    rest = line[4:]
-    return rest.strip() if rest == "" or rest.startswith(" ") else None
-
-
-class AppChat(Chat):
-    """The chat box with the line `make` added, from the design."""
-
-    def key(self, sign):
-        if not self.secret_asked and sign == ENTER and self.line and wanted_of(self.line) is not None:
-            wanted = wanted_of(self.line)
-            mine = self.person() + ": " + self.line
-            if wanted == "":
-                answer = 'Kernel: write what app to make after the word, such as "make a dice".'
-            elif not self.secret_held:
-                answer = 'Kernel: I cannot ask the model for an app, because no key is kept. Send the line "key" first.'
-            else:
-                answer = {"ready": 'Kernel: I am asking the model to make "%s".' % wanted,
-                          "none": "Kernel: I cannot ask the model for an app, because this machine has no address on the network",
-                          "busy": "Kernel: I cannot ask the model for an app, because the answer to what I asked before has not come yet"}[self.network]
-            self.said += [mine, answer]
-            self.add("person", mine)
-            self.add("kernel", answer)
-            self.line = ""
-            return
-        super().key(sign)
+def standin_kind(behaviour):
+    """The behaviour as the stand-in is given it: one of its own with "app:" in front, so that it answers the request
+    for the app; a line before it gets the tool make_app (model_server.py)."""
+    return "app:" + behaviour if behaviour in OTHER else behaviour
 
 
 def press(machine, chat, text):
@@ -125,13 +108,22 @@ def answers(lines):
             if line.startswith(("Kernel: the provider", "Kernel: the model", "Kernel: no answer came"))]
 
 
+def tool_rows(lines):
+    """The kernel's rows that say it asks the model for an app, when the model asked for one with make_app."""
+    return [line for line in lines if line.startswith("Kernel: I am asking the model to make ")]
+
+
 def listing_after(lines, place):
+    """The script's lines that follow the row at `place`, after the terminal's line about the answer's tokens, and
+    where the lines after them begin."""
+    at = place + 1
+    if at < len(lines) and lines[at].startswith("Tokens:"):
+        at += 1
     out = []
-    for line in lines[place + 1:]:
-        if not line.startswith("Script "):
-            break
-        out.append(line)
-    return out
+    while at < len(lines) and lines[at].startswith("Script "):
+        out.append(lines[at])
+        at += 1
+    return out, at
 
 
 def look(machine, chat, name, failures, panel_texts=("Hello from a Lua script!!!",)):
@@ -151,9 +143,9 @@ def look(machine, chat, name, failures, panel_texts=("Hello from a Lua script!!!
 
 
 def no_card():
-    """A machine without a network card: a request for an app is turned away at once, as `ask` is."""
+    """A machine without a network card: a line that asks for an app is turned away at once, as every line is."""
     machine = Machine("app-nocard", network=False)
-    chat = AppChat(1280)
+    chat = Chat(1280)
     chat.network = "none"
     failures = Failures()
     try:
@@ -163,7 +155,7 @@ def no_card():
         press(machine, chat, "key" + ENTER)
         press(machine, chat, KEY + ENTER)
         press(machine, chat, "make a dice" + ENTER)
-        press(machine, chat, "ask" + ENTER)
+        press(machine, chat, LINE + ENTER)
         print("no card     | picture: %s" % look(machine, chat, "nocard", failures)[0])
     finally:
         raw = machine.quit()
@@ -193,20 +185,20 @@ def main():
     if os.path.exists(log):
         os.remove(log)
     server = subprocess.Popen([sys.executable, os.path.join(HERE, "model_server.py"), str(PORT), os.path.join(tls, "a", "both-chain.pem"),
-                               os.path.join(tls, "a", "both.key"), log, ",".join(behaviours + ["good"])], stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, text=True, cwd=HERE)
+                               os.path.join(tls, "a", "both.key"), log, ",".join([standin_kind(b) for b in behaviours] + ["good"])],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=HERE)
     assert server.stdout.readline().strip() == "ready"
     machine = Machine("app", network="open", kernel=kernel)
-    chat = AppChat(1280)
+    chat = Chat(1280)
     failures = Failures()
-    asked = []  # what each request that reached the stand-in asked for, in order
+    asked = []  # what each request for an app that reached the stand-in asked for, in order
+    sent = []  # each line that reached the stand-in, in order
     print("the made-up key is %d signs long" % len(KEY))
     try:
         machine.wait_for(b"repeated here:")
         time.sleep(1.5)
-        # Lines that are no request, and a request before any key is kept.
-        for line in ["make a dice", "make", "make   ", "makes sense", "Make a dice", "maker x"]:
-            press(machine, chat, line + ENTER)
+        # A line that asks for an app before any key is kept: turned away, as every line is.
+        press(machine, chat, "make a dice" + ENTER)
         print("%-12s | %s" % ("before a key", look(machine, chat, "before-key", failures)[0]))
         press(machine, chat, "key" + ENTER)
         press(machine, chat, KEY + ENTER)
@@ -216,12 +208,22 @@ def main():
             request = REQUESTS[number % len(REQUESTS)]
             started = time.time()
             press(machine, chat, "make " + request + ENTER)
+            sent.append("make " + request)
             asked.append(request)
+            # The line's answer is the tool make_app: the kernel says so, and asks for the app.
+            end = time.time() + 40
+            while time.time() < end and len(tool_rows(terminal_lines(machine))) <= number:
+                time.sleep(0.1)
+            tools = tool_rows(terminal_lines(machine))
+            tool_row = tools[number] if len(tools) > number else "(no row came)"
+            chat.row(tool_row)
+            if tool_row != making(request_cleaned(request)):
+                failures.append(behaviour + ": tool row")
             if behaviour == "slowapp":
-                # Asked again while the answer is awaited: both are turned away.
+                # Lines sent while the app is awaited: both are turned away.
                 chat.network = "busy"
                 press(machine, chat, "make another one" + ENTER)
-                press(machine, chat, "ask" + ENTER)
+                press(machine, chat, LINE + ENTER)
                 chat.network = "ready"
             end = time.time() + WAIT.get(behaviour, 40)
             while time.time() < end and len(answers(terminal_lines(machine))) <= number:
@@ -248,11 +250,11 @@ def main():
             lines = terminal_lines(machine)
             places = answers(lines)
             said = lines[places[number]][len("Kernel: "):] if len(places) > number else "(no row came)"
-            listing = listing_after(lines, places[number]) if len(places) > number else []
+            listing, after = listing_after(lines, places[number]) if len(places) > number else ([], 0)
             # The run's own lines (App: ...) and its row, after the script's lines.
             app_lines, run_row = [], None
             if len(places) > number:
-                for line in lines[places[number] + 1 + len(listing):]:
+                for line in lines[after:]:
                     if line.startswith("Kernel: the app "):
                         run_row = line[len("Kernel: "):]
                         break
@@ -318,19 +320,20 @@ def main():
             print("random numbers of the runs: %s" % [r[0] if r else "(none)" for r in randoms])
             if len(set(randoms)) != len(randoms):
                 failures.append("random numbers repeat from run to run")
-        # The fixed question, once more: it must be asked as before.
-        press(machine, chat, "ask" + ENTER)
+        # A last line, which the model answers in words: a row of their own.
+        press(machine, chat, LINE + ENTER)
+        sent.append(LINE)
         end = time.time() + 40
-        while time.time() < end and len(answers(terminal_lines(machine))) <= len(behaviours):
+        while time.time() < end and not any(line.startswith("Model: ") for line in terminal_lines(machine)):
             time.sleep(0.1)
-        lines = terminal_lines(machine)
-        places = answers(lines)
-        said = lines[places[len(behaviours)]][len("Kernel: "):] if len(places) > len(behaviours) else "(no row came)"
-        chat.say(said)
-        ask_right = said == "the model answered %s." % W("Hello there, how are you?")
-        if not ask_right:
-            failures.append("ask: row")
-        print("%-12s       | row %s | picture: %s" % ("ask", "as meant" if ask_right else "NOT AS MEANT", look(machine, chat, "after-ask", failures, [panel])[0]))
+        words = [line for line in terminal_lines(machine) if line.startswith("Model: ")]
+        said = words[-1] if words else "(no row came)"
+        chat.row(said)
+        last_right = said == model_row(LAST_WORDS, KEY)
+        if not last_right:
+            failures.append("last line: row")
+        print("%-12s       | row %s | picture: %s" % ("last line", "as meant" if last_right else "NOT AS MEANT",
+                                                     look(machine, chat, "after-last-line", failures, [panel])[0]))
         print("             " + said[:160])
         if dump:
             with machine.memory("after") as data:
@@ -342,7 +345,7 @@ def main():
         server.kill()
     whole = raw[raw.find(b"Hello from my kernel!"):]
     key_in_terminal = sum(whole.count(KEY[i:i + 6].encode()) for i in range(len(KEY) - 5))
-    said_lines = [l for l in raw[raw.find(b"repeated here:"):].decode(errors="replace").split(chr(13) + chr(10)) if l.startswith(("You:", "Kernel:"))]
+    said_lines = [l for l in raw[raw.find(b"repeated here:"):].decode(errors="replace").split(chr(13) + chr(10)) if l.startswith(("You:", "Kernel:", "Model:"))]
     odd = odd_bytes(whole)
     print("said lines as meant: %s | bytes in the terminal that are not plain text: %d | pieces of the key in the terminal: %d" % (
         said_lines == chat.said, odd, key_in_terminal))
@@ -357,27 +360,37 @@ def main():
         failures.append("odd bytes")
     if key_in_terminal:
         failures.append("key in the terminal")
-    # What the stand-in saw: every request for an app must carry the instruction text and the request, and the
-    # fixed question must be as before.
+    # What the stand-in saw: every line with the request the notes say a line is sent with (no kept app, on a disk
+    # that is not divided), and every request for an app with the instruction text and the request the model gave.
     notes = [json.loads(line) for line in open(log).read().splitlines()]
     posts = [note for note in notes if not note.get("first line", "").startswith("GET")]
-    print("the stand-in's notes: %d requests" % len(posts))
-    for number, note in enumerate(posts):
-        if number < len(asked):
-            want = {"model": MODEL, "messages": [{"role": "system", "content": INSTRUCTIONS}, {"role": "user", "content": LEAD + asked[number]}],
-                    "max_tokens": 4000, "stream": False}
-            right = note.get("body") == want
-        else:
-            right = note.get("body as meant") is True
+    lines_seen = [note for note in posts if note.get("request for") == "a line"]
+    apps_seen = [note for note in posts if note.get("request for") != "a line"]
+    print("the stand-in's notes: %d requests for a line, %d for an app" % (len(lines_seen), len(apps_seen)))
+
+    def judged(note, want, label, what):
+        right = want is not None and note.get("body") == want
         whole_key = note.get("key came as") == "Bearer " + KEY
         ok = right and note.get("length note right") and whole_key and note.get("first line") == "POST /v1/chat/completions HTTP/1.0"
         if not ok:
-            failures.append("request %d" % (number + 1))
-        print("   %2d %-12s | body as meant %s | %5s bytes | length note right %s | key came whole %s | name %s%s" % (
-            number + 1, (behaviours + ["ask"])[number] if number < len(behaviours) + 1 else "?", right, note.get("body bytes"),
-            note.get("length note right"), whole_key, note.get("name asked for"), " | problem: " + note["problem"] if "problem" in note else ""))
-    if len(posts) != len(behaviours) + 1:
-        failures.append("%d requests reached the stand-in, meant %d" % (len(posts), len(behaviours) + 1))
+            failures.append(label)
+        print("   %-17s %-24s | body as meant %s | %5s bytes | length note right %s | key came whole %s | name %s%s" % (
+            label, what[:24], right, note.get("body bytes"), note.get("length note right"), whole_key, note.get("name asked for"),
+            " | problem: " + note["problem"] if "problem" in note else ""))
+
+    for number, note in enumerate(apps_seen):
+        want = None
+        if number < len(asked):
+            want = {"model": MODEL, "messages": [{"role": "system", "content": INSTRUCTIONS}, {"role": "user", "content": LEAD + asked[number]}],
+                    "max_tokens": 4000, "stream": False}
+        judged(note, want, "request %d" % (number + 1), behaviours[number] if number < len(behaviours) else "?")
+    for number, note in enumerate(lines_seen):
+        line = sent[number] if number < len(sent) else None
+        judged(note, body_meant(line, []) if line is not None else None, "line request %d" % (number + 1), line or "?")
+    if len(apps_seen) != len(behaviours):
+        failures.append("%d requests for an app reached the stand-in, meant %d" % (len(apps_seen), len(behaviours)))
+    if len(lines_seen) != len(sent):
+        failures.append("%d lines reached the stand-in, meant %d" % (len(lines_seen), len(sent)))
     print("FAILURES: %s" % failures if failures else "all as meant")
 
 

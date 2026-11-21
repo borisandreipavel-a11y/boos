@@ -1,16 +1,18 @@
 # Asking the model
 
-Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the line `ask` in `src/chat.rs`. The request for an app goes through the same file; see [apps.md](apps.md).
+Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the lines of the chat box in `src/chat.rs`. A line typed in the chat box and the request for an app go through the same file; see [tools.md](tools.md) and [apps.md](apps.md).
 
 A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box: after the line `key`, for one start, or when the onboarding asks for it, which tries it with the question below, locks it with a password and keeps it on the disk, and unlocks it again at every start with that password (see [chat.md](chat.md)).
 
 ## What it does today
 
-The line `ask`, sent by itself in the chat box, makes the kernel ask the model one fixed question, `Say hello in five words.` (`QUESTION`), with the kept secret as the key, and say in the chat box what came back. The one other thing the model can be asked for is an app, with the line `make` (see "Asking for an app" below).
+Three kinds of question go to the model, each with the kept secret as the key:
 
-- Without a kept secret the chat box says `Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.` and nothing is sent.
-- Otherwise it leaves an errand for the network's task (see "Errands" in [tasks.md](tasks.md)) and says `Kernel: I am asking the model "Say hello in five words."`. The answer comes later, as a row of its own.
-- The network's task runs the errand by calling `model_tell`, which gives back one sentence:
+- **Every line typed in the chat box,** but `key` and `setup`, with the list of what the kernel can do for it (`model_chat`; see [tools.md](tools.md)). The model answers in words, or asks for one of the tools.
+- **A request for an app,** when the model asked for a new one (`model_app`; see "Asking for an app" below and [apps.md](apps.md)).
+- **One fixed question,** `Say hello in five words.` (`QUESTION`), with which a key typed at the onboarding is tried (`model_tell`; see "Trying a key" below). The line `ask`, which once asked it from the chat box, is an ordinary line now, and goes to the model like any other.
+
+Every answer is read the same way; only what the kernel does with the model's words differs. `model_tell` gives back one sentence, and so do the other two when something went wrong:
 
 | The sentence | When |
 |---|---|
@@ -29,7 +31,7 @@ The line `ask`, sent by itself in the chat box, makes the kernel ask the model o
 
 ## Trying a key
 
-A key typed at the onboarding is tried before it is kept: the network's task runs the errand `Errand::KeyTry`, which calls `model_tell` with `trying` set. The request is the same as for `ask`, byte for byte, with the key being tried in place of the kept one, and the sentence it gives back is the same too. Beside the sentence, `model_tell` says how the provider took the key (`KeyVerdict`), from the number in the first line of its answer only, never from its words:
+A key typed at the onboarding is tried before it is kept: the network's task runs the errand `Errand::KeyTry`, which calls `model_tell` with `trying` set. The request is the fixed question, byte for byte as the line `ask` once sent it, with the key being tried in place of the kept one, and the sentence it gives back is the same too. Beside the sentence, `model_tell` says how the provider took the key (`KeyVerdict`), from the number in the first line of its answer only, never from its words:
 
 | `KeyVerdict` | When | What the onboarding does |
 |---|---|---|
@@ -38,7 +40,7 @@ A key typed at the onboarding is tried before it is kept: the network's task run
 | `Known` | 402 or 403 with the provider's reason in its JSON. Its documentation gives 402 for an account without credit, and 403 for a key held back by a limit of its own (a quota, a spending limit, a model it may not use, the addresses it may come from) | keeps the key |
 | `NotTold` | anything else: another number, a 402 or 403 without the provider's reason (a page from somewhere on the way), no answer, or one that cannot be read | keeps the key |
 
-A 200 whose body the kernel cannot read still counts as `Works`: the answer came from the provider's own site, whose certificate was checked, and it took the key. `ask` gets the verdict too and does nothing with it. What the onboarding says to each is in [chat.md](chat.md).
+A 200 whose body the kernel cannot read still counts as `Works`: the answer came from the provider's own site, whose certificate was checked, and it took the key. What the onboarding says to each is in [chat.md](chat.md).
 
 ## The provider and the model
 
@@ -51,7 +53,7 @@ A 200 whose body the kernel cannot read still counts as `Works`: the answer came
 
 ## The request
 
-One request per connection, over an encrypted link whose certificate was checked for the provider's name. It is put together like this:
+One request per connection, over an encrypted link whose certificate was checked for the provider's name. It is put together like this, here for the fixed question; a line typed in the chat box and a request for an app differ only in the body (see [tools.md](tools.md) and "Asking for an app" below):
 
 ```text
 POST /v1/chat/completions HTTP/1.0
@@ -67,7 +69,7 @@ Authorization: Bearer <the key>
 - `POST` hands something in at the place named behind it. The lines after it are notes: which site is meant, what form the body has, how many bytes long it is, that the connection may be closed after the answer, and the key. An empty line ends the notes, and the body follows.
 - The body is JSON. The two texts in it are written with `json_text` (see [json.md](json.md)). `max_tokens` is the longest answer the model may give (`ANSWER_TOKENS`, 1000); models count in tokens, which are pieces of words. The model can think before it answers (its page at the provider says it has a thinking and a non-thinking way, and not which it takes when nothing is said), and thinking may be paid out of the same tokens, so the limit leaves room for far more than a five-word answer. The provider is paid by the token used, not by the limit: at the model's prices in November 2026 (0.60 dollars a million tokens out, twice that in the provider's busy hours) the whole limit would cost about a tenth of a cent.
 - `"stream":false` asks for the whole answer in one piece. The provider's documentation does not say what it does when nothing is said; sent word by word, the answer would not read as JSON.
-- Nothing is sent to choose thinking or not: the provider's documentation names no such setting for this model, and a setting it does not know could make it refuse the question.
+- Nothing is sent to choose thinking or not. The model's page at the provider now lists `reasoning_effort` among the settings it takes, and the model's maker says its model thinks unless told not to, but neither says which values the provider passes on for this model; a value it does not take could make it refuse every question. The terminal's line about the tokens of each answer to a line or an app shows how much went on thinking (see [tools.md](tools.md)).
 - The length note counts bytes, not signs.
 - `HTTP/1.0` and `Connection: close` ask the provider to close the connection after its answer, which is how the kernel knows the answer is over.
 
@@ -131,4 +133,4 @@ The real question was then asked with a real key, in a person's own run, and the
 
 ## Asking for an app
 
-`model_app` asks the model to write an app, through the same exchange (`provider_exchange`) with the kept key, borrowed in the same way (`key_copy`). The request differs from the fixed question's in two places: the body holds two messages, a fixed instruction text first as the `system` message and then the request, and `max_tokens` is 4000 (`APP_TOKENS`). An answer that is not a good one is said word for word as for the fixed question. A good one is read as a script (`app_sentence`). [apps.md](apps.md) has the whole of it.
+`model_app` asks the model to write an app, when the model asked for a new one with the tool `make_app` (see [tools.md](tools.md)), through the same exchange (`provider_exchange`) with the kept key, borrowed in the same way (`key_copy`). The request differs from the fixed question's in two places: the body holds two messages, a fixed instruction text first as the `system` message and then the request, and `max_tokens` is 4000 (`APP_TOKENS`). An answer that is not a good one is said word for word as for the fixed question. A good one is read as a script (`app_sentence`). [apps.md](apps.md) has the whole of it.

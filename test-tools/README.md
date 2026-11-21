@@ -59,7 +59,9 @@ caught (the misses that `docs/testing.md` names excepted).
   `docs/testing.md` gives, goes into `suites.KNOWN_MISSES` with that reason: it is still made and run, and counted
   as missed, as meant. A list of new breaks of the same kind (file, old text,
   new text, the test that must catch it) can run in the break copy as the key's and the look's do
-  (`copy_break.py`): the project's own source is never changed.
+  (`copy_break.py`): the project's own source is never changed. `run_tests.py` and `run_look_breaks.py` hand the
+  test the break itself too (`KERNEL_BREAK`, beside the kernel in `KERNEL_FILE`), so that a copy of the kernel it
+  builds of its own, as the look's stand-in does (`look_standin.py`), carries the same break.
 
 ## Where things go
 
@@ -91,21 +93,23 @@ Building and helpers:
 | `build_all.py` | Builds the interpreter, then the kernel, and sees that the kernel holds the interpreter just built. Run it before any test |
 | `boot.py` | One windowless boot: `Machine`, keys, pictures, the serial lines |
 | `start_helper.py` | One boot with a given disk, checked key by key against the model of the chat box. For tests about other things it answers the question for a look with Enter alone as soon as it appears, and it reads from the disk file what the notebook holds under `look` before each start. Its `wait` waits, after its seconds, until the last row meant has come in the terminal |
-| `picture.py`, `onboard_model.py`, `keyed_model.py` | The pictures that are meant: the chat box as it should look after each key, in the look in use. `keyed_model.py` knows the onboarding's questions, the question for a look among them |
+| `picture.py`, `onboard_model.py`, `keyed_model.py` | The pictures that are meant: the chat box as it should look after each key, in the look in use, where every line but `key` and `setup` goes to the model and gets the row the kernel says at once. `keyed_model.py` knows the onboarding's questions, the question for a look among them, and a look the model picks |
 | `look_values.py`, `look_model.py` | The four looks' colours, typed in by hand, with a check of their contrast ratios; the model for the look's own tests |
 | `reset_model.py` | The look's model grown by the line `setup` bringing back the first look |
 | `disk_helpers.py`, `gpt.py`, `nb.py` | Test disk files, dividing them into parts, reading and writing the notebook from outside |
 | `lockref.py`, `keyref.py` | The lock worked out by other code (Python's own PBKDF2 and a ChaCha20-Poly1305 written from RFC 8439), to judge the kernel's |
-| `net_copy.py`, `certs.py`, `model_server.py` | A copy of the project whose kernel talks to the stand-in for the provider on this computer, with test certificates; the stand-in itself |
+| `net_copy.py`, `certs.py`, `model_server.py` | A copy of the project whose kernel talks to the stand-in for the provider on this computer, with test certificates; the stand-in itself, which answers the try of a key, a line (with words, a tool call, or any of its kinds of answer) and a request for an app |
+| `look_standin.py` | Picking a look through the model for the look's tests: the stand-in, its copy of the kernel (with the break on purpose that the test's kernel has, if any), and the line `key` with a made-up key |
 | `interp_helpers.py`, `raw_print.py` | Boot and output helpers |
 | `ports.py`, `places.py` | Ports and folders, as above |
 | `restore.py`, `crlf.py`, `export_check.py`, `make_lock_values.py` | Putting sources back after a break; Windows line ends; a clean export of a commit built from nothing; writing `src/lock_values.rs` |
 | `app_cases.py` | The stand-in's answers to a request for an app, and what the kernel is meant to say, list and show for each, worked out apart from the kernel's code |
-| `apps_kept_model.py` | Apps kept on the disk, worked out from the notes apart from the kernel's code: notebooks with things in pieces written and read from outside, the apps a start finds and the lines it prints, the panel of apps in the picture, and the chat box with `make` |
+| `apps_kept_model.py` | Apps kept on the disk, worked out from the notes apart from the kernel's code: notebooks with things in pieces written and read from outside, the apps a start finds and the lines it prints, the panel of apps in the picture |
 | `boot_disk_checks.py` | The boot disk: a reader of its start part's FAT32 file system, worked out from Microsoft's FAT specification and the reference firmware's checks apart from the script; a machine that QEMU starts from a disk file alone |
 | `lines_model.py`, `lines_checks.py`, `lines_copy.py` | The kernel's own lines on the screen: the pictures that are meant (the start screen, the lines after F1, the stop screen); the checks that boot and judge them; a copy of the project with a failure or a break on purpose |
 | `run_tests.py`, `suites.py` | The runner and its table, as above |
 | `turns.py`, `copy_break.py`, `verdict.py` | Turns shared by the whole computer (seats, the memory turn, the build turn); a break on purpose made in a copy of the project and built there; the list of failures, each printed the moment it happens (`FAILED: ...`) |
+| `chat_cases.py`, `chat_tools_model.py` | Every line to the model: the stand-in's answers to a line with words or a tool call (`model_server.py` sends them, and answers a line with `make_app` first when a kind of app waits), and what the kernel is meant to send, say and show, worked out from the notes apart from the kernel's code |
 
 Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 
@@ -116,9 +120,9 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `test_name3.py` | The name question at the first start and later starts |
 | `test_key.py`, `test_key_memory.py` | The key and the password; the made-up secrets searched for in the machine's memory |
 | `test_secret_keyed.py` | The secret line `key` |
-| `test_model.py <kinds>` | `ask` against the stand-in, for 39 kinds of answer |
+| `test_model.py <kinds>` | A line to the model against the stand-in, for 39 kinds of answer |
 | `test_try.py`, `test_key_model.py` | Trying a key with the stand-in at the onboarding; the unlocked key is the key typed |
-| `test_look.py` | Picking a look: the line `look` and the onboarding's question, every picture in the look in use, over several starts |
+| `test_look.py` | Picking a look: the onboarding's question, and the model's tool `pick_look` through the stand-in, every picture in the look in use, over several starts |
 | `test_look_reset.py` | The line `setup` bringing back the first look: on the screen at once, on the disk at once, and the rows when it cannot be kept, over several starts |
 | `test_look_his.py` | A person's path on a disk file made the way `run.bat` makes it, ended normally and by killing QEMU |
 | `time_look.py`, `time_repaint.py` | How long a start shows the first look; how long painting the whole screen again takes (a measurement put into the source for a moment, then put back) |
@@ -127,12 +131,12 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `run_key_breaks.py`, `run_try_breaks.py`, `model_breaks.py`, `model_breaks5.py` | Breaks on purpose, each alone, in a copy of the project, and whether the tests catch them |
 | `run_look_breaks.py` | Breaks of the look on purpose, each alone, in a copy of the project, and whether `test_look.py` catches them |
 | `run_reset_breaks.py` | Breaks of `setup` bringing back the first look on purpose, each alone, in the project's own source, put back after each, and whether `test_look_reset.py` catches them (`run_tests.py` makes them in a copy of the project) |
-| `test_app.py <kinds> [dump]`, `test_app.py nocard` | `make` against the stand-in: the request, the script listed in the terminal, the app's run, the box in the middle and the rows, for the kinds in `app_cases.py`; a machine without a network card |
+| `test_app.py <kinds> [dump]`, `test_app.py nocard` | A line that asks for an app, against the stand-in, which answers it with `make_app` and then the request for the app: the requests, the script listed in the terminal, the app's run, the box in the middle and the rows, for the kinds in `app_cases.py`; a machine without a network card |
 | `test_app_first_start.py keylater\|keyfirst` | A request for an app at a first start on a fresh divided disk, with the key given either way |
 | `run_app_breaks.py`, `app_breaks.py` | The breaks on purpose for apps, each alone; a change to the interpreter is built into the copy too |
 | `check_lua.py <script> [boots]` | A Lua script of `lua/` in place of the greeting script, in a copy: what the interpreter really does |
 | `run_regress_apps.py` | Everything for apps, then the try of a key and `run_regress_try.py`'s list, one after another |
-| `test_apps_kept.py [scenario ...]` | Apps kept on the disk and the panel of apps, in the stand-in copy: a first run in a new folder and a restart, keeping after `make`, notebooks with things in pieces written from outside, looks, a small screen, a damaged, a full and a failing disk, QEMU killed while an app is kept, the kernel from before pieces on such a disk, and how long keeping and opening take |
+| `test_apps_kept.py [scenario ...]` | Apps kept on the disk and the panel of apps, in the stand-in copy: a first run in a new folder and a restart, keeping after an app asked for in a line, notebooks with things in pieces written from outside, looks, a small screen, a damaged, a full and a failing disk, QEMU killed while an app is kept, the kernel from before pieces on such a disk, and how long keeping and opening take |
 | `run_apps_kept_breaks.py`, `apps_kept_breaks.py` | The breaks on purpose for apps kept on the disk, each alone, in the copy |
 | `run_regress_kept.py` | Everything for apps kept on the disk, then the app tests, the try of a key, the locked key against the stand-in, the look's test and `run_regress_try.py`'s list, one after another: every suite of the two lists above, each once |
 | `test_lines.py [start] [early] [small] [noscreen] [noserial] [later] [held]` | The kernel's own lines: the start screen, judged dot by dot with the machine paused at moments along the way; the usual picture at the prompt; F1, a key, Enter; a key during the start; a screen of 800 by 600, where the lines move up; no screen; no serial port; lines printed while F1 shows them; F1 held down (pressed again without being let go, through QEMU's machine protocol) |
@@ -141,3 +145,5 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `test_boot_disk.py [made] [start] [again] [refuses]` | The boot disk: a new one read from outside, QEMU started from it alone, a new kernel that leaves boos's part alone, and the files the script must refuse |
 | `run_boot_disk_breaks.py` | Breaks of `make-boot-disk.ps1` on purpose, each alone, in a copy of the script, and whether `test_boot_disk.py` catches them |
 | `time_lines.py [boots] [commit]` | How much later the lines of a start arrive than with another commit's kernel, built from a clean export |
+| `test_chat_tools.py [scenario ...]` | Every line to the model, in the stand-in copy: no key, the model's words and the tokens, an app asked for in words and run again after a restart, the panel's page turned, what a model may send that must not be believed, a line while an answer is awaited, no network card, no notebook |
+| `run_chat_tools_breaks.py`, `chat_tools_breaks.py` | The breaks on purpose for every line to the model, each alone, in the copy |

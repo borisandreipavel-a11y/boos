@@ -2,7 +2,9 @@
 docs/notebook.md, "A thing in pieces"). Every scenario boots the stand-in copy of the project (net_copy.py), so that a
 break on purpose (apps_kept_breaks.py, through BREAK) reaches all of them; the copy's edits point its network at the
 stand-in and touch neither the notebook nor the apps. What is meant comes from apps_kept_model.py, written from the
-notes, and the disk file is read from outside with Python's own CRC-32. Made-up key only.
+notes, and the disk file is read from outside with Python's own CRC-32. Made-up key only. Every line goes to the model
+(docs/tools.md): the stand-in (model_server.py) answers a line such as "make a dice" with the tool make_app and the
+request that follows "make ", and then the request for the app with the kind of answer the scenario names.
 
   first     as a person's first run in a new folder goes: a fresh disk, the questions of the onboarding (a name,
             Enter alone at the key and at the look), `key`, `make`, and a restart: its lines and every dot.
@@ -16,7 +18,7 @@ notes, and the disk file is read from outside with Python's own CRC-32. Made-up 
   requests  notes from outside with signs that are not plain, a long request, another form, no request, names that
             belong to no app, and the highest number: a new app then cannot be numbered, while an app made for the
             request of a note without a script takes that note's number.
-  look      the panel in a kept look, and painted again when another look is tried.
+  look      the panel in a kept look, painted again when the model picks another look, and in that look after a restart.
   small     a screen of 800 by 600 dots.
   damaged   a damaged notebook: its apps are listed, nothing is written.
   full      a part with room for the script but not for the note, and one without room for the script.
@@ -30,6 +32,7 @@ notes, and the disk file is read from outside with Python's own CRC-32. Made-up 
 Usage: python test_apps_kept.py [scenario ...]        (with none: all but "older" and "times")
 Environment: BREAK (a break on purpose, apps_kept_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
 import io
+import json
 import os
 import random
 import shutil
@@ -43,6 +46,8 @@ os.environ["DIVIDED_DISK"] = ""
 
 import app_cases
 from apps_kept_breaks import BREAKS
+from chat_tools_breaks import BREAKS as TOOL_BREAKS
+from chat_tools_model import NO_KEY, ToolsChat, making
 from apps_kept_model import (ANSWERS, MakeChat, app_things, apps_of, kept_line, kept_script, not_kept_row, note,
                              pieces_of, raw, read_things, screen, start_lines, write_notebook, crc)
 from boot import HERE, PROJECT, RUNS, Machine
@@ -74,12 +79,14 @@ def report(what, ok, text=None):
 
 
 def kernel():
-    """The stand-in copy, built once, with the break named by BREAK if there is one."""
+    """The stand-in copy, built once, with the break named by BREAK if there is one (of apps_kept_breaks.py or
+    chat_tools_breaks.py)."""
     if not _copy:
         name = os.environ.get("BREAK")
         if name:
             print("BREAK", name)
-        _copy.append(build(PORT, roots=["a"], more=BREAKS[name] if name else None))
+        catalogue = dict(BREAKS, **TOOL_BREAKS)
+        _copy.append(build(PORT, roots=["a"], more=catalogue[name] if name else None))
     return _copy[0]
 
 
@@ -108,7 +115,7 @@ class Run:
                 os.remove(self.log)
             self.server = subprocess.Popen([sys.executable, os.path.join(HERE, "model_server.py"), str(PORT),
                                             os.path.join(tls, "a", "both-chain.pem"), os.path.join(tls, "a", "both.key"), self.log,
-                                            ",".join(behaviours)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=HERE)
+                                            json.dumps(list(behaviours))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=HERE)
             assert self.server.stdout.readline().strip() == "ready"
         self.m = Machine(tag, extra=(drive if drive is not None else one_disk(disk)) + (extra or []), disk=False, network=network,
                          kernel=kernel_file or kernel())
@@ -243,10 +250,13 @@ def give_key(run, chat=None):
 
 
 def make_app(run, request, kind, kept, chat=None):
-    """Sends `make` with a request; waits for the rows of the answer and the run, and for the line that says the app
-    is kept, or for none. Gives back the App lines of the run."""
+    """Sends "make" and a request as a line; the stand-in answers it with the tool make_app and that request. Waits
+    for the row about asking for the app, the rows of the answer and the run, and for the line that says the app is
+    kept, or for none. Gives back the App lines of the run."""
     run.mark()
     run.press("make " + request + "\n", chat)
+    asked = run.wait_line("Kernel: I am asking the model to make", "Kernel: I cannot ask", "Kernel: the model asked", timeout=90)
+    report(run.tag + " tool for %r" % request[:20], asked == making(request), None if asked == making(request) else "got %r" % asked)
     first = run.wait_line("Kernel: the model", "Kernel: the provider", "Kernel: no answer", timeout=120)
     report(run.tag + " answer to %r" % request[:20], first == answer_row(kind), None if first == answer_row(kind) else "got %r" % first)
     second = run.wait_line("Kernel: the app ", timeout=30)
@@ -259,6 +269,7 @@ def make_app(run, request, kind, kept, chat=None):
         extra = [l for l in run.since() if l.startswith("Apps: ") or l.startswith("Kernel: I could not keep the app")]
         report(run.tag + " not kept %r" % request[:20], not extra, None if not extra else "got %r" % extra)
     if chat is not None:
+        chat.row(making(request))
         chat.say(app_cases.outcome(kind, KEY)[0])
         chat.say(app_cases.run_expect(kind, KEY)[0])
     return [l for l in run.since() if l.startswith("App: ")]
@@ -509,19 +520,25 @@ def scenario_requests():
 
 
 def scenario_look():
-    print("look: the panel in a kept look, and when another look is tried")
+    print("look: the panel in a kept look, painted again when the model picks another, and after a restart")
     items = app_things(1, "a dice that rolls", SCRIPT) + app_things(2, "a coin to flip", b'show("heads")')
     disk, last = answered_disk("kept-look", items, answers=[("name", b""), ("locked key", b""), ("look", b"Night")])
-    run = Run("kept-look", disk)
-    chat = KeyedChat(1280, kept_name=b"", key_entry=b"", kept_look=b"Night")
+    run = Run("kept-look", disk, behaviours=["look=3"])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"Night")
     listed = ["a coin to flip", "a dice that rolls"]
     run.shot("night", screen(1280, 800, chat, listed))
-    run.press("look\n", chat)
-    run.press("3\n", chat)
-    run.shot("paper-tried", screen(1280, 800, chat, listed))
-    run.press("\n", chat)
-    run.shot("paper-kept", screen(1280, 800, chat, listed))
+    give_key(run, chat)
+    run.mark()
+    run.press("paper please\n", chat)
+    row = run.wait_line("Kernel: this is look", "Kernel: the model", timeout=60)
+    chat.pick(3)
+    report("look picked by the model", row == chat.said[-1], None if row == chat.said[-1] else "got %r" % row)
+    run.shot("paper", screen(1280, 800, chat, listed))
     run.end()
+    again = Run("kept-look-again", disk)
+    chat2 = KeyedChat(1280, kept_name=b"", key_entry=b"", kept_look=b"Paper", last_line=b"paper please")
+    again.shot("paper-kept", screen(1280, 800, chat2, listed))
+    again.end()
 
 
 def scenario_small():
@@ -545,7 +562,7 @@ def scenario_damaged():
     run = Run("kept-damaged", disk)
     run.mark()
     run.press("hello\n")
-    said = run.wait_line('Kernel: you said "hello"', timeout=20)
+    said = run.wait_line(NO_KEY, timeout=20)
     report("damaged line answered", said is not None)
     lines = run.end()
     check_start("damaged", lines, before["things"], entries=before["end"] - 1, damaged=True)
@@ -772,4 +789,5 @@ def main():
     print("FAILURES: %s" % failures if failures else "FAILURES: none (all as meant)")
 
 
-main()
+if __name__ == "__main__":
+    main()

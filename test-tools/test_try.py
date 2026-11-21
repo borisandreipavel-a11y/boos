@@ -1,7 +1,7 @@
 """Trying the key: every key typed at the onboarding goes to the stand-in for the provider (in a copy of the
-project, see net_copy.py) with the question that "ask" asks, and the onboarding goes on by the answer. Each
-scenario starts the stand-in with its own list of answers; the stand-in writes down the key every question
-carried. Pictures dot by dot against the model (keyed_model.py), the terminal's rows, the notebook read from
+project, see net_copy.py) with the model's one fixed question, and the onboarding goes on by the answer. A line
+sent afterwards goes to the model with the key that was kept (docs/tools.md). Each scenario starts the stand-in
+with its own list of answers; the stand-in writes down the key every question carried. Pictures dot by dot against the model (keyed_model.py), the terminal's rows, the notebook read from
 outside, the keys the stand-in saw, and dumps of memory.
 Usage: python test_try.py [scenario ...]   (default: all)"""
 import json
@@ -12,6 +12,7 @@ import time
 
 from boot import HERE, RUNS
 from certs import test_keys
+from chat_tools_model import body_meant, model_row
 from keyed_model import KeyedChat, LOCKED, TRY_AWAY
 from lockref import lock
 from nb import put_notebook
@@ -33,7 +34,9 @@ PW = "green door"
 PW2 = "red window"
 EARLY = "Zv7Wz8Xy3Q"           # typed while a key is tried; must never be taken
 
-GOOD = 'the model answered "Hello there, how are you?".'
+GOOD = 'the model answered "Hello there, how are you?".'  # the try's answer to the fixed question
+LINE = "hello"  # a line sent with the key kept: it goes to the model
+WORDS = "Hello there, how are you?"  # the stand-in's "good", which a line gets as the model's words
 REFUSED = 'the provider turned the question down (401): "Invalid API key (request id: 20261119120000123456789TEST)".'
 REFUSED_SLOW = 'the provider turned the question down (401): "Invalid API key (request id: 20261119120000123456789SLOW)".'
 
@@ -72,7 +75,8 @@ TRY_BREAKS = {
                                   "    let verdict = if parts.number == 401 { KeyVerdict::Unknown } else if parts.number == 403 { KeyVerdict::Known } else { KeyVerdict::NotTold };\n"),
     "a key that cannot be tried not kept": ("onboarding.rs", "        Err(reason) => {\n            trial_take();\n            wait_for(Waiting::NewPassword);\n",
                                             "        Err(reason) => {\n            trial_forget();\n            wait_for(Waiting::NewPassword);\n"),
-    "the try's answer not handed to the onboarding": ("chat.rs", "    if answer.errand != Errand::KeyTry {\n", "    if true {\n"),
+    "the try's answer not handed to the onboarding": ("chat.rs", "    let mut rows = onboarding_tried(answer.key, &answer.sentence);\n",
+                                                      "    let mut rows = Vec::from([format!(\"Kernel: {}\", answer.sentence)]);\n"),
 }
 
 
@@ -106,7 +110,9 @@ def seen(tag, meant):
     notes = [json.loads(line) for line in open(LOG)] if os.path.exists(LOG) else []
     asked = [n for n in notes if "key came as" in n]
     keys = [n["key came as"][len("Bearer "):] for n in asked]
-    bodies = all(n.get("body as meant") for n in asked)
+    # A try asks the fixed question; a line goes with the list of tools (no app is kept in these scenarios).
+    bodies = all(n.get("body") == body_meant(LINE, []) if n.get("request for") == "a line" else n.get("body as meant")
+                 for n in asked)
     ok = keys == meant and bodies
     print("  %-38s %s" % (tag + " stand-in", "saw %d questions, each with the key meant%s" % (len(keys), "" if bodies else ", A BODY NOT AS MEANT") if ok
                          else "SAW %r, MEANT %r" % ([k[:8] for k in keys], [k[:8] for k in meant])))
@@ -145,9 +151,9 @@ def refused_then_works():
     s.wait(3)
     s.look("3-locked")
     s.mark()
-    s.keys("ask\n")
-    s.wait_text("the model answered")
-    s.chat.say(GOOD)
+    s.keys(LINE + "\n")
+    s.wait_text("Model: ")
+    s.chat.row(model_row(WORDS))
     s.look("4-asked")
     memory(s, "memory", {K1: 0, K2: 1, PW: 0})
     s.end(secrets=[K1, K2, PW])
@@ -156,7 +162,7 @@ def refused_then_works():
 
 def setup_refused_keeps_old():
     """After the key was unlocked, "setup" and a key the provider does not know: Enter alone keeps the locked key,
-    and the key unlocked at this start still goes with "ask"."""
+    and the key unlocked at this start still goes with every line."""
     serve("realrefusal,good")
     disk = fresh_disk("try-b")
     put_notebook(disk, [("name", b"Bo"), ("locked key", lock(PW.encode(), K2.encode(), os.urandom(16), os.urandom(12), 600000))])
@@ -170,9 +176,9 @@ def setup_refused_keeps_old():
     s.keys("\n")
     s.look("2-locked-key-stays")
     s.mark()
-    s.keys("ask\n")
-    s.wait_text("the model answered")
-    s.chat.say(GOOD)
+    s.keys(LINE + "\n")
+    s.wait_text("Model: ")
+    s.chat.row(model_row(WORDS))
     s.look("3-asked-with-the-old-key")
     memory(s, "memory", {K3: 0, K2: 1, PW: 0})
     s.end(secrets=[K2, K3, PW])
@@ -243,7 +249,7 @@ def no_card():
 
 
 def busy():
-    """An answer to "ask" is still awaited when a key is typed at "setup": the try is turned away, the key is kept
+    """The answer to a line is still awaited when a key is typed at "setup": the try is turned away, the key is kept
     for this start, and the late answer is said as an ordinary row."""
     serve("silent")
     disk = fresh_disk("try-f")
@@ -252,7 +258,7 @@ def busy():
     s = Start("try-f", disk, chat, kernel=kernel, network="open")
     s.keys(PW + "\n")
     s.wait(3)
-    s.keys("ask\n")
+    s.keys(LINE + "\n")
     s.keys("setup\n\n")
     s.keys(K3 + "\n")
     s.look("1-turned-away")

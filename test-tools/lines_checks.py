@@ -254,7 +254,8 @@ def noscreen_check(kernel, tag="lines-noscreen"):
     finally:
         serial = machine.quit()
     lines = end_lines(serial, problems)
-    for wanted in ["Screen: none found, the firmware has no graphics service", "You: x", 'Kernel: you said "x"']:
+    for wanted in ["Screen: none found, the firmware has no graphics service", "You: x",
+                   'Kernel: I cannot ask the model, because no key is kept. Send the line "key" first.']:
         if wanted not in lines:
             problems.append("missing line %r" % wanted)
     print("  %-44s %s" % ("no screen", "as meant" if not problems else problems))

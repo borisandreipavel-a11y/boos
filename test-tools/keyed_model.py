@@ -2,8 +2,9 @@
 password, and the look, written from the design in docs/chat.md (not from the kernel's code), on top of picture.Chat.
 
 The look: when the questions about the key are over, the question for a look follows if the notebook holds no answer
-about the look yet (an entry under "look": a name from the list, or no signs), and always after `setup`. The line
-`look` asks the same question at any time. kept_look is what the notebook holds under "look" before the start (None:
+about the look yet (an entry under "look": a name from the list, or no signs), and always after `setup`. At any other
+time the model picks a look with the tool pick_look (pick() below). Every line but `key` and `setup` goes to the model
+(picture.Chat). kept_look is what the notebook holds under "look" before the start (None:
 nothing); the default, DISK, lets start_helper.Start read it from the disk file before the machine starts. With
 auto_look, start_helper.Start answers the question with Enter alone as soon as it appears, so that tests about other
 things go on as they were written."""
@@ -35,7 +36,7 @@ LOCKED_ROWS = ["Kernel: the key is locked and kept on the disk. Each start will 
                "Kernel: type a line and press Enter."]
 WITHOUT_KEY = 'Kernel: going on without the key. Send "setup" to lock a new one. Type a line and press Enter.'
 UNLOCKING = "Kernel: unlocking the key. This takes a second or two."
-UNLOCKED = 'Kernel: the key is unlocked, so "ask" works. Type a line and press Enter.'
+UNLOCKED = 'Kernel: the key is unlocked, so your lines go to the model. Type a line and press Enter.'
 WRONG = ["Kernel: the key could not be unlocked: the password is wrong, or the locked key was changed.",
          "Kernel: type the password again, or press Enter alone to go on without the key."]
 STAR_STEPS = ("key", "trying", "new", "same", "password")
@@ -478,17 +479,28 @@ class KeyedChat(Chat):
                 self.add("person", mine)
                 self.add("kernel", answer)
                 self.line = ""
-            elif line == "look":
-                mine = "%s: look" % self.person()
-                self.look_asking = True
-                self.look_tried = False
-                self.said += [mine, LOOK_QUESTION]
-                self.add("person", mine)
-                self.add("kernel", LOOK_QUESTION)
-                self.line = ""
             else:
                 super().key(sign)
             if self.can_keep:
                 self.kept.append(("last line", line.encode()))
             return
         super().key(sign)
+
+    def pick(self, number):
+        """The tool pick_look, when the model asks for it: the look in use and kept at once, and the row about it
+        (docs/tools.md)."""
+        if not 1 <= number <= len(ORDER):
+            self.say("the model asked for look %d, but there are only %d looks." % (number, len(ORDER)))
+            return
+        name = ORDER[number - 1]
+        self.look = name
+        named = "look %d, %s" % (number, name)
+        if not self.can_keep:
+            self.say("this is %s. It lasts until the machine is switched off, because there is no notebook to keep it in." % named)
+        elif self.look_kept == name:
+            self.say("this is %s, which is kept on the disk already." % named)
+        else:
+            self.look_kept = name
+            self.look_answered = True
+            self.kept.append(("look", name.encode()))
+            self.say("this is %s. It is kept on the disk." % named)

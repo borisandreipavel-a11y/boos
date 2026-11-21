@@ -1,11 +1,14 @@
 //! Asking the model: one question goes to the provider, a service on the
 //! internet that passes it on to a model, and the answer comes back as text.
-//! The question is either the one fixed question, or a request for an app,
-//! whose answer is a script (see `apps.rs`). The provider wants a key with
-//! every question, which is the secret that the person at the machine typed.
-//! This is the one file that may borrow that secret, and it sends it to one
-//! site only, over an encrypted link.
-//! Notes: `docs/model.md`, `docs/apps.md`.
+//! The question is a line typed in the chat box, sent with the list of what
+//! the kernel can do (see `tools.rs`), whose answer is the model's words or
+//! a tool it asks for; a request for an app, whose answer is a script (see
+//! `apps.rs`); or the one fixed question, with which a key typed at the
+//! onboarding is tried. The provider wants a key with every question, which
+//! is the secret that the person at the machine typed. This is the one file
+//! that may borrow that secret, and it sends it to one site only, over an
+//! encrypted link.
+//! Notes: `docs/model.md`, `docs/tools.md`, `docs/apps.md`.
 
 use alloc::format;
 use alloc::string::String;
@@ -16,7 +19,8 @@ use smoltcp::iface::{Interface, SocketSet};
 use smoltcp::wire::Ipv4Address;
 
 use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
-use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_text, json_text};
+use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_number, json_find_text, json_text};
+use crate::tools::CHAT_INSTRUCTIONS;
 use crate::network::Card;
 use crate::page::{plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
@@ -28,14 +32,15 @@ const MODEL_PATH: &str = "/v1/chat/completions";
 // The model that is asked, by the name the provider knows it by.
 const MODEL_NAME: &str = "deepseek/deepseek-v4.1-flash-1017";
 
-// The one question that is asked for now.
+// The one fixed question, with which a key typed at the onboarding is tried.
 pub const QUESTION: &str = "Say hello in five words.";
 
-// The longest answer the model may give. Models count in tokens, which are
-// pieces of words; a token is about three quarters of a word. A model that
-// thinks before it answers may spend tokens on that too, so there is room
-// for far more than a short answer needs. The provider is paid by the token
-// used, not by this limit.
+// The longest answer the model may give to the fixed question or to a line
+// typed in the chat box. Models count in tokens, which are pieces of words; a
+// token is about three quarters of a word. A model that thinks before it
+// answers may spend tokens on that too, so there is room for far more than a
+// short answer needs. The provider is paid by the token used, not by this
+// limit.
 const ANSWER_TOKENS: usize = 1000;
 
 // The longest answer the model may give when it is asked for an app. A script
@@ -84,6 +89,26 @@ pub enum KeyVerdict {
     NotTold,
 }
 
+// A tool the model asked for in its answer to a line: the tool's name, and
+// what the model gives it, as a text that is itself JSON. Both come from
+// outside the kernel: the name is cleaned and the key is hidden in both, and
+// the main loop checks them before anything is done (see `tools.rs`).
+#[derive(Clone, PartialEq)]
+pub struct ToolCall {
+    pub name: String,
+    pub inputs: String,
+}
+
+// What the model answered to a line typed in the chat box: its words, if it
+// said any, cleaned, with the key hidden and cut at `WORDS_SHOWN` signs; the
+// first tool it asked for, if it asked for one; and whether it asked for more
+// than one.
+pub struct ChatReply {
+    pub words: Option<String>,
+    pub tool: Option<ToolCall>,
+    pub more: bool,
+}
+
 // Asks the model the question and says in one sentence how that went: what
 // the model answered, why the provider turned the question down, or why no
 // answer came; and how the provider took the key. Called by the network's
@@ -114,24 +139,53 @@ pub fn model_tell(
     told
 }
 
+// Sends a line typed in the chat box to the model, with the list of what the
+// kernel can do for it (`tools`, the JSON that `chat_tools` in `tools.rs`
+// made when the line was sent). Gives back what the kernel has to say about
+// the answer in one sentence: nothing when the model answered as it should,
+// otherwise why the provider turned the line down, why no answer came, or
+// what was wrong with it. Beside it, what the model answered, and the
+// terminal's line about how many tokens that took. The key is the one that is
+// kept, borrowed as for the fixed question. Called by the network's task when
+// it runs an errand.
+pub fn model_chat(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    line: &str,
+    tools: &str,
+) -> (String, Option<ChatReply>, Option<String>) {
+    let mut key_room = [0u8; SECRET_LIMIT];
+    let key_length = key_copy(false, &mut key_room);
+    let told = if key_length == 0 {
+        (String::from("no answer came, because no key is kept"), None, None)
+    } else {
+        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools)
+    };
+    wipe(&mut key_room);
+    told
+}
+
 // Asks the model to write an app, and says in one sentence how that went:
 // what the model wrote, or why it is no app, why the provider turned the
 // question down, or why no answer came. Beside the sentence it gives back the
-// script, if the model wrote one that passed the checks (see `apps.rs`).
-// `wanted` is what was typed after the word `make`. The key is the one that
-// is kept, borrowed as for the fixed question. Called by the network's task
-// when it runs an errand.
+// script, if the model wrote one that passed the checks (see `apps.rs`), and
+// the terminal's line about how many tokens the answer took. `wanted` is the
+// request the model gave with the tool `make_app`. The key is the one that is
+// kept, borrowed as for the fixed question. Called by the network's task when
+// it runs an errand.
 pub fn model_app(
     interface: &mut Interface,
     card: &mut Card,
     sockets: &mut SocketSet,
     name_server: Option<Ipv4Address>,
     wanted: &str,
-) -> (String, Option<String>) {
+) -> (String, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
     let key_length = key_copy(false, &mut key_room);
     let told = if key_length == 0 {
-        (String::from("no answer came, because no key is kept"), None)
+        (String::from("no answer came, because no key is kept"), None, None)
     } else {
         app_question_ask(interface, card, sockets, name_server, &key_room[..key_length], wanted)
     };
@@ -180,10 +234,41 @@ fn question_ask(
     }
 }
 
+// A line typed in the chat box, with the key in hand. The request holds two
+// messages: first the instruction text, as the "system" message, which tells
+// a model how to behave before it reads what it is asked; then the line, as
+// the "user" message, exactly as it was typed. Behind them comes the list of
+// tools: what the kernel can do when the model asks for it.
+fn chat_question_ask(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    key: &[u8],
+    line: &str,
+    tools: &str,
+) -> (String, Option<ChatReply>, Option<String>) {
+    let body = format!(
+        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"tools\":{},\"max_tokens\":{},\"stream\":false}}",
+        json_text(MODEL_NAME),
+        json_text(CHAT_INSTRUCTIONS),
+        json_text(line),
+        tools,
+        ANSWER_TOKENS
+    );
+    match provider_exchange(interface, card, sockets, name_server, key, &body) {
+        Err(sentence) => (sentence, None, None),
+        Ok((answer, whole)) => {
+            let (sentence, reply) = chat_reply(&answer, whole, key);
+            (sentence, reply, answer_tokens(&answer))
+        }
+    }
+}
+
 // The request for an app, with the key in hand. It holds two messages: first
 // the instruction text, as the "system" message, which tells a model how to
 // behave before it reads what it is asked; then the request, as the "user"
-// message, with `APP_LEAD` in front of the words that were typed.
+// message, with `APP_LEAD` in front of it.
 fn app_question_ask(
     interface: &mut Interface,
     card: &mut Card,
@@ -191,7 +276,7 @@ fn app_question_ask(
     name_server: Option<Ipv4Address>,
     key: &[u8],
     wanted: &str,
-) -> (String, Option<String>) {
+) -> (String, Option<String>, Option<String>) {
     let body = format!(
         "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
         json_text(MODEL_NAME),
@@ -200,8 +285,11 @@ fn app_question_ask(
         APP_TOKENS
     );
     match provider_exchange(interface, card, sockets, name_server, key, &body) {
-        Err(sentence) => (sentence, None),
-        Ok((answer, whole)) => app_sentence(&answer, whole, key),
+        Err(sentence) => (sentence, None, None),
+        Ok((answer, whole)) => {
+            let (sentence, script) = app_sentence(&answer, whole, key);
+            (sentence, script, answer_tokens(&answer))
+        }
     }
 }
 
@@ -472,6 +560,124 @@ fn app_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<Strin
         Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => (empty_sentence(body, out_of_room, held_back, cut_short, APP_TOKENS), None),
         Err(reason) => (words_not_found(body, key, reason, cut_short), None),
     }
+}
+
+// The places in a good answer's body where a tool the model asks for stands,
+// from the provider's documentation: a list of tool calls in the message,
+// beside its words or in their place. Each names a tool and gives it what it
+// needs, as a text that is itself JSON. Only the first is done; whether there
+// is a second is only looked at.
+const TOOL_NAME: &[Step<'static>] =
+    &[Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("tool_calls"), Step::Place(0), Step::Name("function"), Step::Name("name")];
+const TOOL_INPUTS: &[Step<'static>] = &[
+    Step::Name("choices"),
+    Step::Place(0),
+    Step::Name("message"),
+    Step::Name("tool_calls"),
+    Step::Place(0),
+    Step::Name("function"),
+    Step::Name("arguments"),
+];
+const SECOND_TOOL: &[Step<'static>] =
+    &[Step::Name("choices"), Step::Place(0), Step::Name("message"), Step::Name("tool_calls"), Step::Place(1), Step::Name("function"), Step::Name("name")];
+
+// The most signs of a tool's name that are kept, and the most bytes of what
+// the model gives the tool. Every tool of this kernel's has a short name and
+// needs a few words at most; what is longer is given to the tool as nothing.
+const TOOL_NAME_LONGEST: usize = 64;
+const TOOL_INPUTS_LONGEST: usize = 1024;
+
+// Says what the kernel has to say about the answer to a line typed in the
+// chat box, and gives back what the model answered: its words, the tool it
+// asked for, or both. Nothing needs saying when the model answered as it
+// should. An answer that was cut off or held back is said, and a good answer
+// with neither words nor a tool in it is said as for the fixed question. Any
+// answer but a good one (the number 200) is said exactly as for the fixed
+// question, and holds nothing from the model.
+fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatReply>) {
+    let Some(parts) = answer_parts(answer).filter(|parts| parts.number == 200) else {
+        return (answer_sentence(answer, whole, key).0, None);
+    };
+    let body = parts.body;
+    let cut_short = if whole { "" } else { " Its answer did not come whole." };
+
+    // How the answer ended, read as for the fixed question.
+    let ending = json_find_text(body, ENDING).ok();
+    let out_of_room = ending.as_deref() == Some("length");
+    let held_back = ending.as_deref() == Some("content_filter");
+
+    // The first tool the model asked for. Its name is cleaned like every word
+    // from the provider. What it gives the tool is JSON, which cleaning would
+    // spoil: it is only held to its bound, with the key hidden in it.
+    let tool = json_find_text(body, TOOL_NAME).ok().map(|name| {
+        let mut inputs = json_find_text(body, TOOL_INPUTS).unwrap_or_default().into_bytes();
+        if inputs.len() > TOOL_INPUTS_LONGEST {
+            inputs.clear();
+        }
+        key_hide(&mut inputs, key);
+        // Only signs of the key, which are plain signs, became stars, so the
+        // text is still proper text.
+        ToolCall { name: words_cut(&name, key, TOOL_NAME_LONGEST), inputs: String::from_utf8_lossy(&inputs).into_owned() }
+    });
+    let more = tool.is_some() && json_find_text(body, SECOND_TOOL).is_ok();
+
+    // The model's words, without the spaces and line ends before and after.
+    let found = model_words(body);
+    let words = match &found {
+        Ok(words) if !words.trim().is_empty() => Some(words_shown(words.trim(), key)),
+        _ => None,
+    };
+
+    let sentence = if words.is_some() || tool.is_some() {
+        if out_of_room {
+            format!("the model's answer was cut off at the limit of {} tokens.{}", ANSWER_TOKENS, cut_short)
+        } else if held_back {
+            format!("the provider held part of the model's answer back.{}", cut_short)
+        } else if !whole {
+            String::from("the provider's answer did not come whole.")
+        } else {
+            String::new()
+        }
+    } else {
+        match found {
+            Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),
+            Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),
+            Err(reason) => words_not_found(body, key, reason, cut_short),
+        }
+    };
+    (sentence, Some(ChatReply { words, tool, more }))
+}
+
+// The places in a good answer's body that say how many tokens it took, which
+// is what the provider is paid for: those of the question; how many of them
+// the provider had kept from an earlier question, which costs far less (the
+// model's maker and the provider name two places for that); those of the
+// answer; and how many of them went on thinking.
+const TOKENS_IN: &[Step<'static>] = &[Step::Name("usage"), Step::Name("prompt_tokens")];
+const TOKENS_REPEATED: [&[Step<'static>]; 2] = [
+    &[Step::Name("usage"), Step::Name("prompt_cache_hit_tokens")],
+    &[Step::Name("usage"), Step::Name("prompt_tokens_details"), Step::Name("cached_tokens")],
+];
+const TOKENS_OUT: &[Step<'static>] = &[Step::Name("usage"), Step::Name("completion_tokens")];
+const TOKENS_THINKING: &[Step<'static>] = &[Step::Name("usage"), Step::Name("completion_tokens_details"), Step::Name("reasoning_tokens")];
+
+// The terminal's line about how many tokens a good answer (the number 200)
+// took; nothing for any other answer.
+fn answer_tokens(answer: &[u8]) -> Option<String> {
+    let parts = answer_parts(answer).filter(|parts| parts.number == 200)?;
+    let body = parts.body;
+    let (Ok(asked), Ok(answered)) = (json_find_number(body, TOKENS_IN), json_find_number(body, TOKENS_OUT)) else {
+        return Some(String::from("Tokens: the provider did not say how many this answer took"));
+    };
+    let mut line = format!("Tokens: {} in", asked);
+    if let Some(repeated) = TOKENS_REPEATED.iter().find_map(|path| json_find_number(body, path).ok()) {
+        line.push_str(&format!(", {} of them repeated", repeated));
+    }
+    line.push_str(&format!("; {} out", answered));
+    if let Ok(thinking) = json_find_number(body, TOKENS_THINKING) {
+        line.push_str(&format!(", {} of them thinking", thinking));
+    }
+    Some(line)
 }
 
 // The model's words in the body of a good answer: the text at `WORDS`, or

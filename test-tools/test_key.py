@@ -41,7 +41,11 @@ def locked():
     s.keys(PW + "\n")
     s.wait(3)
     s.look("6-locked")
+    # A line goes to the model with the key kept; this machine's network names no name server.
+    s.mark()
     s.keys("hello\n")
+    s.wait_text("no answer came")
+    s.chat.say(NO_NAME_SERVER)
     s.end(secrets=[KEY, PW, "lamp", "lamb"])
 
     s = Start("locked-2", disk, KeyedChat(1280, kept_name=b"Ada", last_line=b"hello", key_entry=LOCKED, password=PW))
@@ -234,8 +238,12 @@ def during():
     disk = fresh_disk("key-during")
     put_notebook(disk, [("name", b"Ed"), ("locked key", locked_from_outside())])
     s = Start("during", disk, KeyedChat(1280, kept_name=b"Ed", key_entry=LOCKED, password=PW))
+    s.mark()
     s.keys(PW + "\n" + "hello\n")
     s.wait(3)
+    # The line goes to the model with the key just unlocked; this machine's network names no name server.
+    s.wait_text("no answer came")
+    s.chat.say(NO_NAME_SERVER)
     s.look("1-line-after-unlock")
     s.end(secrets=[KEY, PW])
 

@@ -65,6 +65,10 @@ SUITES = [
          leave_out={"times": "a measurement of how long keeping and opening take, with no verdict"},
          seconds=dict(first=55, make=85, echo=35, outside=20, requests=60, look=25, small=20, damaged=20, full=95, failing=50,
                       cut=360, older=90)),
+    # Every line to the model, in the stand-in copy, whose stand-in answers each line with words or a tool call
+    # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
+    dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
+         seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=100, busy=40, nocard=20, nodisk=30)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -96,10 +100,10 @@ NO_TEST = [".github/", "lua/", "run.bat", "run-boot-disk.bat", "test-tools/check
            "test-tools/time_repaint.py", "test-tools/time_lines.py", "test-tools/make_lock_values.py", "test-tools/restore.py",
            "test-tools/crlf.py"]
 # Words only: a change to these boots nothing.
-WORDS = [".md", "LICENSE", ".gitignore", ".gitattributes"]
+WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 19, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8, "lines": 18}
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 16}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -122,9 +126,7 @@ CAUGHT_BY = {
     'break apps: noclean': 'appodd: script lines',
     'break apps: nocut': 'appodd: script lines',
     'break apps: nohide': 'appecho: app lines',
-    'break apps: asktokens': 'request 2',
-    'break apps: anyprefix': 'before-key: picture',
-    'break apps: nokeycheck': 'app: run row',
+    'break apps: asktokens': 'line request 1',
     'break apps: nolead': 'request 1',
     'break apps: norun': 'app: run row',
     'break apps: noseed': 'random numbers repeat from run to run',
@@ -234,4 +236,20 @@ CAUGHT_BY = {
     'break lines: the report left off the stop screen': 'stop-own',
     "break lines: a failure early on painted in the lines' colours": 'stop-firmware',
     'break lines: no stop screen while the lines cover the screen': 'stop-view',
+    'break tools: echo': "tools-nokey 'hello'",
+    'break tools: nokeycheck': "tools-nokey 'hello'",
+    'break tools: nolooktool': 'words the request for a line',
+    'break tools: norunlist': 'dice the request with the kept app',
+    'break tools: nopagetool': 'pages the first request',
+    'break tools: kernelwords': "tools-words 'hello'",
+    'break tools: notokens': "tools-words 'hello'",
+    'break tools: nocache': "tools-words 'count please'",
+    'break tools: nomore': "tools-odd 'two looks'",
+    'break tools: nokeyhide': "tools-odd 'an app with my key'",
+    'break tools: remake': "tools-dice-again 'roll the dice'",
+    'break tools: rawrequest': "tools-odd 'an app with my key'",
+    'break tools: nonumbertext': "tools-odd 'as text'",
+    'break tools: looknotkept': "tools-odd 'two looks'",
+    'break tools: pagenotturned': 'tools-pages page-2',
+    'break tools: jsonfraction': 'words the check of JSON at startup',
 }

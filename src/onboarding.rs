@@ -411,9 +411,9 @@ pub fn onboarding_secret(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String>
 }
 
 // The answer to the question for the key. A key that is typed is tried with
-// the one question that "ask" asks: it waits apart from the key kept before
-// (see `secret.rs`), and the network's task asks the model with it. Its
-// answer comes later, to `onboarding_tried`. A key that cannot be tried now
+// the model's one fixed question (`model_tell`): it waits apart from the key
+// kept before (see `secret.rs`), and the network's task asks the model with
+// it. Its answer comes later, to `onboarding_tried`. A key that cannot be tried now
 // is kept all the same, and a password to lock it with is asked for. Enter
 // alone keeps a key that is locked on the disk as it is, or else notes that
 // no key is wanted.
@@ -446,8 +446,8 @@ fn key_answer(typed: &[u8]) -> Vec<String> {
 }
 
 // Takes the provider's answer to the try of a key: `sentence` says what came
-// back, as for "ask", and `verdict` how the provider took the key (see
-// `model.rs`). Gives back what the kernel says to it. Only a provider that
+// back, in the words of the fixed question, and `verdict` how the provider
+// took the key (see `model.rs`). Gives back what the kernel says to it. Only a provider that
 // does not know the key makes the kernel ask for it again; that key is not
 // kept. With any other answer the key is kept, and a password to lock it
 // with is asked for.
@@ -568,7 +568,7 @@ fn password_answer(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
     }
     say("Kernel: unlocking the key. This takes a second or two.");
     match secret_unlock(typed, locked_key()) {
-        Ok(_) => finish(vec![String::from("Kernel: the key is unlocked, so \"ask\" works. Type a line and press Enter.")]),
+        Ok(_) => finish(vec![String::from("Kernel: the key is unlocked, so your lines go to the model. Type a line and press Enter.")]),
         Err(reason) if reason == NOT_UNLOCKED => vec![
             String::from("Kernel: the key could not be unlocked: the password is wrong, or the locked key was changed."),
             String::from("Kernel: type the password again, or press Enter alone to go on without the key."),

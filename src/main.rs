@@ -47,13 +47,14 @@ mod notebook; // The notebook: named things kept on the disk.
 mod interpreter; // The interpreter for apps written as Lua text.
 mod secret; // A secret typed by the person at the machine, kept in memory only.
 mod errand; // Errands: work the main loop hands to the network's task.
-mod json; // JSON: writing a text that way, and finding a text in it.
+mod json; // JSON: writing a text that way, and finding a text or a number in it.
 mod json_values; // The values the check of JSON is made against.
 mod model; // Asking the model a question through its provider.
 mod lock; // The lock: a secret locked with a password.
 mod lock_values; // The values the check of the lock is made against.
 mod apps; // Apps made on request: what the model is told, and the script it writes.
 mod apps_kept; // Apps kept on the disk, and the panel that lists them.
+mod tools; // The tools: what the kernel can do when the model asks for it.
 
 use alloc::format;
 use alloc::string::String;

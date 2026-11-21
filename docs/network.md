@@ -199,9 +199,9 @@ Every start of the kernel fetches the page, so every start sends one name questi
 
 Steps 1 to 3 and the encrypted exchange are one function, `site_exchange`. It is given the site's name, the request as bytes, how many seconds the greeting and the answer together may take, and a piece of code that takes each piece of the answer. It answers whether the site said through the link that it had sent everything. `page_get` calls it with the example site, a `GET` request and 15 seconds, and reads the answer with `Answer`. The question to the model calls it with the provider's site, a `POST` request and 60 seconds, and reads the answer in its own way; see [model.md](model.md). Only the network's task may call it.
 
-### Fetching it again when asked
+### Fetching it again
 
-The same fetch can be asked for from the chat box, with the line `fetch` (see [chat.md](chat.md)). The chat box leaves an errand, and `network_task` picks it up in its loop and calls `page_tell`, which does the fetch through the same `page_get` as `page_fetch` and gives back one sentence instead of printing a report: how the site answered and how long its page is, or why no page came. The lines about the name and about the site proving who it is are printed in the terminal as at startup. The sockets a fetch uses are taken out of the stack's set when it ends, so fetches can follow each other without end: twelve in a row took no frame.
+The page is fetched once, at startup. The line `fetch`, which once fetched it again from the chat box, is an ordinary line now, and goes to the model like any other (see [tools.md](tools.md)). Every exchange with the provider goes through the same `site_exchange`; the sockets an exchange uses are taken out of the stack's set when it ends, so exchanges can follow each other without end: twelve fetches in a row took no frame, when they could still be asked for.
 
 ## QEMU's built-in network
 

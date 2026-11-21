@@ -1,25 +1,22 @@
 # Apps made on request
 
-Code: `src/apps.rs`; the asking itself in `model_app` in `src/model.rs`; the errand `Errand::AppRequest` in `src/errand.rs` and its run in `src/network.rs`; the line `make` and the run in `chat_answer` in `src/chat.rs`; `box_script` in `src/app_box.rs` and `seed` in `interpreter/src/lib.rs`; keeping an app and the panel of apps in `src/apps_kept.rs`, with the notebook in `src/notebook.rs`.
+Code: `src/apps.rs`; the asking itself in `model_app` in `src/model.rs`; the errand `Errand::AppRequest` in `src/errand.rs` and its run in `src/network.rs`; the tools `make_app` and `run_app` in `src/tools.rs`; the run in `chat_answer` in `src/chat.rs`; `box_script` in `src/app_box.rs` and `seed` in `interpreter/src/lib.rs`; keeping an app and the panel of apps in `src/apps_kept.rs`, with the notebook in `src/notebook.rs`.
 
 The idea of this kernel is that a model writes the apps. The person at the machine says in the chat box what app they want, and the model writes it as a script in the language Lua, which the interpreter runs inside the locked box (see [interpreter.md](interpreter.md) and [box.md](box.md)).
 
-**Today the script is asked for, checked, shown in the terminal and run once.** What the app shows appears in the box in the middle of the screen, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went. **An app that ran to its end is kept on the disk,** and the panel of apps near the top left of the screen lists it, also after the machine was switched off and on again. Nothing runs a kept app again yet.
+**Today the script is asked for, checked, shown in the terminal and run once.** What the app shows appears in the box in the middle of the screen, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went. **An app that ran to its end is kept on the disk,** and the panel of apps near the top left of the screen lists it, also after the machine was switched off and on again. **A kept app runs again** when the person asks for it and the model picks it, without being written anew.
 
 ## The words
 
-- A **request** is what the person types after the word `make`: `make a dice that rolls` asks for "a dice that rolls".
+- A **request** is the few words that say what an app does, such as "a dice that rolls". The model gives it with the tool `make_app`, from what the person typed (see [tools.md](tools.md)); before every line went to the model, it was what the person typed after the word `make`.
 - The **instruction text** is a fixed text that the kernel sends to the model with every request, before the request itself. It says how an app for this kernel is written.
 - A **system message** is the part of a request to a model that tells it how to behave, apart from what it is asked. The provider's documentation lists `system` among the roles a message can have.
 - **Marks** here are lines that begin with three backquotes, ```` ``` ````, which many models put around code.
 
 ## What it does today
 
-- **A line that begins with the word `make` and a space asks for an app** (`MAKE_WORD`, `app_wanted`): what follows the word, without spaces at either end, is the request. The line is not given back. A request has at most 45 signs, what is left of the 50-sign line after the word and its space.
-- `make` by itself, or with nothing but spaces behind it, asks nothing: `Kernel: write what app to make after the word, such as "make a dice".`
-- `makes`, `maker` or `Make a dice` are ordinary lines and are given back.
-- **It needs a kept key,** like `ask`: without one, `Kernel: I cannot ask the model for an app, because no key is kept. Send the line "key" first.`
-- **Otherwise it leaves an errand for the network's task** (see "Errands" in [tasks.md](tasks.md)) and answers at once, `Kernel: I am asking the model to make "a dice that rolls".` One errand at a time: while the answer to a `make`, an `ask` or a `fetch` is awaited, the next one is turned away, `Kernel: I cannot ask the model for an app, because the answer to what I asked before has not come yet`. On a machine without an address on the network it is turned away at once.
+- **The person asks for an app in their own words,** in any line: `I would like a dice to roll`. The line goes to the model like every line (see [tools.md](tools.md)), and the model asks for a new app with the tool `make_app` and a request, such as "a dice that rolls". The request comes from outside: it is cleaned byte by byte, spaces at either end go, and it is cut at 45 signs before it is shown, sent on or kept.
+- **The kernel then asks the model for the app itself** (`app_make`), with the request below, as an errand for the network's task (see "Errands" in [tasks.md](tasks.md)), and says so at once: `Kernel: I am asking the model to make "a dice that rolls".` That needs a kept key, as every line does; an empty request gets `Kernel: the model asked for an app, but did not say what it should do.`
 - **The answer comes later, as a row of its own,** and, when the model wrote a script that passes the checks below, the terminal shows the script under that row, line by line. Then the script runs (see "Running it" below): what it prints follows as `App:` lines, what it shows appears in the box in the middle of the screen, and a second row says how the run went:
 
 ```text
@@ -83,9 +80,9 @@ The same as for the fixed question (see [model.md](model.md)), with two differen
 - The first message is the instruction text, as the system message. The second is the request, with `Make this app: ` (`APP_LEAD`) in front of the words that were typed, so that a model reads them as the app to make. Both texts are written with `json_text` (see [json.md](json.md)), so quotes and backslashes in the request travel as they were typed.
 - **`max_tokens` is 4000** (`APP_TOKENS` in `model.rs`), against 1000 for the fixed question: a script is longer than a greeting, and a model that thinks before it answers may pay its thinking out of the same tokens. 4000 tokens are about 16 KB of text, so the thoughts and the script together stay well inside the 64 KB the kernel reads of an answer. The provider is paid by the token used, not by the limit: at the model's prices in November 2026 (0.60 dollars a million tokens out, twice that in the provider's busy hours) the whole limit would cost at most about half a cent.
 - The body is about 1,500 bytes (1,531 to 1,548 in the tests, for requests of 6 to 23 signs), so the request travels in several pieces through the connection's 512 bytes of sending room; the encrypted link sends them one after another (see [network.md](network.md)).
-- The key is the kept one, borrowed once for the asking exactly as for `ask`; a request cannot be made with a key being tried at the onboarding.
+- The key is the kept one, borrowed once for the asking exactly as for a line; a request cannot be made with a key being tried at the onboarding.
 - The wait for the answer is the same 60 seconds (`MODEL_WAIT`). The provider's page for the model gave, in November 2026, about 170 tokens a second, with the first token within 2.7 seconds for half of the questions and within 10 for 95 of 100; so 4000 tokens fit in the minute. How long the real model takes for an app was not seen.
-- What is typed after `make` goes to the provider, and from there to the maker of the model, as for `ask`.
+- The request goes to the provider, and from there to the maker of the model, as every line does.
 
 ## Taking the script out of the answer
 
@@ -138,13 +135,14 @@ Right after the row about the run, `chat_answer` hands the app to `app_keep` in 
 - **Which apps are kept:** every app that ran to its end, with either of the two rows that say so (it showed something, or it showed nothing). An app that was stopped, for a mistake, for too much work or for any other reason, is not kept.
 - **What is kept,** in the notebook (see [notebook.md](notebook.md)), as two things under names made from the app's number:
   - `app 3 script`: the script exactly as it ran, which is what the checks above took out of the model's words, with any piece of the key already turned into stars. A script longer than 448 bytes is kept in pieces; the longest, 32,768 bytes, in 74.
-  - `app 3`: a note. Its first byte, 1, says what form the rest has, so that later forms can say more about an app; in form 1 the rest is the request, the words that were typed after `make`.
+  - `app 3`: a note. Its first byte, 1, says what form the rest has, so that later forms can say more about an app; in form 1 the rest is the request.
 - **In that order:** the script first, and then it is read back from the disk and compared with the script that ran, byte for byte; only if they are the same is the note kept. So an app whose note is there had its whole script there first.
 - **While it is kept, keys wait,** as while it runs: keeping is done in the main loop, and every entry is written, put down for good and read back, and the whole script is read back once more. How long that takes is in [testing.md](testing.md).
 - **Its number** is the one after the highest kept so far, starting at 1, up to 999,999,999 (nine digits). **An app made for exactly the same request as a kept one takes that one's number:** its script takes the place of the old one, and the note, which says the same, is not written again. So asking again for the same app gives a fresh try in the same place, and the list does not fill up with copies. Requests that differ in a space or a capital letter are different requests.
 - **Nothing is said in the chat box when an app is kept,** as with every line that is kept. The terminal says `Apps: the app made for "a dice that rolls" is kept on the disk`, and the panel of apps (below) shows its first page with the app at the top.
 - **When it cannot be kept** in a notebook that can be added to, a row says why: `Kernel: I could not keep the app, because the notebook is full.`, or `the disk did not give its script back as it was written`, or the disk's own reason, or, once an app numbered 999,999,999 is kept, `the numbers for apps have run out` for every new request (nothing of it is written; an app made for the request of a kept one still takes that one's number). On a machine without a notebook that can be added to (no disk, no part of the kernel's own, a damaged notebook) nothing is kept and nothing is said; the lines at startup have said why.
 - **Both things are kept unlocked,** readable by anyone with the disk, like every line kept there.
+- **A kept app runs again** when the person asks for it in a line and the model picks it with the tool `run_app`, which lists the kept apps by number and request (see [tools.md](tools.md)). Its script is read from the notebook and run as it was kept, without asking the model to write it again: `Kernel: I am running the app made for "a dice that rolls".`, then the row about how the run went. Nothing is written.
 
 At every start, once the notebook is opened, `apps_kept_begin` (called at the end of `chat_begin`) finds the kept apps again: every note under a name `app` and a number (one to nine digits, without a 0 in front) whose form is 1 and which holds a request. An app counts if the notebook found its script whole (see "A thing in pieces" in [notebook.md](notebook.md)); the notebook checked the check value of every script in pieces as it opened. When any app is kept, the terminal lists them, the one kept last first, and the panel shows them:
 
@@ -171,7 +169,7 @@ Apps: page 1 of 2
 
 - **It is there only while at least one app is kept.** It appears at a start that finds kept apps, with the rest of the usual picture when the start is over (see "The kernel's lines" in [screen.md](screen.md)), and when the first app is kept. A screen without kept apps looks as it did before.
 - **The first row says which page is shown and how many there are,** and below it come the apps of that page, five a page, the one kept last first, each as `- ` and its request. A row holds 47 signs, so a request of 45 always fits whole.
-- **It shows the first page,** at every start and again whenever an app is kept. Nothing turns the page yet.
+- **It shows the first page,** at every start and again whenever an app is kept. When it has more than one page, the model can turn it with the tool `turn_page`, when the person asks for another page (see [tools.md](tools.md)).
 - **Its sizes are kept in one place,** `APPS_PANEL_STYLE` in `apps_kept.rs`: its top left corner 40 dots from the left and 80 from the top, 600 dots across, a frame 3 dots thick, the text 10 dots from the frame, letters at size 2 and 4 dots between rows, and five apps a page. That makes it 158 dots high: on QEMU's usual screen of 1280 by 800 dots it covers columns 40 to 639 and rows 80 to 237. It keeps that size whatever the page shown holds. It lies under the sentence and above the box with an app's text, which begins at row 270 on a screen of 800 by 600 dots and lower on larger ones; on a smaller screen the two could overlap.
 - **Its colours are those of the box with an app's text,** from the look in use: the frame's, the inside's and the letters'. `look_paint` paints it again with everything else when the look changes (`apps_panel_again`).
 - **Painting it** paints the whole panel in the frame's colour, the inside over it, and the rows. **Nothing lands outside it:** only as many signs of a row are written as fit whole between the frame and the empty room on both sides.
@@ -215,10 +213,10 @@ Script 13: show("Rolled " .. n .. " " .. faces[n])
 - Feed it the awkward shapes: marks with and without words around them, one line of marks, two blocks, marks only, both kinds of line end, tabs, signs that are not plain, lines over 200 signs, a script exactly 32,768 bytes long and one byte longer, a script that holds the key, an answer cut off, held back, empty or in another shape.
 - **Give every script a known outcome:** what it prints, what the box shows after it, and the row about its run, worked out by hand from Lua's rules, since no other Lua interpreter is at hand to compare with. For a script that rolls dice, take the number from the line it printed and see that the box shows the same number. Make every kind of stop happen once: a mistake, a mistake in writing, fuel, memory, too many prints, too many showings.
 - **Run a script that prints random numbers twice in one start:** the two lines must differ.
-- Keep `ask` in the same test: the fixed question must still be sent as before.
+- Ask for the app in words, through the tool `make_app` of a stand-in that answers lines too (see [tools.md](tools.md)), and see that the second request is the request for an app, byte for byte.
 
 [testing.md](testing.md) lists what was verified.
 
 ## Limits
 
-See "Apps made on request" in [open-points.md](open-points.md). In short: an app runs once, and a kept app cannot be run again yet; a kept app cannot be taken away, only replaced; the panel shows its first page only; the request has at most 45 signs; the model is told the same fixed text every time; typing waits while an app runs; an app can show one line and print to the terminal, and nothing else.
+See "Apps made on request" in [open-points.md](open-points.md). In short: a kept app runs again only when the model picks it; a kept app cannot be taken away, only replaced; the panel turns its page only when the model is asked to; the request has at most 45 signs; the model is told the same fixed text every time; typing waits while an app runs; an app can show one line and print to the terminal, and nothing else.

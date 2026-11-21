@@ -1,10 +1,11 @@
-//! Apps made on request: the person at the machine says in the chat box what
-//! app they want, with the line `make` and a few words, and the model writes
-//! the app as a Lua script. This file holds what the model is told about
-//! writing an app for this kernel, what the chat box answers to such a line,
-//! how the script is taken out of the model's words and checked, how it is
-//! shown in the terminal, and how it is run. The asking itself is done by
-//! `model.rs`, the one file that may borrow the key.
+//! Apps made on request: the person at the machine asks for an app in the
+//! chat box, in their own words; the model asks the kernel for it with the
+//! tool `make_app` and a short request (see `tools.rs`), and is then asked to
+//! write the app as a Lua script. This file holds what the model is told
+//! about writing an app for this kernel, what the kernel says when the model
+//! asks for one, how the script is taken out of the model's words and
+//! checked, how it is shown in the terminal, and how it is run. The asking
+//! itself is done by `model.rs`, the one file that may borrow the key.
 //! Notes: `docs/apps.md`.
 
 use alloc::format;
@@ -18,10 +19,6 @@ use crate::page::plain_text;
 use crate::random::random_number;
 use crate::secret::secret_length;
 use crate::serial::serial_print;
-
-// The word that, at the start of a line sent in the chat box, asks the model
-// to write an app. What follows it says which app.
-pub const MAKE_WORD: &str = "make";
 
 // What the model is told before the request, every time: which language to
 // write in, what the script can and cannot do, and the two functions it has
@@ -58,29 +55,22 @@ pub const APP_LEAD: &str = "Make this app: ";
 // How many signs of a line of the script are shown in the terminal.
 const SCRIPT_LINE_SHOWN: usize = 200;
 
-// Whether a line sent in the chat box asks for an app: the word by itself, or
-// followed by a space and what to make. Gives back what follows the word,
-// without spaces at either end. A line such as "makes" or "Make a dice" is an
-// ordinary line.
-pub fn app_wanted(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix(MAKE_WORD)?;
-    if rest.is_empty() || rest.starts_with(' ') { Some(rest.trim()) } else { None }
-}
-
-// What the chat box answers to a line that asks for an app. The asking is an
-// errand for the network's task, like "ask"; the model's answer comes later,
-// as a row of its own (see `chat_answer` in `chat.rs`). Only the main loop
-// may call this, as every function the chat box calls.
-pub fn app_ask(wanted: &str) -> String {
-    if wanted.is_empty() {
-        return format!("Kernel: write what app to make after the word, such as \"{} a dice\".", MAKE_WORD);
+// The tool `make_app`: has the model write the app for this request, as an
+// errand for the network's task; the model's answer comes later, as a row of
+// its own (see `chat_answer` in `chat.rs`). The request comes from the model,
+// and was cleaned and cut by `tool_do` in `tools.rs`. Gives back what the
+// kernel says at once. Only the main loop may call this, as every function
+// the chat box calls.
+pub fn app_make(request: &str) -> String {
+    if request.is_empty() {
+        return String::from("the model asked for an app, but did not say what it should do.");
     }
     if secret_length() == 0 {
-        return String::from("Kernel: I cannot ask the model for an app, because no key is kept. Send the line \"key\" first.");
+        return String::from("I cannot ask the model for an app, because no key is kept. Send the line \"key\" first.");
     }
-    match errand_ask(Errand::AppRequest(String::from(wanted))) {
-        Ok(()) => format!("Kernel: I am asking the model to make \"{}\".", wanted),
-        Err(reason) => format!("Kernel: I cannot ask the model for an app, because {}", reason),
+    match errand_ask(Errand::AppRequest(String::from(request))) {
+        Ok(()) => format!("I am asking the model to make \"{}\".", request),
+        Err(reason) => format!("I cannot ask the model for an app, because {}", reason),
     }
 }
 

@@ -3,6 +3,7 @@ test_look.py catches each one, booting the copy's kernel: the looks and the line
 at the end of the onboarding. The project itself is only read, so other tests can run beside these.
 Usage: python run_look_breaks.py [break ...]   (default: all)
 BREAKS is data: run_tests.py runs the same breaks."""
+import json
 import os
 import subprocess
 import sys
@@ -22,7 +23,7 @@ BREAKS = {
     "a number one off": ("look.rs", "                IN_USE = number - 1;\n", "                IN_USE = number % LOOKS.len();\n", ["pick"]),
     "a tried look not shown at once": ("chat.rs", "            if look_changed {\n                look_paint();\n",
         "            if false {\n                look_paint();\n", ["pick"]),
-    "the kept look not written": ("look.rs", "notebook_keep(LOOK_ENTRY, look().name.as_bytes())", "Ok::<(), &'static str>(())", ["pick"]),
+    "the kept look not written": ("look.rs", "return match notebook_keep(LOOK_ENTRY, look().name.as_bytes())", "return match Ok::<(), &'static str>(())", ["pick"]),
     "the kept look not read at startup": ("look.rs", "    match notebook_find(LOOK_ENTRY) {\n",
         "    match Ok::<Option<Vec<u8>>, &'static str>(None) {\n", ["pick"]),
     "the screen not painted again at startup": ("chat.rs", "    if look_changed {\n        look_paint();\n",
@@ -75,7 +76,7 @@ def main():
             print("   THE BREAK WAS NOT MADE |", str(reason)[-400:], flush=True)
             continue
         run = subprocess.run([sys.executable, "test_look.py"] + scenarios, cwd=HERE, capture_output=True, text=True,
-                             env=dict(os.environ, KERNEL_FILE=kernel))
+                             env=dict(os.environ, KERNEL_FILE=kernel, KERNEL_BREAK=json.dumps([file, old, new])))
         last = [l for l in run.stdout.splitlines() if l.startswith("FAILURES:")]
         caught = bool(last) and last[-1] != "FAILURES: none"
         wrong = [l.strip() for l in run.stdout.splitlines() if ("dots wrong" in l or ("terminal and disk" in l and "as meant" not in l) or "VAIN" in l)]

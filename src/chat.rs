@@ -1,27 +1,29 @@
 //! The chat box: the place on the screen where the person at the machine
-//! types, with what was said so far above the line being typed.
+//! types, with what was said so far above the line being typed. Every line
+//! that is sent goes to the model, except the two the kernel keeps for
+//! itself, `key` and `setup`; the model's words come back as rows of their
+//! own, and a tool it asks for is done (see `tools.rs`).
 //! Notes: `docs/chat.md`.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::apps::{app_ask, app_print_script, app_run, app_wanted};
+use crate::apps::{app_print_script, app_run};
 use crate::apps_kept::{app_keep, apps_kept_begin};
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
-use crate::look::{LOOK_WORD, look, look_answer, look_asking, look_begin, look_paint, look_question};
-use crate::model::QUESTION;
+use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::onboarding::{
     NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, onboarding_secret, onboarding_tried,
     onboarding_trying, onboarding_waiting, onboarding_wants_secret, person_name,
 };
-use crate::page::SITE;
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
 use crate::serial::serial_print;
+use crate::tools::{chat_tools, tool_do};
 
 // The longest line that can be typed, in signs. A key pressed after that is
 // ignored, until a sign is taken away again or the line is sent with Enter.
@@ -34,15 +36,6 @@ const LAST_LINE: &str = "last line";
 // The line that, sent by itself, makes the kernel ask for a secret: a text
 // such as the key of a paid service, which must not be seen by anybody else.
 const SECRET_WORD: &str = "key";
-
-// The line that, sent by itself, makes the kernel fetch the example page from
-// the web again and say in the chat box how the site answered.
-const FETCH_WORD: &str = "fetch";
-
-// The line that, sent by itself, makes the kernel ask the model one fixed
-// question, with the secret that was taken before as the key, and say in the
-// chat box what came back.
-const ASK_WORD: &str = "ask";
 
 // While a secret is typed, each sign shows as a star. At most this many stars
 // are shown; behind them the row says how many more signs there are.
@@ -386,30 +379,82 @@ fn recall_row() -> Option<String> {
 // Says something in the chat box that is not an answer to the line just
 // sent: adds it to what was said as a row of the kernel's and repeats it in
 // the terminal. `chat_answer` calls this when the answer to an errand has
-// come in. A text that comes from outside the kernel must be cleaned before
-// it is handed over.
-fn chat_say(text: &str) {
+// come in, and `tools.rs` when it does what the model asked for. A text that
+// comes from outside the kernel must be cleaned before it is handed over.
+pub fn chat_say(text: &str) {
     let row = format!("Kernel: {}", text);
     serial_print(&format!("{}\r\n", row));
     chat_add(Speaker::Kernel, &row);
     chat_paint_rows();
 }
 
+// Says the model's own words in the chat box, as a row that begins with
+// "Model:", so that they cannot be taken for the kernel's own sentences, and
+// repeats it in the terminal. The words were cleaned in `model.rs`.
+fn model_say(words: &str) {
+    let row = format!("Model: {}", words);
+    serial_print(&format!("{}\r\n", row));
+    chat_add(Speaker::Kernel, &row);
+    chat_paint_rows();
+}
+
+// Every line that is sent, but for `key` and `setup`, goes to the model, with
+// the list of what the kernel can do for it (see `tools.rs`). That needs a
+// key, and it is an errand for the network's task: the answer comes later,
+// as rows of its own (see `chat_answer`). Gives back the row that says what
+// happens now.
+fn model_ask(said: &str) -> String {
+    if secret_length() == 0 {
+        return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
+    }
+    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools() }) {
+        Ok(()) => String::from("Kernel: I am asking the model."),
+        Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
+    }
+}
+
 // Says the answer to an errand, which the main loop picks up from the
 // network's task. The answer to the try of a key goes to the onboarding,
-// which says what comes of it; any other answer is said as it is. A script
-// that the model wrote comes with its answer: it is shown in the terminal
-// below that row, then run, and a second row says how the run went (see
-// `apps.rs`). An app that ran to its end is kept on the disk; a third row
-// comes only if that failed (see `apps_kept.rs`).
+// which says what comes of it. For a line, the model's words come first, then
+// what the kernel has to say about the answer, if anything, and then the
+// tool the model asked for is done. For an app, the row about the answer
+// comes first; a script that the model wrote is shown in the terminal below
+// that row, then run, and a second row says how the run went (see `apps.rs`).
+// An app that ran to its end is kept on the disk; a third row comes only if
+// that failed (see `apps_kept.rs`). The terminal's line about the tokens a
+// good answer took follows the row about the answer.
 pub fn chat_answer(answer: Answer) {
-    if answer.errand != Errand::KeyTry {
+    if let Errand::ChatLine { .. } = &answer.errand {
+        let reply = answer.reply;
+        if let Some(words) = reply.as_ref().and_then(|reply| reply.words.as_deref()) {
+            model_say(words);
+        }
+        if !answer.sentence.is_empty() {
+            chat_say(&answer.sentence);
+        }
+        if let Some(tokens) = &answer.tokens {
+            serial_print(&format!("{}\r\n", tokens));
+        }
+        if let Some(reply) = reply {
+            if let Some(call) = &reply.tool {
+                if reply.more {
+                    chat_say("the model asked for more than one thing at once, so I do only the first.");
+                }
+                tool_do(call);
+            }
+        }
+        return;
+    }
+    if let Errand::AppRequest(request) = &answer.errand {
         chat_say(&answer.sentence);
+        if let Some(tokens) = &answer.tokens {
+            serial_print(&format!("{}\r\n", tokens));
+        }
         if let Some(script) = &answer.script {
             app_print_script(script);
             let (sentence, ran) = app_run(script);
             chat_say(&sentence);
-            if let (true, Errand::AppRequest(request)) = (ran, &answer.errand) {
+            if ran {
                 if let Some(trouble) = app_keep(request, script) {
                     chat_say(&trouble);
                 }
@@ -444,7 +489,8 @@ fn kernel_rows(rows: &[String]) {
 
 // Takes one typed key, given as its letter. A letter is added to the line
 // being typed, Backspace takes the last one away, and Enter sends the line:
-// it moves up into what was said, and the kernel answers by giving it back.
+// it moves up into what was said, and goes to the model, unless it is one of
+// the two lines the kernel keeps for itself.
 // While the kernel waits for the answer to its question (see
 // `onboarding.rs`), or for the number of a look (see `look.rs`), the line
 // that is sent is that answer.
@@ -507,47 +553,20 @@ pub fn chat_key(letter: u8) {
             let said = core::mem::take(line);
             let mine = format!("{}: {}", person_name(), said);
 
-            // One line is not given back: the word that asks the kernel to
-            // take a secret. From the next key on, what is typed is the
-            // secret, until Enter.
+            // Two lines stay with the kernel and never go to the model. The
+            // word that asks the kernel to take a secret: from the next key
+            // on, what is typed is the secret, until Enter.
             let asks_for_secret = said == SECRET_WORD;
             let answer = if asks_for_secret {
                 String::from("Kernel: type the secret and press Enter. It shows as stars.")
-            } else if said == FETCH_WORD {
-                // Another line that is not given back: it asks for the example
-                // page. The chat box cannot use the network itself. It leaves
-                // an errand for the network's task and says so; the answer
-                // comes later, as a row of its own (see `chat_say`).
-                match errand_ask(Errand::ExamplePage) {
-                    Ok(()) => format!("Kernel: I am asking the network for the page of {}.", SITE),
-                    Err(reason) => format!("Kernel: I cannot ask the network, because {}", reason),
-                }
-            } else if said == ASK_WORD {
-                // A third line that is not given back: it asks the model. That
-                // needs a key, and it is an errand for the network's task too.
-                if secret_length() == 0 {
-                    String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.")
-                } else {
-                    match errand_ask(Errand::ModelQuestion) {
-                        Ok(()) => format!("Kernel: I am asking the model \"{}\"", QUESTION),
-                        Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
-                    }
-                }
-            } else if said == LOOK_WORD {
-                // Another line that is not given back: the kernel lists the
-                // looks, and the next line is the number of one (see
-                // `look.rs`).
-                look_question()
             } else if said == SETUP_WORD {
-                // A fourth line that is not given back: the kernel asks for
-                // the person's name again, and the next line is the answer.
+                // And the word that asks the questions of the onboarding
+                // again: the kernel asks for the person's name, and the next
+                // line is the answer.
                 onboarding_again()
-            } else if let Some(wanted) = app_wanted(&said) {
-                // A fifth: "make" and what app to make. The model is asked to
-                // write it, as an errand for the network's task too.
-                app_ask(wanted)
             } else {
-                format!("Kernel: you said \"{}\"", said)
+                // Every other line goes to the model.
+                model_ask(&said)
             };
             if asks_for_secret {
                 unsafe { SECRET_ASKED = true };

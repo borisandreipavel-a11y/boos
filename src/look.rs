@@ -1,14 +1,15 @@
 //! The look: the colours of everything the kernel draws on the screen, picked
-//! from a short list by the person at the machine. The line `look` lists the
-//! looks and asks for the number of one; the whole screen is painted again in
-//! that look at once, and Enter alone keeps it in the notebook on the disk,
-//! so that every later start shows it too. The onboarding asks the same
-//! question once its questions about the key are over, if the notebook holds
-//! no answer about the look yet (see `onboarding.rs`). The line `setup`
-//! brings the first look back at once, so that no look can leave the screen
-//! unreadable (see `look_reset`). Sizes and places are not part of a look:
-//! they stay in `CHAT_STYLE` in `chat.rs` and `PANEL_STYLE` in `screen.rs`.
-//! Only the startup code and the main loop may call these functions. Notes:
+//! from a short list. When the person asks for another look, the model picks
+//! one with the tool `pick_look` (see `tools.rs`): the whole screen is painted
+//! again in it at once, and it is kept in the notebook on the disk, so that
+//! every later start shows it too. The onboarding lists the looks and asks
+//! for the number of one once its questions about the key are over, if the
+//! notebook holds no answer about the look yet: a number tries that look, and
+//! Enter alone keeps it (see `onboarding.rs`). The line `setup` brings the
+//! first look back at once, so that no look can leave the screen unreadable
+//! (see `look_reset`). Sizes and places are not part of a look: they stay in
+//! `CHAT_STYLE` in `chat.rs` and `PANEL_STYLE` in `screen.rs`. Only the
+//! startup code and the main loop may call these functions. Notes:
 //! `docs/screen.md` ("The look") and `docs/chat.md` ("Picking a look").
 
 use alloc::format;
@@ -20,10 +21,6 @@ use crate::apps_kept::apps_panel_again;
 use crate::chat::chat_paint;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_background, screen_panel_again};
-
-// The line that, sent by itself, makes the kernel list the looks and ask
-// which one to use.
-pub const LOOK_WORD: &str = "look";
 
 // The name under which the look in use is kept in the notebook. The entry
 // holds the look's name, such as "Night". An entry that holds no signs means
@@ -170,8 +167,8 @@ pub fn look_due(setting_up: bool) -> bool {
     notebook_ready() && (setting_up || !unsafe { ANSWERED })
 }
 
-// The question for a look, after the line `look` or at the end of the
-// onboarding: lists the looks and asks for the number of one. Gives back the
+// The question for a look, at the end of the onboarding: lists the looks and
+// asks for the number of one. Gives back the
 // row that says so. From then on the next line that is sent is the answer
 // (see `look_answer`). With four looks the row fits on one row of the chat
 // box on a screen 1280 dots wide.
@@ -348,4 +345,57 @@ pub fn look_paint() {
     chat_paint();
     screen_panel_again();
     apps_panel_again();
+}
+
+// The looks as the model is told about them with the tool `pick_look` (see
+// `tools.rs`): each with its number, its name and a few words on its colours;
+// and how many there are.
+pub fn looks_told() -> (String, usize) {
+    let mut told = String::new();
+    for (place, one) in LOOKS.iter().enumerate() {
+        if place > 0 {
+            told.push_str("; ");
+        }
+        told.push_str(&format!("{} {} ({})", place + 1, one.name, LOOK_WORDS.get(place).unwrap_or(&"")));
+    }
+    (told, LOOKS.len())
+}
+
+// A few words on each look's colours, in the order of the list.
+const LOOK_WORDS: [&str; 4] = [
+    "a dark blue screen, light boxes with orange frames",
+    "an almost black screen, dark grey boxes, light letters",
+    "a white screen, white boxes with grey frames, like a printed page",
+    "black and yellow, the easiest to read",
+];
+
+// The tool `pick_look`: puts the look with this number in use at once, and
+// keeps it in the notebook, so that later starts show it too. Gives back what
+// the kernel says, and whether the look in use changed, in which case the
+// whole screen must be painted again (`look_paint`). A number that is not on
+// the list changes nothing. Without a notebook that can be added to, the look
+// lasts until the machine is switched off.
+pub fn look_pick(number: u64) -> (String, bool) {
+    let Some(place) = number.checked_sub(1).and_then(|place| usize::try_from(place).ok()).filter(|place| *place < LOOKS.len()) else {
+        return (format!("the model asked for look {}, but there are only {} looks.", number, LOOKS.len()), false);
+    };
+    let changed = unsafe { IN_USE } != place;
+    unsafe { IN_USE = place };
+    let said = if !notebook_ready() {
+        format!("this is {}. It lasts until the machine is switched off, because there is no notebook to keep it in.", look_named())
+    } else if unsafe { KEPT } == Some(place) {
+        format!("this is {}, which is kept on the disk already.", look_named())
+    } else {
+        match notebook_keep(LOOK_ENTRY, look().name.as_bytes()) {
+            Ok(()) => {
+                unsafe {
+                    KEPT = Some(place);
+                    ANSWERED = true;
+                }
+                format!("this is {}. It is kept on the disk.", look_named())
+            }
+            Err(reason) => format!("this is {}, but I could not keep it, because {}, so it lasts only until the machine is switched off.", look_named(), reason),
+        }
+    };
+    (said, changed)
 }
