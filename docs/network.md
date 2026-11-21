@@ -1,8 +1,8 @@
 # The network: the card, the stack, and fetching a page
 
-Code: `src/pci.rs`, `src/network_card.rs`, `src/network.rs`, `src/page.rs`, and the network stack in `vendor/`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
+Code: `src/pci.rs`, `src/network_card.rs`, `src/intel_card.rs`, `src/network.rs`, `src/page.rs`, and the network stack in `vendor/`. The port and device-memory functions are in `src/processor.rs`; `map_device_memory` is in `src/page_tables.rs`.
 
-So far the kernel finds the network card, sets it up, and sends and receives packets through it. At startup it asks one question by hand: who is the gateway. After that a network stack, smoltcp, takes over in a task of its own and gets the kernel a network address. With that address the kernel fetches one web page over an encrypted link: it looks up the site's name, connects, lets the site prove who it is, asks for the page and prints how it begins.
+So far the kernel finds the network card, a virtio card or one of Intel's, sets it up, and sends and receives packets through it. At startup it asks one question by hand: who is the gateway. After that a network stack, smoltcp, takes over in a task of its own and gets the kernel a network address. With that address the kernel fetches one web page over an encrypted link: it looks up the site's name, connects, lets the site prove who it is, asks for the page and prints how it begins.
 
 ## The PCI list
 
@@ -23,7 +23,7 @@ So far the kernel finds the network card, sets it up, and sends and receives pac
 - QEMU's card is a "virtio" card: one that exists only in virtual machines and is made to be simple to drive.
 - Its maker's number is `0x1AF4`. Its model is `0x1000` for QEMU's usual card, which knows an older and a newer way of working, and `0x1041` for the card that knows only the newer way.
 - `network_card_find()` looks for either and returns its place.
-- A network card of another make is not recognised and counts as none.
+- Two models of Intel's cards have a driver of their own; see "Intel's network card" below. A network card of another make is not recognised and counts as none.
 
 How the usual card shows up in QEMU 11.1, as seen with the monitor's `info pci` and read by the kernel itself:
 
@@ -97,6 +97,52 @@ How the three areas are laid out, as the driver uses them:
 - Both switch device signals off while they work, so tasks can call them.
 - The card sends no signals. Nothing tells the kernel that a packet has arrived; code that wants one has to keep looking.
 
+## Intel's network card
+
+`src/intel_card.rs` drives a second kind of card: Intel's gigabit cards of the 8254x family, which Intel's "PCI/PCI-X Family of Gigabit Ethernet Controllers Software Developer's Manual" (revision 4.0, 2009) describes. What the driver does comes from that manual; the code names its chapters and tables where it matters.
+
+- **Which models.** Two, the ones that virtual machines play: the 82540EM (maker `0x8086`, model `0x100E`, or `0x1015`, both in the manual's table of models) and the 82545EM (model `0x100F`). QEMU plays the first as its card `e1000` and the second as `e1000-82545em` (its own list, `-device help`). VirtualBox's guide (version 7.2) names them "Intel PRO/1000 MT Desktop (82540EM)" and "Intel PRO/1000 MT Server (82545EM)", and VMware's own page says its card "E1000" is an 82545EM. The manual says that the two models' controls are "essentially the same".
+- **Not known:** the other models of the manual (82541, 82544, 82546, 82547, and the 82545EM for fibre cables, `0x1011`); VirtualBox's third Intel card, "PRO/1000 T Server", an 82543GC, which the manual does not cover; and Intel's later cards, which Linux drives with other drivers (`e1000e`, `igb`, `igc`), among them the 82574 that QEMU plays as `e1000e` and VMware as "E1000E", and the network ports built into many PCs with Intel's chips.
+- `intel_card_find()` looks for the three model numbers in turn and returns the place and the model's name.
+
+### Which card is used
+
+`efi_main` looks for the virtio card first. If there is none, or it cannot be set up, it looks for an Intel card. One card is used; another one is left as the firmware left it. A start with the virtio card prints the same lines as before there was a second driver; the Intel card's first line names it, `Network card: found, an Intel 82540EM, device 3 on bus 0 of the PCI list`. When an Intel card was set up (`intel_card_ready`), `network_card_send` and `network_card_receive` hand over to `intel_card_send` and `intel_card_receive`, so the rest of the network code is the same for both kinds.
+
+### Setting the Intel card up
+
+`intel_card_setup(place)` does this, with device signals off, in the order of chapter 14 of the manual. It returns the card's address, or the reason it could not finish.
+
+1. The same three settings in its PCI facts as for the virtio card: it may use its memory, it may read and write the machine's memory, it sends no signals of its own.
+2. Its controls are 128 KB of memory named by address field 0 (a field that names ports is refused), each control 4 bytes wide. They are made reachable with `map_device_memory`; in QEMU they lie below 4 GB, where nothing has to be added.
+3. Every signal of the card is masked. If something used the card before, the firmware looking for a system on the network, say, it is stopped and started over: the manual says that a receiver that was switched off must start over before it is switched on again. Receiving or sending switched on, or a ring set up, shows such use; a card that was switched on and not used since has all four at zero, and is in the state the manual's setup begins from. Starting over: receiving and sending are switched off, then the card is told to start over (bit 26 of its main settings). The manual asks for about a microsecond before the card is touched again; since the tick count stands still at startup, the pause counts the processor's own steps, 100,000, at least ten microseconds on a processor slower than 10 GHz. Then the driver looks until the bit has cleared. A card nobody used is not started over, because VirtualBox keeps its card's link down for five seconds after every start-over (see "Other virtual machines").
+4. The main settings: the link and its speed as the card's cable part finds them (bits 5 and 6), with forced speed and duplex, the link reset of fibre cards, the inverted loss signal, tags and the cable part's reset all cleared. The four controls of flow control are set to zero, as the manual says for a driver that does not use it.
+5. The card's address is read from its small memory chip (its EEPROM): the first three words, each two bytes of the address with the first byte low, through the "EEPROM read" control (`0x14`), in the layout the manual gives these two models. An address of all zeros, all ones, or one for a group of machines is refused. It is written into the card's first receive address with the mark that makes it count, and the 128 lines of the table for groups of machines are cleared.
+6. The receive ring (below), then receiving is switched on, as the manual wants it, only once the ring is ready: receive, take packets sent to everybody, leave off the 4-byte check at the end of each packet. The size of a buffer stays at the card's own, 2048 bytes.
+7. The send ring, then sending is switched on: send, fill up short packets, 10h tries after a collision and a collision distance of 40h, as chapter 14 names them, and the pause between packets set to 10, 10 and 10, from its table. The description of that control gives 8 and 6 for the second and third parts; both count only on a cable that cannot talk both ways at once.
+
+### The rings
+
+- A ring is a list of slots that the card goes round in a circle. Each slot has a description of 16 bytes: where its buffer is (8 bytes), a length, what to do or what was done, and a status byte whose bit 0 says that the card is done with the slot. A ring's descriptions take one frame; the buffers are 2048 bytes, two to a frame. The receive ring has 64 slots and the send ring 8, the fewest the card allows (a ring's length must be a multiple of 128 bytes): 38 frames in all, about 150 KB.
+- Each ring has two places: the card's (the head), where it works next, and the kernel's (the tail), where the kernel hands over the next slot. The card uses the slots from its own place up to the one before the kernel's; when the two are equal, the card has nothing.
+- **Receiving.** The setup gives the card 63 of the 64 slots. `intel_card_receive(into)` looks at the slot after the last one picked up. If its done mark is set, it copies the packet into `into`, never more than a buffer holds or than `into` has room for, makes the slot ready again and moves the kernel's place onto it, which gives the slot before it back to the card. Otherwise it returns nothing; it does not wait. A packet that does not end in its slot would be longer than the card takes; it is passed over.
+- **Sending.** `intel_card_send(packet)` copies the packet into the next send slot, fills it up with zeros to 60 bytes, the shortest a network carries, and asks the card to add the 4-byte check and to set the done mark. One slot always stays free, so that the kernel's place never catches up with the card's and the card never takes a full ring for an empty one: before it uses a slot, the driver waits, up to a million looks, until the card is done with the slot after it. The card does the slots in order, so it is done with this one then too. The setup marks every send slot done, which the driver takes to mean "free". So up to seven packets can wait to go out, where the virtio card's driver has one frame for sending.
+- **No signals.** All of the card's own signals are masked. The manual allows that: software "can determine if a receive buffer is valid by reading descriptors in memory". The card is told to write each slot back as soon as it is done with it (write-back threshold 0, counted in slots); its default holds slots back until more than one is done. QEMU writes back at once either way, so that setting was not seen to matter.
+- What the driver writes into memory the card reads is in place before the kernel's place moves, and nothing of a packet is read before its done mark. `compiler_fence` keeps the compiler from moving those reads and writes around.
+
+### The Intel card in QEMU
+
+- QEMU's `e1000` takes the virtio card's place as device 3 on bus 0, with signal line 11, and the address `52:54:00:12:34:56`. In a look with the firmware alone, its controls were 128 KB at `0x81040000`, below 4 GB.
+- **QEMU's Intel card holds every arriving packet back for a second after receiving is switched on.** Its source (`hw/net/e1000.c`, version 11.1.0) starts a timer of 1000 ms whenever the receive settings are written, and takes no packet until it has run out; the packets that arrive meanwhile wait and are handed over then. So the answer to the kernel's first question comes about a second after the setup: after 2,444,855 looks in a measurement, more than one round of looks of the gateway question (below), which therefore asks twice. On a computer that looks faster, both rounds can end before QEMU hands the answer over, and the line then says that the gateway did not answer; a GitHub computer did so once. The stack's own questions come later and are answered either way.
+- QEMU's firmware leaves the card unused (all four signs of use read zero), so a start does not start it over. When it is told to, QEMU's card does not start over either: its handling of the main settings only clears the bit.
+- A recording of a start with the card on QEMU's network with no way out held ten packets: the two that the firmware sends before the kernel starts, the kernel's question twice, as the 60 bytes it built, with the gateway's two answers, and the four packets of the address request.
+
+### Other virtual machines
+
+- **VirtualBox:** its two "PRO/1000 MT" cards are the two models above. It does not give them by default to the kind of machine that the steps in [startup.md](startup.md) make, "Other/Unknown (64-bit)": its guide calls AMD's PCnet-FAST III "the default setting on x86 guests", and its source (version 7.2.22) gives that card to machines of that kind, and to every new card that nothing else is said about. The kernel has no driver for it. The Intel card would be chosen with `--nic-type1=82540EM`. Not tried in VirtualBox.
+- What VirtualBox's source (`DevE1000.cpp`, version 7.2.22) says about the steps above: it starts its card over when told to, and then keeps the link down for five seconds (`LinkUpDelay`, 5000 ms by default), receiving nothing and sending nothing meanwhile; it reads a word of the memory chip at once; it holds no packet back after receiving is switched on, as QEMU's card does; it writes each slot back as soon as it is done, and has no control for the write-back threshold (writes to it are dropped); it does not add the 4-byte check to packets it sends, and adds one to received packets only when it is not told to leave it off. A card that nobody used sees its link at once when the driver sets bit 6 of the main settings.
+- **VMware:** its card "E1000" is an 82545EM by VMware's own page. Which card VMware Workstation gives a new machine of an unknown kind was not found in its documentation. Not tried.
+
 ## The gateway question
 
 `gateway_ask(card_address)` in `network.rs` is the kernel's first packet, put together by hand.
@@ -106,7 +152,7 @@ How the three areas are laid out, as the driver uses them:
 - The question is a packet of 60 bytes, the shortest a network carries: to everybody (`ff:ff:ff:ff:ff:ff`), from the card, kind `0806`, and inside it "1" for question, who asks, and whose address is wanted.
 - The kernel has no network address yet. For this question it assumes `10.0.2.15`, the first address QEMU's network hands out (`ASSUMED_OWN_ADDRESS`).
 - It then looks at arriving packets until one is an answer (kind `0806`, "2" for answer) from `10.0.2.2`, and returns the hardware address in it. Other packets are passed over.
-- It runs at startup with device signals off, so the tick count stands still and cannot time the wait. The wait is bounded by looks instead: 2,000,000 (`LOOKS`), about a second in QEMU. The real answer needed 32 looks on average and 283 at most.
+- It runs at startup with device signals off, so the tick count stands still and cannot time the wait. The wait is bounded by looks instead: 2,000,000 (`LOOKS`), under a second in QEMU (0.7 to 0.8 seconds in measurements with either card). If no answer has come by then, it asks once more and waits as long again (`ASKINGS` is 2), then gives up. With the virtio card the real answer needed 32 looks on average and 283 at most; QEMU's Intel card hands it over only a second after its setup, in the second round (see "The Intel card in QEMU").
 - `efi_main` prints the gateway's hardware address, `52:55:0a:00:02:02` in QEMU, or that the gateway did not answer.
 
 This by-hand code is a demonstration from before the network stack. The stack asks such questions itself, for whatever address it needs, and does not use this code. On a network that is not `10.0.2.0` the by-hand question gets no answer and prints so, while the stack carries on unharmed.

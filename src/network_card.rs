@@ -1,7 +1,10 @@
 //! The network card: finding it, setting it up, and sending and receiving
-//! packets through it. Notes: `docs/network.md`.
+//! packets through it. This file drives the virtio card; an Intel card has a
+//! driver of its own (`intel_card.rs`), and when it is the card in use,
+//! sending and receiving go there. Notes: `docs/network.md`.
 
 use crate::frames::{FRAME_SIZE, frame_take};
+use crate::intel_card::{intel_card_ready, intel_card_receive, intel_card_send};
 use crate::page_tables::map_device_memory;
 use crate::pci::{PciPlace, pci_find, pci_memory_address, pci_read, pci_read_8, pci_write};
 use crate::processor::{
@@ -319,6 +322,10 @@ fn hand_to_card(line: WaitingLine, number: u16) {
 // Sends one packet, given as it travels on the network, without the card's
 // notes. Says whether the packet was handed to the card.
 pub fn network_card_send(packet: &[u8]) -> bool {
+    // When the card in use is an Intel card, its own driver sends.
+    if intel_card_ready() {
+        return intel_card_send(packet);
+    }
     let were_on = signals_off();
     let mut handed_over = false;
     unsafe {
@@ -348,6 +355,10 @@ pub fn network_card_send(packet: &[u8]) -> bool {
 // Picks up one arrived packet, if there is one. The packet is copied into
 // `into`, without the card's notes, and its length is returned.
 pub fn network_card_receive(into: &mut [u8]) -> Option<usize> {
+    // When the card in use is an Intel card, its own driver receives.
+    if intel_card_ready() {
+        return intel_card_receive(into);
+    }
     let were_on = signals_off();
     let mut length = None;
     unsafe {
