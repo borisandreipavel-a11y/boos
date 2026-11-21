@@ -36,7 +36,7 @@ BREAKS = {
     # --- Doing the tools ---
     # A kept app asked for is made again instead of being run.
     "remake": {"tools.rs": swap("            Ok((request, script)) => {",
-                               "            Ok((request, _)) => return tool_do(&Tool::Make(request), more),\\n            #[allow(unreachable_patterns)]\\n            Ok((request, script)) => {")},
+                               "            Ok((request, _)) => return tool_do(&Tool::Make(request), more),\n            #[allow(unreachable_patterns)]\n            Ok((request, script)) => {")},
     # The request the model gave is not cleaned or cut.
     "rawrequest": {"tools.rs": swap("return Tool::Make(request_cleaned(&request));", "return Tool::Make(request);")},
     # A number written as a text is not taken.

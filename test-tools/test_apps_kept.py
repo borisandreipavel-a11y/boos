@@ -106,6 +106,8 @@ class Run:
     answers the questions to the model with `behaviours`, in turn."""
 
     def __init__(self, tag, disk, behaviours=(), width=1280, height=800, extra=None, kernel_file=None, network="open", drive=None):
+        # A failed build exits before a server can take the worker's port.
+        kernel_file = kernel_file or kernel()
         self.tag, self.width, self.height = tag, width, height
         self.server = None
         if network == "open":
@@ -117,8 +119,12 @@ class Run:
                                             os.path.join(tls, "a", "both-chain.pem"), os.path.join(tls, "a", "both.key"), self.log,
                                             json.dumps(list(behaviours))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=HERE)
             assert self.server.stdout.readline().strip() == "ready"
-        self.m = Machine(tag, extra=(drive if drive is not None else one_disk(disk)) + (extra or []), disk=False, network=network,
-                         kernel=kernel_file or kernel())
+        try:
+            self.m = Machine(tag, extra=(drive if drive is not None else one_disk(disk)) + (extra or []), disk=False,
+                             network=network, kernel=kernel_file)
+        except BaseException:
+            self._stop_server()
+            raise
         self.at = 0
         if not self.m.wait_for(b"repeated here:", 200):
             print(self.m.serial().decode(errors="replace")[-3000:])
@@ -176,21 +182,28 @@ class Run:
         if wrong:
             to_png(path, path[:-4] + ".png")
 
+    def _stop_server(self):
+        if self.server is not None:
+            self.server.kill()
+            self.server.wait()
+            self.server = None
+
     def end(self, kill=False):
         """Ends the machine and the stand-in. Gives back the kernel's lines; reports bytes that are not plain text, a
         panic and a fault."""
-        if kill:
-            self.m.process.kill()
-            self.m.process.wait()
-            try:
-                self.m.monitor.close()
-            except OSError:
-                pass
-            raw_bytes = self.m.serial()
-        else:
-            raw_bytes = self.m.quit()
-        if self.server:
-            self.server.kill()
+        try:
+            if kill:
+                self.m.process.kill()
+                self.m.process.wait()
+                try:
+                    self.m.monitor.close()
+                except OSError:
+                    pass
+                raw_bytes = self.m.serial()
+            else:
+                raw_bytes = self.m.quit()
+        finally:
+            self._stop_server()
         ours = raw_bytes[max(raw_bytes.find(b"Hello from my kernel!"), 0):]
         lines = ours.decode(errors="replace").split("\r\n")
         odd = [b for b in ours if not (32 <= b <= 126 or b in (13, 10))]
