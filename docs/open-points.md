@@ -52,7 +52,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Only the first Intel card is set up,** and only when no virtio card could be. A machine with two cards uses one.
 - **The Intel card's link is taken as the card finds it.** The driver does not look at whether a cable is plugged in or how fast the link is, and says nothing about it; it does not set up the card's cable part either, as the manual allows when the cable part has found the link by itself.
 - **The Intel card's memory chip is believed.** The sum of its words that the manual gives as a check is not looked at.
-- **The by-hand gateway question asks twice,** because QEMU's Intel card holds arriving packets back for a second after receiving is switched on. Where nobody answers, the start waits two rounds of looks instead of one. The rounds are counted in looks, not in time: on the test computer two rounds last about one and a half seconds, and on a computer twice as fast QEMU's second could outlast them, so that the line would read "did not answer" although the stack's own questions are answered later.
+- **The by-hand gateway question asks twice,** because QEMU's Intel card holds arriving packets back for a second after receiving is switched on. Where nobody answers, the start waits two rounds of looks instead of one. The rounds are counted in looks, not in time: on the test computer two rounds last about one and a half seconds, and on a computer that looks faster QEMU's second outlasts them, so that the line reads "did not answer" although the stack's own questions are answered later. That happened on a GitHub computer. A wait counted in time would need a clock the kernel can read before the timer's signals come through.
 
 ## Encryption
 
