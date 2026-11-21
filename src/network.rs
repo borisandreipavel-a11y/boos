@@ -38,9 +38,14 @@ const GATEWAY: [u8; 4] = [10, 0, 2, 2];
 // it assumes the address QEMU's network hands out first.
 const ASSUMED_OWN_ADDRESS: [u8; 4] = [10, 0, 2, 15];
 
-// How many times to look for the answer before giving up. Device signals are
-// off at startup, so the tick count stands still and cannot time the wait.
+// How many times to look for the answer before asking once more, and how many
+// times to ask. Device signals are off at startup, so the tick count stands
+// still and cannot time the wait; a round of looks lasts under a second in
+// QEMU. QEMU's Intel card holds every arriving packet back for a second after
+// receiving is switched on, so the answer to the first question comes just
+// after the first round, and the second round takes it in.
 const LOOKS: u32 = 2_000_000;
+const ASKINGS: u32 = 2;
 
 // Asks the whole network who has the gateway's network address, and waits
 // for the answer. Returns the gateway's hardware address.
@@ -61,20 +66,22 @@ pub fn gateway_ask(card_address: [u8; 6]) -> Option<[u8; 6]> {
     // Bytes 32 to 37 stay zero: the hardware address that is being asked for.
     question[38..42].copy_from_slice(&GATEWAY); // Whose is it? The gateway's.
 
-    if !network_card_send(&question) {
-        return None;
-    }
-
-    // Look at every packet that arrives until the answer is among them. Other
-    // packets may come first and are passed over.
     let mut packet = [0u8; LONGEST_PACKET];
-    for _ in 0..LOOKS {
-        if let Some(length) = network_card_receive(&mut packet) {
-            let is_answer = length >= 42 && packet[12..14] == [0x08, 0x06] && packet[20..22] == [0x00, 0x02];
-            if is_answer && packet[28..32] == GATEWAY {
-                let mut gateway_address = [0u8; 6];
-                gateway_address.copy_from_slice(&packet[22..28]);
-                return Some(gateway_address);
+    for _ in 0..ASKINGS {
+        if !network_card_send(&question) {
+            return None;
+        }
+
+        // Look at every packet that arrives until the answer is among them.
+        // Other packets may come first and are passed over.
+        for _ in 0..LOOKS {
+            if let Some(length) = network_card_receive(&mut packet) {
+                let is_answer = length >= 42 && packet[12..14] == [0x08, 0x06] && packet[20..22] == [0x00, 0x02];
+                if is_answer && packet[28..32] == GATEWAY {
+                    let mut gateway_address = [0u8; 6];
+                    gateway_address.copy_from_slice(&packet[22..28]);
+                    return Some(gateway_address);
+                }
             }
         }
     }
