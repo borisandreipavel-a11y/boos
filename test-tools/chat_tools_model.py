@@ -1,10 +1,12 @@
 """Every line to the model, worked out from the notes apart from the kernel's code (docs/tools.md, docs/chat.md,
-docs/model.md): the request a line is sent with (the instruction text, the line, the list of tools for what the
-disk holds, the limit), the rows the kernel says at once and when the answer comes, and the chat box where every
-line but `key` and `setup` goes to the model. Nothing runs when this file is imported."""
+docs/model.md): the request a line is sent with (the instruction text with the record of what was said before it,
+the line, the list of tools for what the disk holds and whether anything is remembered, the limit), the rows the
+kernel says at once and when the answer comes, and the chat box where every line but `key` and `setup` goes to the
+model. Nothing runs when this file is imported."""
 import re
 
 from app_cases import clean, hide
+from conversation_model import FORGOT  # noqa: F401 (the row the tool `forget` gets, for the tests)
 from keyed_model import ORDER, KeyedChat
 from picture import ASKING, BUSY, NO_ADDRESS, NO_KEY  # noqa: F401 (the rows a line gets at once, for the tests)
 
@@ -16,10 +18,16 @@ NAME_LONGEST = 64
 
 CHAT_INSTRUCTIONS = (
     "You are the voice of a small home-made operating system. "
-    "The person at the machine types one line at a time into its chat box, and you see only that line, not the ones before it. "
+    "The person at the machine types one line at a time into its chat box. "
+    "You get the newest line, and below these instructions a record of the last lines before it and what came of them, if there were any. "
+    "If the person asks you to forget what was said or to start over, use forget: saying so in words forgets nothing. "
     "Answer in plain words, in one or two short sentences, or use one of the tools when the person wants something done that a tool does. "
     "Use run_app for a kept app that fits the wish, and make_app only when none fits."
 )
+
+# What stands between the instructions and the record of what was said before the line, when anything was.
+RECORD_LEAD = ("\n\nWhat was said before the newest line, oldest first. "
+               "\"Person:\" is the person at the machine, \"Model:\" is you, and \"Kernel:\" is the operating system saying what happened.\n")
 
 LOOK_WORDS = {
     "Blue": "a dark blue screen, light boxes with orange frames",
@@ -62,8 +70,18 @@ def turn_page_tool(pages, shown):
                 {"page": {"type": "integer", "description": "The number of the page, from 1 to %d" % pages}}, ["page"])
 
 
-def tools_meant(apps, shown=1):
-    """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`."""
+# The tool that forgets what was said, offered only while something is remembered. It needs no inputs, so it has no
+# list of the inputs it requires.
+FORGET = {"type": "function", "function": {"name": "forget",
+                                           "description": "Forgets everything said before the newest line, so that the next line starts afresh. "
+                                                          "Only this tool makes the system forget; saying so in words does not. "
+                                                          "Use it whenever the person asks to forget what was said, to start over, or for a clean slate.",
+                                           "parameters": {"type": "object", "properties": {}}}}
+
+
+def tools_meant(apps, shown=1, remembered=False):
+    """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
+    and `forget` if anything said is remembered."""
     tools = [MAKE_APP]
     if apps:
         tools.append(run_app_tool(apps))
@@ -71,13 +89,23 @@ def tools_meant(apps, shown=1):
     pages = -(-len(apps) // 5)
     if pages > 1:
         tools.append(turn_page_tool(pages, shown))
+    if remembered:
+        tools.append(FORGET)
     return tools
 
 
-def body_meant(line, apps, shown=1):
-    """The whole request for a line, as Python's JSON reader reads it."""
-    return {"model": MODEL, "messages": [{"role": "system", "content": CHAT_INSTRUCTIONS}, {"role": "user", "content": line}],
-            "tools": tools_meant(apps, shown), "max_tokens": LIMIT, "stream": False}
+def instructions_meant(record="", key=""):
+    """The system message: the instruction text, and the record of what was said before the line behind it, if
+    anything was, with every piece of the key starred."""
+    return CHAT_INSTRUCTIONS + (RECORD_LEAD + hide(record, key) if record else "")
+
+
+def body_meant(line, apps, shown=1, record="", key=""):
+    """The whole request for a line, as Python's JSON reader reads it: `record` is what was said before it (a picture.Chat
+    keeps the record each line went with in `records`); every piece of `key` in the line and the record is starred."""
+    return {"model": MODEL, "messages": [{"role": "system", "content": instructions_meant(record, key)},
+                                         {"role": "user", "content": hide(line, key)}],
+            "tools": tools_meant(apps, shown, remembered=bool(record)), "max_tokens": LIMIT, "stream": False}
 
 
 # ---------- Rows (those a line gets at once are in picture.py) ----------
