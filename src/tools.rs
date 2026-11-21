@@ -1,11 +1,12 @@
 //! The tools: what the kernel can do when the model asks for it. Every line
 //! typed in the chat box goes to the model (see `chat.rs` and `model.rs`), and
 //! with it goes a list of tools, each with a name, one sentence and what it
-//! needs to be told (`chat_tools`). The model answers in words, or asks for
-//! one of the tools; the kernel then does it and says in one plain sentence
-//! how that went (`tool_do`). What the model asks for comes from outside the
-//! kernel, and is checked before anything is done. Only the main loop may
-//! call these functions.
+//! needs to be told (`chat_tools`), and what was said before it (see
+//! `conversation.rs`). The model answers in words, or asks for one of the
+//! tools; the kernel then does it and says in one plain sentence how that
+//! went (`tool_do`). What the model asks for comes from outside the kernel,
+//! and is checked before anything is done. Only the main loop may call these
+//! functions.
 //! Notes: `docs/tools.md`.
 
 use alloc::format;
@@ -14,18 +15,41 @@ use alloc::string::String;
 use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
 use crate::chat::chat_say;
+use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
 use crate::model::ToolCall;
 
 // What the model is told before the line, every time: what it is, that it
-// sees one line only, how to answer, and when to use the tools for apps. It
-// names no project and no person.
+// gets the newest line and a record of what was said before it, that only
+// the tool `forget` forgets that record, how to answer, and when to use the
+// tools for apps. It names no project and no person. (A real model, asked to
+// forget, once said in words that it had, and used no tool.)
 pub const CHAT_INSTRUCTIONS: &str = concat!(
     "You are the voice of a small home-made operating system. ",
-    "The person at the machine types one line at a time into its chat box, and you see only that line, not the ones before it. ",
+    "The person at the machine types one line at a time into its chat box. ",
+    "You get the newest line, and below these instructions a record of the last lines before it and what came of them, if there were any. ",
+    "If the person asks you to forget what was said or to start over, use forget: saying so in words forgets nothing. ",
     "Answer in plain words, in one or two short sentences, or use one of the tools when the person wants something done that a tool does. ",
     "Use run_app for a kept app that fits the wish, and make_app only when none fits."
+);
+
+// What stands between the instructions and the record of what was said
+// before the line, when anything was (see `conversation.rs`). The record
+// follows it, one row to a line, oldest first.
+pub const RECORD_LEAD: &str = concat!(
+    "\n\nWhat was said before the newest line, oldest first. ",
+    "\"Person:\" is the person at the machine, \"Model:\" is you, and \"Kernel:\" is the operating system saying what happened.\n"
+);
+
+// The tool that forgets what was said, so that the next line starts afresh.
+// It needs no inputs. It is offered only while something is remembered.
+const FORGET: &str = concat!(
+    "{\"type\":\"function\",\"function\":{\"name\":\"forget\",",
+    "\"description\":\"Forgets everything said before the newest line, so that the next line starts afresh. ",
+    "Only this tool makes the system forget; saying so in words does not. ",
+    "Use it whenever the person asks to forget what was said, to start over, or for a clean slate.\",",
+    "\"parameters\":{\"type\":\"object\",\"properties\":{}}}}"
 );
 
 // The tool that has a new app written: the model gives a short request, and
@@ -91,7 +115,8 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `turn_page` while
-// the panel of apps has more than one page.
+// the panel of apps has more than one page; `forget` while anything that was
+// said is remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
     tools.push_str(MAKE_APP);
@@ -106,6 +131,10 @@ pub fn chat_tools() -> String {
     if pages > 1 {
         tools.push(',');
         tools.push_str(&turn_page_tool(pages, shown));
+    }
+    if conversation_remembers() {
+        tools.push(',');
+        tools.push_str(FORGET);
     }
     tools.push(']');
     tools
@@ -146,6 +175,12 @@ pub fn tool_do(call: &ToolCall) {
             Some(page) => chat_say(&apps_page_turn(page)),
             None => chat_say("the model asked for another page of the panel of apps, but I could not read which one."),
         },
+        // Everything said is forgotten first, the line that asked for it
+        // too, so the row that says so is not remembered either.
+        "forget" => {
+            conversation_forget();
+            chat_say("I forgot what was said so far. The next line starts afresh.");
+        }
         // The name was cleaned and cut by `model.rs`.
         other => chat_say(&format!("the model asked for something I cannot do: \"{}\".", other)),
     }

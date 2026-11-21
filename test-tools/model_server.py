@@ -127,6 +127,9 @@ def answer_for(kind, bearer):
         return with_length(b"HTTP/1.1 404 Not Found", json.dumps({"error": {"message": "Model not found: deepseek/deepseek-v4.1-flash-1017", "type": "invalid_request_error", "code": "model_not_found"}}).encode()), "goodbye"
     if kind == "upstream":
         return with_length(b"HTTP/1.1 502 Bad Gateway", json.dumps({"error": {"message": "All upstream providers failed", "type": "upstream_error"}}).encode()), "goodbye"
+    if kind == "longrefusal":
+        # A refusal whose reason is longer than the kernel says (for the bound on what is remembered).
+        return orca_error(b"HTTP/1.1 401 Unauthorized", "", chat_cases.LONG_REASON), "goodbye"
     if kind == "upstreambare":
         return b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", "goodbye"
     if kind == "good":
