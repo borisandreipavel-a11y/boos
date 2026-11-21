@@ -242,6 +242,7 @@ def main():
         failures.append("the key in the terminal")
     print("the stand-in's notes:")
     seen = {}
+    lines_seen = 0  # the requests for a line so far: each goes with the record chat.records holds for it, in turn
     for line in open(log).read().splitlines():
         note = json.loads(line)
         if note.get("first line", "").startswith("GET"):
@@ -253,9 +254,12 @@ def main():
         seen[summary] = seen.get(summary, 0) + 1
         # What the stand-in noted counts as well: a request that came not as meant is a failure, even when the row
         # the kernel said was right (the length note one too small, say). A line's request is the one the notes
-        # say a line is sent with (docs/tools.md): no kept app on a disk that is not divided.
+        # say a line is sent with (docs/tools.md): no kept app on a disk that is not divided, and the record of
+        # the lines before it and what they brought.
         if note.get("request for") == "a line":
-            body_right = note.get("body") == body_meant(LINE, [])
+            record = chat.records[lines_seen] if lines_seen < len(chat.records) else None
+            lines_seen += 1
+            body_right = record is not None and note.get("body") == body_meant(LINE, [], record=record, key=KEY)
         else:
             body_right = note.get("body as meant") is True
         for what, right in (("body as meant", body_right),

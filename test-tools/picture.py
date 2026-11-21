@@ -8,6 +8,7 @@ import re
 import struct
 import zlib
 
+from conversation_model import Memory
 from places import PROJECT
 
 LETTERS = os.path.join(PROJECT, "src", "letters.rs")
@@ -132,6 +133,10 @@ class Chat:
         self.network = "ready"  # or "none" (no address), "busy" (an answer is still awaited)
         self.secret_signs = 0
         self.secret_held = False
+        # What the kernel remembers of the conversation (conversation_model.py), and the record that each line
+        # which went to the model went with, in turn.
+        self.memory = Memory()
+        self.records = []
         if self.room:
             self.add("kernel", GREETING)
 
@@ -193,6 +198,8 @@ class Chat:
                 answer = NO_KEY
             else:
                 answer = {"ready": ASKING, "none": NO_ADDRESS, "busy": BUSY}[self.network]
+                if answer == ASKING:
+                    self.records.append(self.memory.sent(self.line))
             self.said += [mine, answer]
             self.add("person", mine)
             self.add("kernel", answer)
@@ -202,14 +209,18 @@ class Chat:
                 self.line += sign
 
     def say(self, text):
-        """A row the kernel says by itself, such as the answer to an errand."""
+        """A row the kernel says by itself, such as the answer to an errand. It is remembered with the line it
+        answers (conversation_model.py)."""
         self.said.append("Kernel: " + text)
         self.add("kernel", "Kernel: " + text)
+        self.memory.answered("Kernel: " + text)
 
     def row(self, text):
-        """A whole row as it is, such as the model's words, which begin with "Model:"."""
+        """A whole row as it is, such as the model's words, which begin with "Model:". It is remembered with the
+        line it answers."""
         self.said.append(text)
         self.add("kernel", text)
+        self.memory.answered(text)
 
     def keys(self, text):
         for sign in text:

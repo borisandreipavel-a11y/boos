@@ -56,6 +56,7 @@ mod lock_values; // The values the check of the lock is made against.
 mod apps; // Apps made on request: what the model is told, and the script it writes.
 mod apps_kept; // Apps kept on the disk, and the panel that lists them.
 mod tools; // The tools: what the kernel can do when the model asks for it.
+mod conversation; // The conversation: the last lines sent to the model, which go with the next.
 
 use alloc::format;
 use alloc::string::String;

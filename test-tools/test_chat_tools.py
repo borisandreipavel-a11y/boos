@@ -19,6 +19,13 @@ Made-up key only.
   busy      a line sent while the answer to the one before is awaited.
   nocard    a machine without a network card.
   nodisk    a disk that is not divided: no notebook, so a look picked by the model lasts until the machine is off.
+  remember  the thing remembering is done by: "I would like a dice to roll", then "make it roll two dice", which goes
+            with the first line and what came of it, and nothing else.
+  forgetting  what is not remembered and what forgets: with a name kept and a key unlocked by a password, the line
+            `key` and its secret, a line that holds the key (starred), a line turned away while an answer is awaited,
+            the tool `forget`, and `setup`, sent while an answer is awaited; every body searched for the name, the
+            password and the key.
+  bound     the bound on what is remembered: 10 lines, then 8,000 bytes when the rows are long.
 
 Usage: python test_chat_tools.py [scenario ...]        (with none: all)
 Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
@@ -31,10 +38,13 @@ os.environ["DIVIDED_DISK"] = ""
 import app_cases
 import chat_cases
 from apps_kept_model import app_things, kept_line, kept_script, note, read_things, screen
-from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, MORE, NO_ADDRESS, NO_KEY, NO_REQUEST, THOUGHT_ALL, ToolsChat,
-                              body_meant, cannot_do, key_pieces, making, model_row, no_page_row, no_such_app, page_row,
-                              refused_row, request_cleaned, running, words_cut)
+from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, NO_ADDRESS, NO_KEY, NO_REQUEST, THOUGHT_ALL,
+                              ToolsChat, body_meant, cannot_do, key_pieces, making, model_row, no_page_row, no_such_app,
+                              page_row, refused_row, request_cleaned, running, words_cut)
+from conversation_model import BYTES_REMEMBERED, LINES_REMEMBERED
 from disk_helpers import make
+from keyed_model import LOCKED
+from lockref import lock
 from test_apps_kept import (KEY, SCRIPT, Run, answer_row, answered_disk, failures, give_key, report, run_row)
 
 SHOWN = ("You:", "Kernel:", "Model:", "Tokens:", "Apps:")
@@ -59,23 +69,27 @@ def posts(run):
     return [n for n in notes if n.get("first line", "").startswith("POST ")]
 
 
-def shown_since(run):
-    return [line for line in run.since() if line.startswith(SHOWN)]
+def shown_since(run, shown=SHOWN):
+    return [line for line in run.since() if line.startswith(shown)]
 
 
-def exchange(run, chat, line, after, last=None, timeout=90):
+def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
     """Sends `line` (the chat model takes it too), waits for the last line meant, and compares what the terminal
     showed since with the person's row, the row said at once, and `after`. Rows in `after` that belong in the chat
-    box are added to the chat model."""
+    box are added to the chat model. `shown`: how the terminal's lines that count begin (the person's rows begin
+    with their name when one is kept)."""
     run.mark()
     run.press(line + "\n", chat)
+    pressed = time.time()
     meant = chat.said[-2:] + after
     wanted = last or (after[-1] if after else meant[-1])
     end = time.time() + timeout
     while time.time() < end and wanted not in run.since():
-        time.sleep(0.1)
+        time.sleep(0.02)
+    # How long the last line meant took to come after Enter, for a measurement (no verdict).
+    run.answered_after = time.time() - pressed
     time.sleep(0.6)
-    got = shown_since(run)
+    got = shown_since(run, shown)
     report(run.tag + " %r" % line[:24], got == meant, None if got == meant else "got %r, meant %r" % (got[-8:], meant[-8:]))
     for row in after:
         if row.startswith(("Kernel:", "Model:")):
@@ -213,7 +227,8 @@ def scenario_pages():
     report("pages requests", len(seen) == 3, "%d requests" % len(seen))
     if len(seen) == 3:
         check_body("pages the first request", seen[0], body_meant("show me the next page", apps, shown=1))
-        check_body("pages the second request", seen[1], body_meant("run the third one", apps, shown=2))
+        # The second line goes with the first and what came of it (docs/tools.md, "What the model remembers").
+        check_body("pages the second request", seen[1], body_meant("run the third one", apps, shown=2, record=chat.records[1]))
 
 
 def scenario_odd():
@@ -300,8 +315,191 @@ def scenario_nodisk():
     run.end()
 
 
+def bodies_meant(tag, run, chat, lines, apps=()):
+    """Every request for a line the stand-in saw, against the request the notes say it goes with: `lines` are the
+    lines that went to the model, in turn; each goes with the record the chat model kept for it, and with the key
+    starred in the line and the record. Gives back the requests for a line."""
+    seen = [n for n in posts(run) if n.get("request for") == "a line"]
+    report(tag + " requests for a line", len(seen) == len(lines) == len(chat.records),
+           "%d requests, %d lines meant, %d records kept" % (len(seen), len(lines), len(chat.records)))
+    for number, (note_, line) in enumerate(zip(seen, lines)):
+        record = chat.records[number] if number < len(chat.records) else ""
+        check_body("%s line %d" % (tag, number + 1), note_, body_meant(line, list(apps), record=record, key=KEY))
+    return seen
+
+
+def record_of(note_):
+    """The record a request went with: what stands behind the instructions in its system message."""
+    told = note_["body"]["messages"][0]["content"] if note_ and note_.get("body") else ""
+    _, lead, record = told.partition("\n\nWhat was said before the newest line, oldest first. ")
+    return record.split("\n", 1)[1] if lead else ""
+
+
+def scenario_remember():
+    print("remember: a second line that only makes sense with the first goes together with the first")
+    disk, _ = answered_disk("tools-remember")
+    run = Run("tools-remember", disk, behaviours=["make=a dice that rolls", "app", "words=Two dice it is."])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    first, second = "I would like a dice to roll", "make it roll two dice"
+    exchange(run, chat, first, app_after("a dice that rolls"), timeout=150)
+    exchange(run, chat, second, [model_row("Two dice it is."), chat_cases.TOKENS_LINE])
+    lines = run.end()
+    seen = posts(run)
+    report("remember three requests", len(seen) == 3, "%d requests" % len(seen))
+    # What the second line is meant to go with, written out from the notes: the first line as the person's, and the
+    # kernel's three rows about it; not the row said at once, not the terminal's lines, not the script.
+    meant = "\n".join(["Person: " + first, making("a dice that rolls"), answer_row("app"), run_row("app")])
+    report("remember the chat model keeps the same record", chat.records == ["", meant], "%r" % chat.records)
+    if len(seen) == 3:
+        check_body("remember the first request", seen[0], body_meant(first, []))
+        check_body("remember the second request goes with the first", seen[2],
+                   body_meant(second, [(1, "a dice that rolls")], record=meant))
+        got = record_of(seen[2])
+        report("remember exactly the remembered rows", got == meant, None if got == meant else "got %r" % got)
+    no_key_in("remember", lines)
+
+
+def scenario_forgetting():
+    print("forgetting: what is never remembered, and what forgets")
+    name, password = "Quillon", "Pw door 7"
+    locked = lock(password.encode(), KEY.encode(), os.urandom(16), os.urandom(12), 600000)
+    disk, _ = answered_disk("tools-forgetting", answers=[("name", name.encode()), ("locked key", locked), ("look", b"")])
+    behaviours = ["words=Hello.", "words=Noted.", "slowwords=At last.", "words=You said hello.", "forget", "words=Fresh.",
+                  "words=Still fresh.", "slowwords=Late words.", "words=Hello again."]
+    run = Run("tools-forgetting", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=name.encode(), key_entry=LOCKED, password=password, kept_look=b"")
+    chat.memory.key = KEY    # a line below holds the key: it goes, and is remembered, starred
+    shown = SHOWN + (name + ":",)
+    t = chat_cases.TOKENS_LINE
+    sent = []
+
+    def say(line, after, **more):
+        exchange(run, chat, line, after, shown=shown, **more)
+        sent.append(line)
+
+    def steps(keys, last, tag):
+        """Keys that answer the kernel's questions: what the terminal shows since, against the chat model."""
+        run.mark()
+        before = len(chat.said)
+        run.press(keys, chat)
+        end = time.time() + 30
+        while time.time() < end and last not in "\n".join(run.since()):
+            time.sleep(0.1)
+        time.sleep(0.6)
+        got, meant = shown_since(run, shown), chat.said[before:]
+        report("forgetting " + tag, got == meant, None if got == meant else "got %r, meant %r" % (got[-6:], meant[-6:]))
+
+    steps(password + "\n", "Kernel: the key is unlocked", "the password unlocks the key")
+    say("hello there", [model_row("Hello."), t])
+    run.mark()
+    run.press("key\n" + KEY + "\n", chat)
+    run.wait_line("Kernel: I took a secret of", timeout=30)
+    say("key " + KEY, [model_row("Noted."), t])
+    # A line sent while the answer to the one before is awaited is turned away, and not remembered.
+    run.mark()
+    run.press("slow one\n", chat)
+    chat.network = "busy"
+    run.press("while waiting\n", chat)
+    chat.network = "ready"
+    sent.append("slow one")
+    end = time.time() + 40
+    while time.time() < end and t not in run.since():
+        time.sleep(0.2)
+    time.sleep(0.6)
+    meant = chat.said[-4:] + [model_row("At last."), t]
+    got = shown_since(run, shown)
+    report("forgetting busy rows", got == meant, None if got == meant else "got %r" % got)
+    chat.row(model_row("At last."))
+    say("what did I say?", [model_row("You said hello."), t])
+    say("please start over", [t, FORGOT])
+    say("first after forgetting", [model_row("Fresh."), t])
+    say("second after forgetting", [model_row("Still fresh."), t])
+    # `setup`, sent while the answer to a line is awaited: that line belongs to what is forgotten, so its answer, which
+    # comes while the question for the name waits, is said and not remembered.
+    run.mark()
+    before = len(chat.said)
+    run.press("slow again\n", chat)
+    sent.append("slow again")
+    run.press("setup\n", chat)
+    end = time.time() + 40
+    while time.time() < end and t not in run.since():
+        time.sleep(0.2)
+    time.sleep(0.6)
+    chat.row(model_row("Late words."))
+    got = [line for line in shown_since(run, shown) if not line.startswith("Tokens:")]
+    meant = chat.said[before:]
+    report("forgetting setup while an answer is awaited", got == meant, None if got == meant else "got %r, meant %r" % (got, meant))
+    # The rest of `setup`: the name stays (Enter alone), the locked key stays (Enter alone), the first look stays.
+    steps("\n", "Enter alone keeps the one locked", "setup asks for a key")
+    steps("\n", "Kernel: pick a look by number", "setup asks for a look")
+    steps("\n", "Type a line and press Enter.", "setup is over")
+    say("after setup", [model_row("Hello again."), t])
+    run.end()
+    seen = bodies_meant("forgetting", run, chat, sent)
+    records = [record_of(n) for n in seen]
+    # sent[5] is the first line after `forget`, and sent[8] the line after `setup`: neither goes with anything, not
+    # even with sent[7], whose answer came after `setup`.
+    for place in (5, 8):
+        if place < len(records):
+            report("forgetting nothing remembered for %r" % sent[place], records[place] == "", "got %r" % records[place])
+    if len(records) == len(sent):
+        report("forgetting the line after the first after forgetting", records[6] == "Person: first after forgetting\n" + model_row("Fresh."),
+               "got %r" % records[6])
+        everything = "\n".join(json.dumps(n.get("body")) for n in seen)
+        report("forgetting the name in no request", name not in everything)
+        report("forgetting the password in no request", password not in everything)
+        report("forgetting no piece of the key in any request", not key_pieces(everything, KEY))
+        rows = [row for record in records for row in record.split("\n")]
+        report("forgetting no line `key`, `setup` or turned away remembered",
+               not any(row in ("Person: key", "Person: setup", "Person: while waiting") for row in rows))
+        report("forgetting the line with the key went starred", seen[1]["body"]["messages"][1]["content"] == "key " + "*" * len(KEY),
+               "got %r" % seen[1]["body"]["messages"][1]["content"])
+        report("forgetting the line with the key remembered starred", ("Person: key " + "*" * len(KEY)) in records[2], "got %r" % records[2])
+
+
+def scenario_bound():
+    print("bound: 10 lines remembered, and never more than 8,000 bytes")
+    disk, _ = answered_disk("tools-bound")
+    shorts = ["line %d" % number for number in range(1, 13)]
+    # Short lines whose answers bring the longest rows: typing a long line takes time and adds little.
+    longs = ["long %02d" % number for number in range(1, 10)]
+    behaviours = ["words=Ok %d." % number for number in range(1, 13)] + ["longall", "app:longrefusal"] * len(longs) + ["words=Done."]
+    run = Run("tools-bound", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    t = chat_cases.TOKENS_LINE
+    took = []    # seconds from Enter to the model's words, with the bytes of the record the line went with
+    for number, line in enumerate(shorts):
+        exchange(run, chat, line, [model_row("Ok %d." % (number + 1)), t], last=model_row("Ok %d." % (number + 1)))
+        took.append((run.answered_after, len(chat.records[-1])))
+    refusal = refused_row(words_cut(chat_cases.LONG_REASON, KEY, 300))
+    for line in longs:
+        exchange(run, chat, line, [model_row(chat_cases.LONG_WORDS, KEY), CUT_OFF, t, MORE, making(chat_cases.REQUEST_45), refusal],
+                 timeout=120)
+    exchange(run, chat, "the last one", [model_row("Done."), t], last=model_row("Done."))
+    took.append((run.answered_after, len(chat.records[-1])))
+    lines = run.end()
+    # A measurement, not a verdict: the stand-in answers at once, so what grows with the record is what the kernel
+    # takes to put the request together and hand it to the connection, 512 bytes at a time.
+    print("  bound from Enter to the model's words: %s" % ", ".join("%.2f s with a record of %d bytes" % pair for pair in
+                                                                 (took[0], took[len(shorts) - 1], took[-1])))
+    seen = bodies_meant("bound", run, chat, shorts + longs + ["the last one"])
+    if len(seen) == len(shorts) + len(longs) + 1:
+        people = [row for row in record_of(seen[len(shorts) - 1]).split("\n") if row.startswith("Person: ")]
+        meant = ["Person: " + line for line in shorts[1:len(shorts) - 1]]
+        report("bound the 12th line goes with the 10 before it", people == meant and len(meant) == LINES_REMEMBERED, "got %r" % people)
+        last = record_of(seen[-1])
+        size = sum(len(row.encode()) + 1 for row in last.split("\n"))
+        people = [row for row in last.split("\n") if row.startswith("Person: ")]
+        report("bound the last line goes with at most %d bytes" % BYTES_REMEMBERED, size <= BYTES_REMEMBERED, "%d bytes" % size)
+        report("bound the oldest long lines went first", people == ["Person: " + line for line in longs[1:]], "got %r" % people)
+    no_key_in("bound", lines)
+
+
 SCENARIOS = {"nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
-             "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk}
+             "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
+             "forgetting": scenario_forgetting, "bound": scenario_bound}
 
 
 def main():

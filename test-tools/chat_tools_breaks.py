@@ -47,6 +47,30 @@ BREAKS = {
     # --- Reading numbers ---
     # A number with a point is taken for no JSON instead of for no whole number: the check at startup says so.
     "jsonfraction": {"json.rs": swap("            Some(b'.' | b'e' | b'E') => Err(NOT_A_NUMBER),\n", "            Some(b'e' | b'E') => Err(NOT_A_NUMBER),\n")},
+    # --- What is remembered (docs/tools.md, "What the model remembers") ---
+    # The record does not go with the line.
+    "norecord": {"model.rs": swap("    if !record.is_empty() {\n        told.push_str(RECORD_LEAD);\n", "    if false {\n        told.push_str(RECORD_LEAD);\n")},
+    # A line is not remembered when its answer comes.
+    "nolinememory": {"chat.rs": swap("        conversation_line(answer.sent.as_deref());\n", "")},
+    # The kernel's own sentences are not remembered.
+    "nokernelrows": {"chat.rs": swap("    chat_paint_rows();\n    conversation_row(&row);\n}\n\n// Says the model's own words",
+                                     "    chat_paint_rows();\n}\n\n// Says the model's own words")},
+    # The person's line is remembered as "You", not as the person's.
+    "nopersonlabel": {"conversation.rs": swap('format!("Person: {}", line)', 'format!("You: {}", line)')},
+    # The key in a line is not starred before the line goes.
+    "nostar": {"model.rs": swap("    let sent = key_starred(line, key);\n", "    let sent = String::from(line);\n")},
+    # More than 10 lines are remembered.
+    "nolinecount": {"conversation.rs": swap("    while exchanges.len() > LINES_REMEMBERED {\n", "    while exchanges.len() > LINES_REMEMBERED * 100 {\n")},
+    # The bound of 8,000 bytes is not kept.
+    "nobytebound": {"conversation.rs": swap("bytes_of(exchanges) > BYTES_REMEMBERED {\n", "bytes_of(exchanges) > BYTES_REMEMBERED * 100 {\n")},
+    # `setup` does not forget.
+    "nosetupforget": {"chat.rs": swap("                conversation_forget();\n                onboarding_again()\n", "                onboarding_again()\n")},
+    # The tool `forget` is not offered.
+    "noforgettool": {"tools.rs": swap("    if conversation_remembers() {\n", "    if false {\n")},
+    # The tool `forget` forgets nothing.
+    "forgetnothing": {"tools.rs": swap('            conversation_forget();\n            chat_say("I forgot', '            chat_say("I forgot')},
+    # A line whose answer comes after `setup` is remembered all the same.
+    "awaitedkept": {"conversation.rs": swap("        FORGOTTEN_WHILE_AWAITED = AWAITED;\n", "        FORGOTTEN_WHILE_AWAITED = false;\n")},
 }
 
 CATCH = {
@@ -66,4 +90,15 @@ CATCH = {
     "looknotkept": "odd",
     "pagenotturned": "pages",
     "jsonfraction": "words",
+    "norecord": "remember",
+    "nolinememory": "remember",
+    "nokernelrows": "remember",
+    "nopersonlabel": "remember",
+    "nostar": "forgetting",
+    "nolinecount": "bound",
+    "nobytebound": "bound",
+    "nosetupforget": "forgetting",
+    "noforgettool": "forgetting",
+    "forgetnothing": "forgetting",
+    "awaitedkept": "forgetting",
 }
