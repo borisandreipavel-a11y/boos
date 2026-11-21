@@ -68,7 +68,8 @@ SUITES = [
     # Every line to the model, in the stand-in copy, whose stand-in answers each line with words or a tool call
     # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
-         seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=100, busy=40, nocard=20, nodisk=30)),
+         seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=100, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
+                      bound=125)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -103,17 +104,12 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 16}
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 27}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
 # (MISSES in run_key_breaks.py and model_breaks.py).
-KNOWN_MISSES = {
-    "break look: the screen not painted again at startup":
-        "the kernel's own lines cover the screen while it starts, and the end of the start paints the whole usual picture "
-        "again in the look in use (lines_uncover calls look_paint), so the repaint in chat_begin that this break turns "
-        "off changes nothing on the screen",
-}
+KNOWN_MISSES = {}
 
 # The first failure that caught each break on purpose when it was run alone and to the end. A run that stops at the
 # first failure counts a break as caught only when its first failure is this one; any other first failure (a wait in
@@ -252,4 +248,15 @@ CAUGHT_BY = {
     'break tools: looknotkept': "tools-odd 'two looks'",
     'break tools: pagenotturned': 'tools-pages page-2',
     'break tools: jsonfraction': 'words the check of JSON at startup',
+    'break tools: norecord': 'remember the second request goes with the first',
+    'break tools: nolinememory': 'remember the second request goes with the first',
+    'break tools: nokernelrows': 'remember the second request goes with the first',
+    'break tools: nopersonlabel': 'remember the second request goes with the first',
+    'break tools: nostar': 'forgetting line 2',
+    'break tools: nolinecount': 'bound line 12',
+    'break tools: nobytebound': 'bound line 22',
+    'break tools: nosetupforget': 'forgetting line 9',
+    'break tools: noforgettool': 'forgetting line 2',
+    'break tools: forgetnothing': 'forgetting line 6',
+    'break tools: awaitedkept': 'forgetting line 9',
 }

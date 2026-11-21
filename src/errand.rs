@@ -21,8 +21,9 @@ pub enum Errand {
     KeyTry,
     // Send a line typed in the chat box to the model, with the list of what
     // the kernel can do for it: the JSON that `chat_tools` in `tools.rs` made
-    // when the line was sent.
-    ChatLine { line: String, tools: String },
+    // when the line was sent; and with the record of what was said before it
+    // (`conversation_record` in `conversation.rs`), which may be empty.
+    ChatLine { line: String, tools: String, record: String },
     // Ask the model to write an app. The text says which app: the request the
     // model gave with the tool `make_app` (see `tools.rs`).
     AppRequest(String),
@@ -32,8 +33,10 @@ pub enum Errand {
 // say about it, in one sentence (for a line the model answered as it should,
 // nothing); for the try of a key how the provider took the key; for an app
 // the script the model wrote, if it passed the checks; for a line what the
-// model answered; and, for a line or an app the provider answered, the
-// terminal's line about how many tokens that took.
+// model answered; for a line or an app the provider answered, the terminal's
+// line about how many tokens that took; and for a line, the line as it was
+// sent to the model, with the key starred, or nothing when no request was
+// put together for it.
 pub struct Answer {
     pub errand: Errand,
     pub sentence: String,
@@ -41,6 +44,7 @@ pub struct Answer {
     pub script: Option<String>,
     pub reply: Option<ChatReply>,
     pub tokens: Option<String>,
+    pub sent: Option<String>,
 }
 
 // How far the one errand has got. There is room for one at a time.

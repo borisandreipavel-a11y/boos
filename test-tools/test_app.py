@@ -386,7 +386,10 @@ def main():
         judged(note, want, "request %d" % (number + 1), behaviours[number] if number < len(behaviours) else "?")
     for number, note in enumerate(lines_seen):
         line = sent[number] if number < len(sent) else None
-        judged(note, body_meant(line, []) if line is not None else None, "line request %d" % (number + 1), line or "?")
+        # Each line goes with the record of the lines before it and what they brought, which the chat model kept.
+        record = chat.records[number] if number < len(chat.records) else None
+        want = body_meant(line, [], record=record, key=KEY) if line is not None and record is not None else None
+        judged(note, want, "line request %d" % (number + 1), line or "?")
     if len(apps_seen) != len(behaviours):
         failures.append("%d requests for an app reached the stand-in, meant %d" % (len(apps_seen), len(behaviours)))
     if len(lines_seen) != len(sent):

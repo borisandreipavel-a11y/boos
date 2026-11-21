@@ -7,7 +7,8 @@ and test_chat_tools.py, which judges what the kernel makes of them.
 A behaviour is a name, or a name, "=" and what it needs: "words=Hello there." answers in words, "make=a dice
 that rolls" asks for the tool make_app with that request, "run=1" for run_app with the app 1, "look=2" for
 pick_look, "turn=2" for turn_page (not "page", which is a kind of model_server.py's own); "fullrun=1" asks for run_app in the fuller shape a real answer may have
-(`full_body`). Nothing runs when this file is imported."""
+(`full_body`); "forget" asks for the tool forget; "longall" brings the longest rows a line can bring. Nothing runs when
+this file is imported."""
 import json
 import time
 
@@ -88,6 +89,13 @@ LONG_REQUEST = "a dice that rolls and says what it rolled out loud every time"
 ODD_REQUEST = "a dice\twith café signs\u0007 and a tail that goes on and on and on"
 LONG_NAME = "x" * 100
 
+# For the bound on what is remembered (docs/tools.md): the longest rows a line can bring. Words longer than the 300
+# signs said; a request of the 45 signs kept; and, for the request for that app, a refusal whose reason is longer
+# than the 300 signs said (model_server.py's "longrefusal").
+LONG_WORDS = "These words are long on purpose, so that what the kernel remembers fills up quickly. " * 5
+REQUEST_45 = "a dice that rolls and shows the number it got"
+LONG_REASON = "This key may not ask for that, and here is a long reason why. " * 8
+
 
 def answer(kind, line, bearer):
     """Gives (bytes to send, how to end) for a behaviour, or None if `kind` is none of these."""
@@ -116,6 +124,12 @@ def answer(kind, line, bearer):
     if name == "two":
         calls = [call("pick_look", {"look": 3}, 0), call("pick_look", {"look": 4}, 1)]
         return good(body(message(None, calls), "tool_calls")), "goodbye"
+    if name == "forget":
+        return good(body(message(None, [call("forget", {})]), "tool_calls")), "goodbye"
+    if name == "longall":
+        # Words past what is said, cut off at the limit, and two tools, the first asking for an app.
+        calls = [call("make_app", {"request": REQUEST_45}, 0), call("pick_look", {"look": 2}, 1)]
+        return good(body(message(LONG_WORDS, calls), "length")), "goodbye"
     if name == "unknown":
         return good(body(message(None, [call("format_disk", {})]), "tool_calls")), "goodbye"
     if name == "oddname":

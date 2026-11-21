@@ -258,26 +258,26 @@ fn network_task() {
         // the answer for the main loop to pick up. While an errand runs, this
         // task does nothing else.
         if let Some(errand) = errand_take() {
-            let (sentence, key, script, reply, tokens) = match &errand {
+            let (sentence, key, script, reply, tokens, sent) = match &errand {
                 // The try of a key asks the fixed question, with the key
                 // being tried instead of the one kept.
                 Errand::KeyTry if has_address => {
                     let (sentence, key) = model_tell(&mut interface, &mut card, &mut sockets, name_server, true);
-                    (sentence, key, None, None, None)
+                    (sentence, key, None, None, None, None)
                 }
                 // A line typed in the chat box, and an app, are asked about
                 // with the key that is kept.
-                Errand::ChatLine { line, tools } if has_address => {
-                    let (sentence, reply, tokens) = model_chat(&mut interface, &mut card, &mut sockets, name_server, line, tools);
-                    (sentence, KeyVerdict::NotTold, None, reply, tokens)
+                Errand::ChatLine { line, tools, record } if has_address => {
+                    let (sentence, reply, tokens, sent) = model_chat(&mut interface, &mut card, &mut sockets, name_server, line, tools, record);
+                    (sentence, KeyVerdict::NotTold, None, reply, tokens, sent)
                 }
                 Errand::AppRequest(wanted) if has_address => {
                     let (sentence, script, tokens) = model_app(&mut interface, &mut card, &mut sockets, name_server, wanted);
-                    (sentence, KeyVerdict::NotTold, script, None, tokens)
+                    (sentence, KeyVerdict::NotTold, script, None, tokens, None)
                 }
-                _ => ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold, None, None, None),
+                _ => ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold, None, None, None, None),
             };
-            errand_answer(Answer { errand, sentence, key, script, reply, tokens });
+            errand_answer(Answer { errand, sentence, key, script, reply, tokens, sent });
         }
 
         // The card sends no signals, so the only way to notice a packet is to
