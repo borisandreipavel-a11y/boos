@@ -35,6 +35,7 @@ Every line typed in the chat box, but `key` and `setup`, goes to the model with 
 19. [open-points.md](open-points.md): known limits and what later work must deal with.
 20. [apps.md](apps.md): apps made on request: what the model is told, the request, taking the script out of the answer, showing it, running it, keeping it, and the panel of apps.
 21. [tools.md](tools.md): every line to the model: the request with its list of tools, the four tools, reading the answer, the tokens it took, and what a line costs.
+22. [release.md](release.md): a release of the boot disk: why it is built by GitHub, and the notices that go with it.
 
 ## Where things are
 
@@ -127,6 +128,7 @@ Outside `src/`:
 - `make-boot-disk.ps1` makes the boot disk: one disk file with a FAT32 start part that holds the kernel, written byte by byte, and boos's own part after it; see [disk.md](disk.md). For a disk made before it writes only the start part again.
 - `README.md` in the project's root is the front page for a visitor: what the project is for, what the kernel does today, what a start looks like, how to run it, and where the outside code comes from. It repeats, shortly, what these notes say, and some of the lines a boot prints. When the kernel's abilities, its boot lines or the way to run it change, change it too.
 - `test-tools/` holds the scripts that build, boot and check the kernel in QEMU, `.github/workflows/build.yml` has GitHub build it for every pull request, and `.github/workflows/boot-tests.yml` has GitHub boot it there and run the tests; see [testing.md](testing.md).
+- `release/` holds what a release of the boot disk needs: `make_notices.py`, which makes the notices that go with it, and in `notices/` the licence texts of the crates that hold none; see [release.md](release.md).
 - Not in the repository: `esp/`, `target/` and `interpreter/target/` (build output), `edk2-x86_64-code.fd` (QEMU's UEFI firmware, copied from QEMU's `share` folder) and `disk.img` (the machine's disk, which holds what was stored on it).
 - `LICENSE-MIT` and `LICENSE-APACHE` are the two licences of the project's own code: whoever uses it chooses either. The outside code keeps its own: the copies in `vendor/` hold their licence files (see `vendor/README.md`), and the notices of the interpreter for Lua are in [interpreter.md](interpreter.md).
 
