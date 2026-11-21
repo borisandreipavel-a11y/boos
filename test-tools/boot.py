@@ -62,7 +62,9 @@ class Machine:
             # network="open" lets the kernel reach this computer (and beyond); only for kernels whose
             # page fetch was pointed at a test server, and for a deliberate fetch from the real site.
             fence = "" if network == "open" else ",restrict=on"
-            command += ["-netdev", "user,id=net0" + fence, "-device", "virtio-net-pci,netdev=net0"]
+            # The card: virtio, or another that QEMU plays when BOOS_NETWORK_CARD names it (e1000, say).
+            card = os.environ.get("BOOS_NETWORK_CARD") or "virtio-net-pci"
+            command += ["-netdev", "user,id=net0" + fence, "-device", card + ",netdev=net0"]
         else:
             command += ["-net", "none"]
         if disk:
