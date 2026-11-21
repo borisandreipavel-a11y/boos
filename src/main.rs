@@ -25,6 +25,7 @@ mod heap; // The heap, and Rust's lists and text on top of it.
 mod tasks; // Several tasks taking turns, switched by the timer.
 mod pci; // The PCI list of the machine's cards and devices.
 mod network_card; // The network card.
+mod intel_card; // Intel's network cards.
 mod network; // The first words on the network.
 mod page; // Fetching one page from the web.
 mod random; // Random numbers, made by the processor.
@@ -77,6 +78,7 @@ use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interpreter::{GREETING_SCRIPT, interpreter_check, script_run};
 use json::json_check;
 use lock::lock_check;
+use intel_card::{intel_card_find, intel_card_setup};
 use interrupts::load_interrupt_table;
 use keyboard::{key_letter, keyboard_setup, next_key};
 use lines::{lines_begin, lines_key, lines_paint_new, lines_start_over, lines_stop_screen, lines_stopping, lines_tasks_start};
@@ -381,32 +383,56 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
         write!(serial, "Disk controller: none found\r\n").ok();
     }
 
-    // Look for the network card among the machine's cards and devices, and set it up.
+    // Look for a network card among the machine's cards and devices, and set
+    // it up. Two kinds are known: the virtio card of virtual machines, and
+    // Intel's cards (intel_card.rs). The virtio card is tried first; if there
+    // is none, or it cannot be set up, an Intel card. One card is used.
+    let mut card_found = false;
+    let mut card_address = None;
     if let Some(card) = network_card_find() {
+        card_found = true;
         write!(serial, "Network card: found, device {} on bus {} of the PCI list\r\n", card.device, card.bus).ok();
         match network_card_setup(card) {
-            Ok(address) => {
-                write!(serial, "Network card: ready, its address is {}\r\n", hardware_address(address)).ok();
-
-                // The kernel's first packet: ask who the gateway is.
-                match gateway_ask(address) {
-                    Some(gateway) => {
-                        write!(serial, "Network: the gateway 10.0.2.2 answered, its address is {}\r\n", hardware_address(gateway)).ok();
-                    }
-                    None => {
-                        write!(serial, "Network: the gateway 10.0.2.2 did not answer\r\n").ok();
-                    }
-                }
-
-                // From here on the network stack does the talking, in a task of its own.
-                network_start(address);
-            }
+            Ok(address) => card_address = Some(address),
             Err(reason) => {
                 write!(serial, "Network card: not set up, because {}\r\n", reason).ok();
             }
         }
-    } else {
-        write!(serial, "Network card: none found\r\n").ok();
+    }
+    if card_address.is_none() {
+        if let Some((card, model)) = intel_card_find() {
+            card_found = true;
+            write!(serial, "Network card: found, an Intel {}, device {} on bus {} of the PCI list\r\n", model, card.device, card.bus).ok();
+            match intel_card_setup(card) {
+                Ok(address) => card_address = Some(address),
+                Err(reason) => {
+                    write!(serial, "Network card: not set up, because {}\r\n", reason).ok();
+                }
+            }
+        }
+    }
+    match card_address {
+        Some(address) => {
+            write!(serial, "Network card: ready, its address is {}\r\n", hardware_address(address)).ok();
+
+            // The kernel's first packet: ask who the gateway is.
+            match gateway_ask(address) {
+                Some(gateway) => {
+                    write!(serial, "Network: the gateway 10.0.2.2 answered, its address is {}\r\n", hardware_address(gateway)).ok();
+                }
+                None => {
+                    write!(serial, "Network: the gateway 10.0.2.2 did not answer\r\n").ok();
+                }
+            }
+
+            // From here on the network stack does the talking, in a task of its own.
+            network_start(address);
+        }
+        None => {
+            if !card_found {
+                write!(serial, "Network card: none found\r\n").ok();
+            }
+        }
     }
 
     // Two more tasks, next to the one that has run so far. They get their

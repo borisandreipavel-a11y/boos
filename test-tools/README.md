@@ -53,7 +53,8 @@ caught (the misses that `docs/testing.md` names excepted).
   every run, `--list` and "only what changed" included, and makes the run end with 1.
 - **To add a suite:** one entry in `suites.py`. **To add a break on purpose:** a line in one of the lists
   (`run_key_breaks.py`, `run_look_breaks.py`, `run_reset_breaks.py`, `run_lines_breaks.py`, `run_try_breaks.py`
-  with `test_try.py`, `app_breaks.py`, `apps_kept_breaks.py`, `model_breaks.py`, `model_breaks5.py`), the count in
+  with `test_try.py`, `app_breaks.py`, `apps_kept_breaks.py`, `model_breaks.py`, `model_breaks5.py`,
+  `run_intel_card_breaks.py`), the count in
   `suites.BREAK_COUNTS`, and its first failure in
   `suites.CAUGHT_BY` after one run with `--to-the-end`. A break that can no longer be caught, for a reason that
   `docs/testing.md` gives, goes into `suites.KNOWN_MISSES` with that reason: it is still made and run, and counted
@@ -76,6 +77,10 @@ caught (the misses that `docs/testing.md` names excepted).
   a source file for a moment on purpose, which put it back.
 
 A test boot never uses the project's `disk.img`: every test makes disk files of its own.
+
+**The network card.** Every test machine gets QEMU's virtio card, or the card that `BOOS_NETWORK_CARD` names, such
+as `e1000` (`boot.py`). The table runs some suites both ways; the runner clears the name from its own surroundings, so
+that a name left set by hand cannot change every suite.
 
 **Ports.** QEMU's monitor gets a free port from the computer at every boot. The stand-in servers' port is built
 into a copy of the kernel, so it comes from a range that starts at `BOOS_PORT_BASE` (44300 when not set). Two
@@ -147,3 +152,5 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | `time_lines.py [boots] [commit]` | How much later the lines of a start arrive than with another commit's kernel, built from a clean export |
 | `test_chat_tools.py [scenario ...]` | Every line to the model, in the stand-in copy: no key, the model's words and the tokens, an app asked for in words and run again after a restart, the panel's page turned, what a model may send that must not be believed, a line while an answer is awaited, no network card, no notebook |
 | `run_chat_tools_breaks.py`, `chat_tools_breaks.py` | The breaks on purpose for every line to the model, each alone, in the copy |
+| `test_intel_card.py [scenario ...]` | Intel's network card as QEMU plays it: the start with the 82540EM and every packet of it, another address, the 82545EM, a virtio card beside it (the virtio card is used), a virtio card that cannot be set up beside it (the Intel card is used), the card attached to nothing, the gateway asked twice on a network without it (counted in a recording), the card set up twice, 600 questions in a row, and a page of 300,000 bytes through the encrypted link from a test server |
+| `run_intel_card_breaks.py` | The breaks on purpose for Intel's network card, each alone, in the break copy |

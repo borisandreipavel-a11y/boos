@@ -83,6 +83,18 @@ SUITES = [
     # change no file of the kernel, so they run as one job, through their own list.
     dict(name="boot disk breaks", command=["run_boot_disk_breaks.py"], watches=["make-boot-disk.ps1", "make-disk.ps1"],
          seconds=300),
+    # Intel's network card (src/intel_card.rs), as QEMU plays it. "again", "many" and "page" build a copy of their own
+    # (net_copy.py). src/intel_card.rs is watched by no entry: every start with a virtio card asks it whether an Intel
+    # card is in use, so a change to it runs every suite.
+    dict(name="intel card", command=["test_intel_card.py"], split=True, watches=[],
+         seconds=dict(start=35, address=30, model545=30, both=30, fallback=30, nothing=35, asking=35, again=60, many=90,
+                      page=100)),
+    # The model's answers and three scenarios of every line to the model, with the Intel card in place of the virtio
+    # card (BOOS_NETWORK_CARD, read by boot.py).
+    dict(name="model on the Intel card", command=["test_model.py", MODEL_KINDS], env={"DIVIDED_DISK": "", "BOOS_NETWORK_CARD": "e1000"},
+         watches=STAND_IN + SECRET, seconds=260),
+    dict(name="chat tools on the Intel card", command=["test_chat_tools.py"], split=["words", "dice", "odd"],
+         env={"BOOS_NETWORK_CARD": "e1000"}, watches=STAND_IN + APPS, seconds=dict(words=80, dice=70, odd=100)),
 ]
 
 # Scripts named test_*.py or run_*_breaks.py that are no entry of their own, and why.
@@ -103,7 +115,8 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 16}
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 24, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 16,
+                "intel": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -252,4 +265,14 @@ CAUGHT_BY = {
     'break tools: looknotkept': "tools-odd 'two looks'",
     'break tools: pagenotturned': 'tools-pages page-2',
     'break tools: jsonfraction': 'words the check of JSON at startup',
+    'break intel: receiving never switched on': 'start: the network lines are not as meant',
+    'break intel: the card may not reach memory': 'start: the network lines are not as meant',
+    'break intel: a used card not started over': 'again: the second setup did not start the card over, once',
+    'break intel: the address read with its bytes swapped': 'start: the network lines are not as meant',
+    "break intel: a packet's length read from the wrong place": 'start: the network lines are not as meant',
+    'break intel: a received slot never handed back': 'many: not every one of 600 questions was answered',
+    'break intel: the send ring does not go round': 'many: not every one of 600 questions was answered',
+    'break intel: the virtio card not looked for first': 'both: the network lines are not as meant',
+    'break intel: no Intel card after a virtio card that cannot be set up': 'fallback: the network lines are not as meant',
+    'break intel: the gateway asked once only': 'asking: the kernel asked for the gateway 1 times, not twice',
 }
