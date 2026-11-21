@@ -36,9 +36,9 @@ jobs:
   share:
     name: boot ${{ matrix.share }} of 3
     runs-on: windows-latest
-    # About twice what one share of the whole set is expected to take (about 30 minutes); what a pull request
-    # needs is the whole set at most.
-    timeout-minutes: 60
+    # About twice what the slowest share of the whole set took (47 to 49 minutes); what a pull request needs is
+    # the whole set at most.
+    timeout-minutes: 90
     strategy:
       # A share that fails does not stop the other two: their results are wanted too.
       fail-fast: false
