@@ -4,7 +4,7 @@
   version and licence, and its own licence, notice and copyright files, word for word. The list of pieces is cargo's
   own (`cargo tree`, for the kernel and for the interpreter, offline: what the build used).
 - COPYRIGHT-library.html: Rust's own notices for its standard library, which is built in too, as the Rust in use
-  carries them (the component rust-docs).
+  carries them (they come with Rust's component rustc).
 
 Some crates hold no licence file. Their texts are kept in release/notices/, taken from their projects' repositories
 at the commit the crate was made from; the script checks that the crate still comes from that commit.
@@ -103,7 +103,7 @@ def main():
     sysroot = subprocess.run(["rustc", "--print", "sysroot"], capture_output=True, text=True).stdout.strip()
     rust_notices = os.path.join(sysroot, "share", "doc", "rust", "COPYRIGHT-library.html")
     if not os.path.exists(rust_notices):
-        stop("Rust's notices for its standard library are missing (%s): add the component rust-docs"
+        stop("Rust's notices for its standard library are missing (%s), which come with Rust's component rustc"
              % os.path.join("share", "doc", "rust", "COPYRIGHT-library.html"))
 
     crates = outside_crates()
