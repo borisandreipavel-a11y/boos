@@ -26,7 +26,7 @@ BREAKS = {
     # The key is not hidden in the script.
     "nohide": {"model.rs": swap("                key_hide(&mut signs, key);\n", "")},
     # A line is sent with the app's limit of tokens (every line goes to the model, docs/tools.md).
-    "asktokens": {"model.rs": swap("json_text(line),\n        tools,\n        ANSWER_TOKENS", "json_text(line),\n        tools,\n        APP_TOKENS")},
+    "asktokens": {"model.rs": swap("json_text(&sent),\n        tools,\n        ANSWER_TOKENS", "json_text(&sent),\n        tools,\n        APP_TOKENS")},
     # (No break for the word `make` and for a request without a key: the word is an ordinary line now, and a line
     # without a key is turned away before it reaches the model, which the breaks of model_breaks.py and
     # chat_tools_breaks.py named nokeycheck show.)

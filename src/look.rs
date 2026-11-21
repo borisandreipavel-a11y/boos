@@ -251,38 +251,38 @@ fn look_keep() -> Vec<String> {
 }
 
 // Puts the look kept in the notebook in use. Called once at startup, once the
-// notebook is opened, before the greeting. Gives back a row to say when the
-// kept look cannot be used, and whether the look in use changed, in which
-// case the whole screen must be painted again (`look_paint`). A look that
-// cannot be used counts as no answer, so that the onboarding asks again.
-pub fn look_begin() -> (Option<String>, bool) {
+// notebook is opened, before the greeting, while the kernel's own lines still
+// cover the screen: the whole usual picture is painted in the look in use
+// when the start is over (see `lines.rs`). Gives back a row to say when the
+// kept look cannot be used. A look that cannot be used counts as no answer,
+// so that the onboarding asks again.
+pub fn look_begin() -> Option<String> {
     match notebook_find(LOOK_ENTRY) {
         // Nothing kept: the first look stays, and the question is still to
         // be asked.
-        Ok(None) => (None, false),
+        Ok(None) => None,
         // An entry that holds no signs: the question was answered, and the
         // first look stays.
         Ok(Some(kept)) if kept.is_empty() => {
             unsafe { ANSWERED = true };
-            (None, false)
+            None
         }
         Ok(Some(kept)) => {
             // What comes from the disk comes from outside the kernel. It is
             // only compared with the names in the list, and never shown.
             match LOOKS.iter().position(|one| one.name.as_bytes() == kept.as_slice()) {
                 Some(place) => {
-                    let changed = unsafe { IN_USE } != place;
                     unsafe {
                         IN_USE = place;
                         KEPT = Some(place);
                         ANSWERED = true;
                     }
-                    (None, changed)
+                    None
                 }
-                None => (Some(format!("Kernel: the look kept on the disk is not one I know, so the screen keeps {}.", look_named())), false),
+                None => Some(format!("Kernel: the look kept on the disk is not one I know, so the screen keeps {}.", look_named())),
             }
         }
-        Err(reason) => (Some(format!("Kernel: I cannot read the look kept on the disk, because {}.", reason)), false),
+        Err(reason) => Some(format!("Kernel: I cannot read the look kept on the disk, because {}.", reason)),
     }
 }
 

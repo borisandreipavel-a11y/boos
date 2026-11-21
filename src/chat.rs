@@ -2,7 +2,8 @@
 //! types, with what was said so far above the line being typed. Every line
 //! that is sent goes to the model, except the two the kernel keeps for
 //! itself, `key` and `setup`; the model's words come back as rows of their
-//! own, and a tool it asks for is done (see `tools.rs`).
+//! own, and a tool it asks for is done (see `tools.rs`). What a line brought
+//! is remembered, and goes with the next lines (see `conversation.rs`).
 //! Notes: `docs/chat.md`.
 
 use alloc::format;
@@ -11,6 +12,7 @@ use alloc::vec::Vec;
 
 use crate::apps::{app_print_script, app_run};
 use crate::apps_kept::{app_keep, apps_kept_begin};
+use crate::conversation::{conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent};
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -324,11 +326,13 @@ pub fn chat_paint() {
 // question for it (see `onboarding.rs`); and the last line that was sent
 // before the machine was switched off, if the notebook on the disk holds one.
 // Before that, it puts the look kept in the notebook in use, so that all of
-// it shows in that look. Last, it shows the panel of the apps kept on the
-// disk, if any are (see `apps_kept.rs`). Call it once at startup, after the
-// notebook is opened.
+// it shows in that look. Last, it finds the apps kept on the disk, for the
+// panel that lists them (see `apps_kept.rs`). Call it once at startup, after
+// the notebook is opened. Nothing is painted here: the kernel's own lines
+// cover the screen while it starts, and when the start is over the whole
+// usual picture is painted in the look in use (see `lines.rs`).
 pub fn chat_begin() {
-    let (look_trouble, look_changed) = look_begin();
+    let look_trouble = look_begin();
     let mut rows = onboarding_begin();
     if !rows.is_empty() {
         // The greeting or the question takes the place of the row that
@@ -349,12 +353,6 @@ pub fn chat_begin() {
     for row in rows.iter() {
         serial_print(&format!("{}\r\n", row));
         chat_add(Speaker::Kernel, row);
-    }
-    // In another look than the first, the whole screen is painted again.
-    if look_changed {
-        look_paint();
-    } else {
-        chat_paint_rows();
     }
     apps_kept_begin();
 }
@@ -379,45 +377,53 @@ fn recall_row() -> Option<String> {
 // Says something in the chat box that is not an answer to the line just
 // sent: adds it to what was said as a row of the kernel's and repeats it in
 // the terminal. `chat_answer` calls this when the answer to an errand has
-// come in, and `tools.rs` when it does what the model asked for. A text that
+// come in, and `tools.rs` when it does what the model asked for. The row is
+// remembered with the line it answers (see `conversation.rs`). A text that
 // comes from outside the kernel must be cleaned before it is handed over.
 pub fn chat_say(text: &str) {
     let row = format!("Kernel: {}", text);
     serial_print(&format!("{}\r\n", row));
     chat_add(Speaker::Kernel, &row);
     chat_paint_rows();
+    conversation_row(&row);
 }
 
 // Says the model's own words in the chat box, as a row that begins with
 // "Model:", so that they cannot be taken for the kernel's own sentences, and
-// repeats it in the terminal. The words were cleaned in `model.rs`.
+// repeats it in the terminal. The words were cleaned in `model.rs`. The row
+// is remembered with the line it answers.
 fn model_say(words: &str) {
     let row = format!("Model: {}", words);
     serial_print(&format!("{}\r\n", row));
     chat_add(Speaker::Kernel, &row);
     chat_paint_rows();
+    conversation_row(&row);
 }
 
 // Every line that is sent, but for `key` and `setup`, goes to the model, with
-// the list of what the kernel can do for it (see `tools.rs`). That needs a
-// key, and it is an errand for the network's task: the answer comes later,
-// as rows of its own (see `chat_answer`). Gives back the row that says what
-// happens now.
+// the list of what the kernel can do for it (see `tools.rs`) and the record
+// of what was said before it (see `conversation.rs`). That needs a key, and
+// it is an errand for the network's task: the answer comes later, as rows of
+// its own (see `chat_answer`). Gives back the row that says what happens now.
 fn model_ask(said: &str) -> String {
     if secret_length() == 0 {
         return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
     }
-    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools() }) {
-        Ok(()) => String::from("Kernel: I am asking the model."),
+    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record() }) {
+        Ok(()) => {
+            conversation_sent();
+            String::from("Kernel: I am asking the model.")
+        }
         Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
     }
 }
 
 // Says the answer to an errand, which the main loop picks up from the
 // network's task. The answer to the try of a key goes to the onboarding,
-// which says what comes of it. For a line, the model's words come first, then
-// what the kernel has to say about the answer, if anything, and then the
-// tool the model asked for is done. For an app, the row about the answer
+// which says what comes of it. For a line, the line as it was sent is
+// remembered first (see `conversation.rs`), then the model's words come,
+// then what the kernel has to say about the answer, if anything, and then
+// the tool the model asked for is done. For an app, the row about the answer
 // comes first; a script that the model wrote is shown in the terminal below
 // that row, then run, and a second row says how the run went (see `apps.rs`).
 // An app that ran to its end is kept on the disk; a third row comes only if
@@ -425,6 +431,7 @@ fn model_ask(said: &str) -> String {
 // good answer took follows the row about the answer.
 pub fn chat_answer(answer: Answer) {
     if let Errand::ChatLine { .. } = &answer.errand {
+        conversation_line(answer.sent.as_deref());
         let reply = answer.reply;
         if let Some(words) = reply.as_ref().and_then(|reply| reply.words.as_deref()) {
             model_say(words);
@@ -562,7 +569,9 @@ pub fn chat_key(letter: u8) {
             } else if said == SETUP_WORD {
                 // And the word that asks the questions of the onboarding
                 // again: the kernel asks for the person's name, and the next
-                // line is the answer.
+                // line is the answer. Another person may be at the machine
+                // now, so what was said before is forgotten.
+                conversation_forget();
                 onboarding_again()
             } else {
                 // Every other line goes to the model.

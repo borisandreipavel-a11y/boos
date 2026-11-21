@@ -472,6 +472,7 @@ class KeyedChat(Chat):
             line = self.line
             if line == "setup":
                 mine = "%s: setup" % self.person()
+                self.memory.forget()    # what was said is forgotten (conversation_model.py)
                 self.setting_up = True
                 self.waiting = "name"
                 answer = question(self.person())
