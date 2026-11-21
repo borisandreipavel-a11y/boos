@@ -1,0 +1,81 @@
+# The steps that make the files of a release of the boot disk, shared by both jobs of release.yml: QEMU from its
+# installer, checked against its SHA-512 as in boot-tests.yml; Rust 1.100.0, whose component rustc carries Rust's
+# notices for its standard library; then release/make_release.py. See docs/release.md.
+
+name: Make the release's files
+description: Installs QEMU 11.1.0 and Rust 1.100.0, then runs release/make_release.py into a folder.
+
+inputs:
+  out:
+    description: The folder the files are made in; it must be new or empty.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The installer the boot tests keep in GitHub's cache, when it is there.
+    - name: Take the QEMU installer kept by an earlier run
+      id: kept
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}\qemu-installer
+        key: qemu-installer-qemu-w64-setup-20260811.exe
+
+    - name: Download the QEMU installer
+      if: steps.kept.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\qemu-installer" | Out-Null
+        Invoke-WebRequest -Uri "https://qemu.weilnetz.de/w64/2026/qemu-w64-setup-20260811.exe" -OutFile "$env:RUNNER_TEMP\qemu-installer\qemu-w64-setup-20260811.exe"
+
+    # Every time, also when it was kept: an installer that differs by a single byte is refused and never run.
+    - name: See that the installer is the one meant
+      shell: pwsh
+      run: |
+        $hash = (Get-FileHash -Algorithm SHA512 -LiteralPath "$env:RUNNER_TEMP\qemu-installer\qemu-w64-setup-20260811.exe").Hash.ToLower()
+        Write-Output $hash
+        if ($hash -cne "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543") { exit 1 }
+
+    # /S: the installer asks nothing. It puts QEMU in C:\Program Files\qemu.
+    - name: Install QEMU
+      shell: pwsh
+      run: |
+        $installer = Start-Process -FilePath "$env:RUNNER_TEMP\qemu-installer\qemu-w64-setup-20260811.exe" -ArgumentList "/S" -Wait -PassThru
+        Write-Output "The installer ended with $($installer.ExitCode)"
+        if ($installer.ExitCode -ne 0) { exit 1 }
+
+    - name: See that QEMU 11.1.0 and its firmware are there
+      shell: pwsh
+      run: |
+        $version = & "C:\Program Files\qemu\qemu-system-x86_64.exe" --version
+        Write-Output $version
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        if (-not ($version -match "version 11\.1\.0")) { exit 1 }
+        if (-not (Test-Path -LiteralPath "C:\Program Files\qemu\share\edk2-x86_64-code.fd")) { exit 1 }
+
+    # The same Rust as the build check. Its notices for the standard library come with it (component rustc).
+    - name: Install Rust 1.100.0
+      shell: pwsh
+      run: rustup toolchain install 1.100.0 --profile minimal --target x86_64-unknown-uefi --target wasm32-unknown-unknown
+
+    - name: Use Rust 1.100.0
+      shell: pwsh
+      run: rustup default 1.100.0
+
+    - name: See that Rust 1.100.0 is the one in use
+      shell: pwsh
+      run: |
+        $version = rustc --version
+        Write-Output $version
+        if ($version -notlike "rustc 1.100.0 *") { exit 1 }
+
+    # Builds, makes boot.img, boot.vdi and the notices, starts QEMU once from a copy of boot.img, packs the zip and
+    # writes the checksums and the release's text. It uploads nothing.
+    - name: Make and check the release's files
+      shell: pwsh
+      env:
+        QEMU_DIR: C:\Program Files\qemu
+        BOOS_FIRMWARE: C:\Program Files\qemu\share\edk2-x86_64-code.fd
+        BOOS_TEST_WORK: ${{ runner.temp }}\boos-tests
+        OUT: ${{ inputs.out }}
+      run: python release/make_release.py "$env:OUT"

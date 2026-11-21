@@ -96,7 +96,7 @@ EXCUSED = {
 
 # Files no test runs or reads: a change to them alone boots nothing. Anything not named here or in an entry, and not
 # words only (WORDS), runs everything.
-NO_TEST = [".github/", "lua/", "run.bat", "run-boot-disk.bat", "test-tools/check_lua.py", "test-tools/export_check.py", "test-tools/time_look.py",
+NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test-tools/check_lua.py", "test-tools/export_check.py", "test-tools/time_look.py",
            "test-tools/time_repaint.py", "test-tools/time_lines.py", "test-tools/make_lock_values.py", "test-tools/restore.py",
            "test-tools/crlf.py"]
 # Words only: a change to these boots nothing.
