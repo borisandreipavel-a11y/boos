@@ -68,10 +68,22 @@ Tried on a Windows computer with QEMU 11.1.0, on the code of `4353d34` with the 
 - It stops if a release or a draft of that version is there already: the listing of releases names drafts too (`isDraft`), for those who may push. It never replaces an earlier draft; to make a draft again after a fix, a person deletes the old one on GitHub first.
 - The shared steps, `.github/actions/release-files/action.yml`: QEMU from the same installer as the boot tests, checked against its SHA-512 and taken from GitHub's cache when the boot tests keep it there; Rust 1.100.0, the smallest set of components, which has Rust's notices; then `release/make_release.py`.
 - Then `gh release create` makes a draft: tag `v<version>` on the commit built, marked as a pre-release, with the release's text, the zip and `SHA256SUMS.txt`. A draft is seen only by those who may push to the repository ("Only users with push access will receive listings for draft releases", GitHub's REST documentation). Publishing it is a person's step.
-- Last, it says whether the tag is there yet: GitHub's documentation, as read, does not say whether making a draft makes its tag.
+- Last, it says whether the tag is there yet: GitHub's documentation, as read, does not say whether making a draft makes its tag. For 0.1.0 it did not: the tag came when the draft was published ("The first release", below).
 
 This job may write the repository's contents, which is what making a release needs ("contents: write allows the action to create a release", GitHub's workflow syntax), and read the results of other workflows. Every other job of the project's workflows may only read. A release's commit must be on `master` anyway: GitHub refuses a release whose commit changes `.github/workflows/` against the default branch to the token a workflow has.
 
 On a pull request that changes `release.yml`, the shared steps or `release/`, a dry run makes and checks the same files and shows them, their sizes, the checksums and the start of the text in its log. It uploads nothing, and it may only read the repository.
 
 - The clean export of `a8425d4`, the change that brought the notices in, passed: 695 files, none built or private, 689 the same as the working files and six, the new ones, in line ends only; both builds from nothing without warnings or a helper program, and no block; the interpreter byte for byte the one tested, and inside the kernel; the kernel to the prompt in 35 lines, with "Free memory" 197 MB.
+- So did the clean export of `b042f03`, the change that brought the release workflow in: 699 files, none built or private, 689 the same as the working files and ten, the new ones, in line ends only; both builds from nothing without warnings or a helper program, and no block; the interpreter byte for byte the one tested, and inside the kernel; the kernel to the prompt in 35 lines, with "Free memory" 197 MB.
+
+## The first release
+
+Version 0.1.0, "boos 0.1.0 (early test)", made from `master` at `8b6102a` and published on 2026-11-21 as a pre-release:
+
+- The dry run on the pull request that brought the workflow in, merged with `master` at `4353d34`, passed in 2 minutes 22 seconds: QEMU's installer came from GitHub's cache and matched its SHA-512, and the files were made and checked as above, the start from a copy reaching the first question in 35 lines. `NOTICES.txt`, `COPYRIGHT-library.html` and the two licence files it made were byte for byte the ones made from the same code on a person's computer: nothing of the computer that makes them goes into them.
+- The release run, started by hand on `master` at `8b6102a`, took 2 minutes 51 seconds. It found the boot tests' passed run after that commit had landed, made the files as in the dry run (the zip 3,305,380 bytes), and made the draft with the zip and `SHA256SUMS.txt`.
+- Making this draft made no tag: the run's last step said so, and GitHub's list of tags had none.
+- Before it was published, a person reported that the disk from the draft, started in VirtualBox 7.2.22 with the release text's steps, reached its first question; nothing of it was watched here.
+- When the draft was published, GitHub made the tag `v0.1.0` on `8b6102a`. Making the tag started no workflow: each of them runs only for `master` and for pull requests.
+- Without signing in, GitHub's API showed the release and its two files; GitHub's own SHA-256 of the zip was the one in `SHA256SUMS.txt`, and the zip's download link answered with its full size (its headers only were asked for; nothing was downloaded). GitHub's "latest release" stayed empty, since a pre-release is never the latest.
