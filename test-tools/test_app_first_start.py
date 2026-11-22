@@ -9,7 +9,8 @@ project, see net_copy.py). Made-up name, key and password only.
 
 Usage: python test_app_first_start.py keylater|keyfirst
 Checks the rows from that line on word for word, the `Script` lines, the stand-in's requests (the try of the key, the
-line, the request for the app), and that the terminal holds no byte that is not plain text and no piece of the key."""
+line, the request for the app, and the line asked about again with what came of the app), and that the terminal holds
+no byte that is not plain text and no piece of the key."""
 import json
 import os
 import subprocess
@@ -21,7 +22,8 @@ os.environ["DIVIDED_DISK"] = "1"
 from app_cases import INSTRUCTIONS, LEAD, SCRIPT, listing_meant
 from boot import HERE, RUNS, Machine
 from certs import test_keys
-from chat_tools_model import body_meant
+from chat_cases import AGAIN_WORDS
+from chat_tools_model import body_again, body_meant, left_on_screen
 from net_copy import build
 from ports import standin_port
 from verdict import Failures
@@ -112,6 +114,9 @@ def main():
         before = len(lines_of(machine)) - 1
         press(machine, "make " + REQUEST + ENTER)
         wait_line(machine, "Kernel: the model wrote an app", 40)
+        # What came of the new app goes back to the model, which is asked about the line again; the stand-in
+        # answers with its words (chat_cases.AGAIN_WORDS).
+        wait_line(machine, "Model: ", 40)
         time.sleep(1.0)
         machine.shot("end")
     finally:
@@ -119,13 +124,17 @@ def main():
         server.kill()
     lines = raw.decode(errors="replace").split("\r\n")
     after = lines[before:]
-    said = [line for line in after if line.startswith((NAME + ":", "Kernel:", "Script ", "App: "))]
+    said = [line for line in after if line.startswith((NAME + ":", "Kernel:", "Script ", "App: ", "Model: "))]
     # The app runs: it prints the number it rolled, which no one can know beforehand.
     rolled = [line for line in said if line.startswith("App: ")]
     meant = ["%s: make %s" % (NAME, REQUEST), "Kernel: I am asking the model.", 'Kernel: I am asking the model to make "%s".' % REQUEST,
              "Kernel: the model wrote an app of 4 lines. It is shown in the terminal."] + listing_meant(SCRIPT.strip())
     meant += [rolled[0] if rolled and rolled[0] in ["App: You rolled a %d" % n for n in range(1, 7)] else "App: You rolled a (1 to 6)",
-              "Kernel: the app ran to its end."]
+              "Kernel: the app ran to its end.", "Model: " + AGAIN_WORDS]
+    # What the second ask about the line goes with: no line before it, and the rows the line brought, with what the
+    # app left on the screen, which the chat box does not say.
+    dice = rolled[0][len("App: You rolled a "):] if rolled else "(no dice line)"
+    done = "\n".join(meant[2:4] + ["Kernel: the app ran to its end.", "Kernel: " + left_on_screen("Dice: " + dice)])
     print("--- the rows from the request on:")
     for line in said:
         print("   " + line)
@@ -146,8 +155,10 @@ def main():
     posts = [note for note in notes if not note.get("first line", "").startswith("GET")]
     app_body = {"model": "deepseek/deepseek-v4.1-flash-1017", "messages": [{"role": "system", "content": INSTRUCTIONS},
                 {"role": "user", "content": LEAD + REQUEST}], "max_tokens": 4000, "stream": False}
-    # The try of the key asks the fixed question; the line goes with the list of tools (no app is kept yet).
-    wanted = ([MEANT_ASK] if scenario == "keyfirst" else []) + [body_meant("make " + REQUEST, []), app_body]
+    # The try of the key asks the fixed question; the line goes with the list of tools (no app is kept yet); the
+    # line is asked about again with the new app kept.
+    wanted = ([MEANT_ASK] if scenario == "keyfirst" else []) + [body_meant("make " + REQUEST, []), app_body,
+                                                                 body_again("make " + REQUEST, [(1, REQUEST)], ("", done), key=KEY)]
     got = [note.get("body") for note in posts]
     keys = [note.get("key came as") == "Bearer " + KEY for note in posts]
     print("stand-in: %d requests, bodies as meant %s, each with the whole key %s" % (len(posts), got == wanted, all(keys)))

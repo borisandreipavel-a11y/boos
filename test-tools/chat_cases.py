@@ -96,6 +96,13 @@ LONG_WORDS = "These words are long on purpose, so that what the kernel remembers
 REQUEST_45 = "a dice that rolls and shows the number it got"
 LONG_REASON = "This key may not ask for that, and here is a long reason why. " * 8
 
+# Another ask about a line, when what a tool did needs the model (docs/tools.md, "When what a tool did goes back"), is
+# known by the words that stand behind the record in its instruction text. model_server.py answers it with the next
+# behaviour only when that begins with "again:" (what follows is a behaviour as for a line); otherwise with these
+# words, and the list stays as it is, so that a list made for the lines alone keeps its order.
+AGAIN_MARK = "\n\nWhat came of the newest line so far, oldest first. "
+AGAIN_WORDS = "I see what came of it."
+
 
 def answer(kind, line, bearer):
     """Gives (bytes to send, how to end) for a behaviour, or None if `kind` is none of these."""

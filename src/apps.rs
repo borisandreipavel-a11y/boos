@@ -59,18 +59,18 @@ const SCRIPT_LINE_SHOWN: usize = 200;
 // errand for the network's task; the model's answer comes later, as a row of
 // its own (see `chat_answer` in `chat.rs`). The request comes from the model,
 // and was cleaned and cut by `tool_do` in `tools.rs`. Gives back what the
-// kernel says at once. Only the main loop may call this, as every function
-// the chat box calls.
-pub fn app_make(request: &str) -> String {
+// kernel says at once: that the model is asked, or why it is not. Only the
+// main loop may call this, as every function the chat box calls.
+pub fn app_make(request: &str) -> Result<String, String> {
     if request.is_empty() {
-        return String::from("the model asked for an app, but did not say what it should do.");
+        return Err(String::from("the model asked for an app, but did not say what it should do."));
     }
     if secret_length() == 0 {
-        return String::from("I cannot ask the model for an app, because no key is kept. Send the line \"key\" first.");
+        return Err(String::from("I cannot ask the model for an app, because no key is kept. Send the line \"key\" first."));
     }
     match errand_ask(Errand::AppRequest(String::from(request))) {
-        Ok(()) => format!("I am asking the model to make \"{}\".", request),
-        Err(reason) => format!("I cannot ask the model for an app, because {}", reason),
+        Ok(()) => Ok(format!("I am asking the model to make \"{}\".", request)),
+        Err(reason) => Err(format!("I cannot ask the model for an app, because {}", reason)),
     }
 }
 
@@ -130,6 +130,17 @@ pub fn app_print_script(script: &str) {
     }
 }
 
+// How the run of an app went: the sentence that says so, whether the app ran
+// to its end, and what of the run goes back to the model when it is asked
+// about the line again (see `chat.rs`), as sentences of the kernel's own:
+// what the app left on the screen, if it showed anything in this run, and,
+// for an app stopped at a mistake, the interpreter's line that says which.
+pub struct AppRun {
+    pub sentence: String,
+    pub ran: bool,
+    pub told: Vec<String>,
+}
+
 // Runs a script the model wrote, in the box, and says in one plain sentence
 // how the run went, and whether it ran to its end. What the script shows
 // appears in the box in the middle of the screen, and what it prints comes
@@ -138,7 +149,7 @@ pub fn app_print_script(script: &str) {
 // startup, so the app's box and the chat box are never painted at the same
 // time. While it runs, keys wait in the keyboard's line (see `docs/apps.md`).
 // Only the main loop may call this.
-pub fn app_run(script: &str) -> (String, bool) {
+pub fn app_run(script: &str) -> AppRun {
     // A new number to start the script's random numbers from at every run,
     // from the processor's random numbers. It is halved, so that it stays a
     // whole number above zero when Lua reads it. A machine without random
@@ -146,9 +157,9 @@ pub fn app_run(script: &str) -> (String, bool) {
     // start where they always do; but such a machine cannot make the
     // encrypted link, so no app comes to it.
     let seed = random_number().map(|number| (number >> 1) as i64);
-    match script_run_seeded(script, seed) {
-        Ok(0) => (String::from("the app ran to its end, but it showed nothing on the screen."), true),
-        Ok(_) => (String::from("the app ran to its end."), true),
+    let (sentence, ran, texts, mistake) = match script_run_seeded(script, seed) {
+        Ok(texts) if texts.shown.is_none() => (String::from("the app ran to its end, but it showed nothing on the screen."), true, texts, false),
+        Ok(texts) => (String::from("the app ran to its end."), true, texts, false),
         Err(stop) => {
             let sentence = match stop.kind {
                 StopKind::Mistake => String::from("the app was stopped, because it has a mistake in it; the terminal says which."),
@@ -156,7 +167,17 @@ pub fn app_run(script: &str) -> (String, bool) {
                 StopKind::GaveUp => String::from("the app was stopped, because the interpreter gave up, most likely for lack of memory."),
                 StopKind::Other => format!("the app was stopped, because {}.", stop.reason),
             };
-            (sentence, false)
+            (sentence, false, stop.texts, stop.kind == StopKind::Mistake)
         }
+    };
+    // Both texts were cleaned and held to their bounds when the app handed
+    // them over: 40 signs on the screen, 200 in a printed line.
+    let mut told = Vec::new();
+    if let Some(shown) = texts.shown {
+        told.push(format!("the app left this on the screen: \"{}\".", shown));
     }
+    if let Some(printed) = texts.printed.filter(|_| mistake) {
+        told.push(format!("the terminal says: \"{}\".", printed));
+    }
+    AppRun { sentence, ran, told }
 }

@@ -1,10 +1,12 @@
 """What the kernel remembers of the conversation, worked out from the notes apart from the kernel's code
 (docs/tools.md, "What the model remembers"): the last 10 lines that went to the model, each as it was sent with the
-key starred ("Person: ..."), with the rows its answer brought ("Model: ..." and "Kernel: ..."), never more than 8,000
+key starred ("Person: ..."), with the rows its answers brought ("Model: ..." and "Kernel: ..."), never more than 8,000
 bytes with a line end after each row, the oldest lines going first. The tool `forget` and the line `setup` forget it
 all. picture.Chat keeps one of these: a line that goes to the model takes the record as it stands (Chat.records), and
 the next row said by the kernel (Chat.say, Chat.row) begins the line's piece of the conversation, since every answer to
-a line brings at least one row. Nothing runs when this file is imported."""
+a line brings at least one row. When the model is asked about the line again, the ask takes what split() gives
+(Chat.agains), and the rows of its answer, and what an app left behind (Chat.remember), join the same piece. Nothing
+runs when this file is imported."""
 from app_cases import hide
 
 LINES_REMEMBERED = 10
@@ -56,6 +58,14 @@ class Memory:
         self.exchanges = []
         self.open = False
         self.waiting = None
+
+    def split(self):
+        """What another ask about the newest line goes with (docs/tools.md): the record of the lines before it, and
+        the rows the newest line brought so far, without the person's row; None when the rows said now belong to no
+        line, because everything was forgotten. The rows of that ask's answer join the same line."""
+        if not self.open or not self.exchanges:
+            return None
+        return "\n".join(row for rows in self.exchanges[:-1] for row in rows), "\n".join(self.exchanges[-1][1:])
 
     def record(self):
         return "\n".join(row for rows in self.exchanges for row in rows)

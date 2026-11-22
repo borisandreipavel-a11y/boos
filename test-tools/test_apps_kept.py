@@ -45,6 +45,7 @@ import time
 os.environ["DIVIDED_DISK"] = ""
 
 import app_cases
+import chat_cases
 from apps_kept_breaks import BREAKS
 from chat_tools_breaks import BREAKS as TOOL_BREAKS
 from chat_tools_model import NO_KEY, ToolsChat, making
@@ -117,8 +118,14 @@ class Run:
                                             os.path.join(tls, "a", "both-chain.pem"), os.path.join(tls, "a", "both.key"), self.log,
                                             json.dumps(list(behaviours))], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=HERE)
             assert self.server.stdout.readline().strip() == "ready"
-        self.m = Machine(tag, extra=(drive if drive is not None else one_disk(disk)) + (extra or []), disk=False, network=network,
-                         kernel=kernel_file or kernel())
+        try:
+            self.m = Machine(tag, extra=(drive if drive is not None else one_disk(disk)) + (extra or []), disk=False, network=network,
+                             kernel=kernel_file or kernel())
+        except Exception:
+            # A stand-in left behind would answer the next run on the same ports.
+            if self.server:
+                self.server.kill()
+            raise
         self.at = 0
         if not self.m.wait_for(b"repeated here:", 200):
             print(self.m.serial().decode(errors="replace")[-3000:])
@@ -249,10 +256,23 @@ def give_key(run, chat=None):
         report(run.tag + " key", False, "the key was not taken")
 
 
+def asked_again(run, chat=None, timeout=60):
+    """Waits for the model's words after a new app: what came of it goes back to the model, which is asked about the
+    line again (docs/tools.md), and the stand-in answers with chat_cases.AGAIN_WORDS. A next line must wait for them,
+    or it is turned away. The chat model gets the row; what the kernel remembers is not followed here, since no
+    request for a line is judged in this file (test_chat_tools.py judges them)."""
+    words = "Model: " + chat_cases.AGAIN_WORDS
+    found = run.wait_line(words, timeout=timeout)
+    report(run.tag + " asked again", found == words, None if found == words else "the words of the second ask never came")
+    if chat is not None:
+        chat.row(words)
+
+
 def make_app(run, request, kind, kept, chat=None):
     """Sends "make" and a request as a line; the stand-in answers it with the tool make_app and that request. Waits
-    for the row about asking for the app, the rows of the answer and the run, and for the line that says the app is
-    kept, or for none. Gives back the App lines of the run."""
+    for the row about asking for the app, the rows of the answer and the run, for the line that says the app is
+    kept, or for none, and for the model's words when it is asked about the line again. Gives back the App lines of
+    the run."""
     run.mark()
     run.press("make " + request + "\n", chat)
     asked = run.wait_line("Kernel: I am asking the model to make", "Kernel: I cannot ask", "Kernel: the model asked", timeout=90)
@@ -272,6 +292,7 @@ def make_app(run, request, kind, kept, chat=None):
         chat.row(making(request))
         chat.say(app_cases.outcome(kind, KEY)[0])
         chat.say(app_cases.run_expect(kind, KEY)[0])
+    asked_again(run, chat)
     return [l for l in run.since() if l.startswith("App: ")]
 
 
@@ -500,6 +521,7 @@ def scenario_requests():
     trouble = run.wait_line("Kernel: I could not keep", timeout=20)
     meant_row = not_kept_row("the numbers for apps have run out")
     report("requests no number left", trouble == meant_row, None if trouble == meant_row else "got %r" % trouble)
+    asked_again(run)
     # The note of app 8 has no script: an app made for its request takes its number, and its note is not written again.
     run.mark()
     run.press("make no script at all\n")
@@ -507,6 +529,7 @@ def scenario_requests():
     line = run.wait_line("Apps: ", timeout=30)
     meant_line = kept_line("no script at all")
     report("requests the note without a script", line == meant_line, None if line == meant_line else "got %r" % line)
+    asked_again(run)
     lines = run.end()
     check_start("requests", lines, before["things"], entries=before["end"] - 1)
     after = read_things(disk)
@@ -613,6 +636,7 @@ def scenario_failing():
         trouble = run.wait_line("Kernel: I could not keep", timeout=30)
         meant = not_kept_row("the disk reported that it could not do what was asked")
         report("failing row", trouble == meant, None if trouble == meant else "got %r" % trouble)
+        asked_again(run)
         run.mark()
         run.press("after\n")
         line = run.wait_line("Kernel: I could not keep that line", timeout=20)
@@ -748,6 +772,7 @@ def scenario_times():
     run = Run("kept-times", disk, behaviours=["app", "appexact"])
     give_key(run)
     one = keep_time(run, "a dice that rolls", "app")
+    asked_again(run)
     long = keep_time(run, "a long app of comments", "appexact")
     run.end()
     print("    keeping one entry took %s s, and 74 pieces %s s (from the row about the run to the line about keeping)"

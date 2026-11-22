@@ -3,12 +3,15 @@
 //! line that only makes sense after the ones before it, such as "make it roll
 //! two dice". A line is remembered as it was sent, with the key starred (see
 //! `model.rs`), as a row of the person's ("Person: ..."), and after it the
-//! rows its answer brought: the model's words and the kernel's own sentences,
-//! as the chat box said them. Nothing else is remembered: not `key` or
-//! `setup`, not the answers to the kernel's questions, not a line that was
-//! turned away. It lasts until the machine is switched off, or until the
-//! model forgets it with the tool `forget`, or `setup` is sent. Only the main
-//! loop may call these functions.
+//! rows its answers brought: the model's words and the kernel's own
+//! sentences, as the chat box said them, and, where what a tool did went back
+//! to the model, what an app left behind, which the chat box does not say
+//! (see `chat.rs`). Each answer about the line, the first and those to the
+//! model being asked about it again, adds to that one piece. Nothing else is
+//! remembered: not `key` or `setup`, not the answers to the kernel's
+//! questions, not a line that was turned away. It lasts until the machine is
+//! switched off, or until the model forgets it with the tool `forget`, or
+//! `setup` is sent. Only the main loop may call these functions.
 //! Notes: `docs/tools.md`.
 
 use alloc::format;
@@ -103,6 +106,17 @@ pub fn conversation_line(sent: Option<&str>) {
     unsafe { OPEN = open };
 }
 
+// The answer to another ask about the newest line has come (see `chat.rs`):
+// its rows belong to that line, as the rows before them did, and begin no
+// piece of their own. When everything was forgotten while the answer was
+// awaited, they belong to no line, as nothing does after forgetting.
+pub fn conversation_again() {
+    unsafe {
+        AWAITED = false;
+        FORGOTTEN_WHILE_AWAITED = false;
+    }
+}
+
 // A row the kernel says in answer to a line: the model's words, which begin
 // with "Model:", or a sentence of the kernel's own, which begins with
 // "Kernel:". It is remembered with the newest line, if the rows said now
@@ -143,13 +157,34 @@ pub fn conversation_remembers() -> bool {
 // line (see `tools.rs`). Empty when nothing is remembered.
 pub fn conversation_record() -> String {
     let exchanges = exchanges_take();
-    let mut record = String::new();
-    for row in exchanges.iter().flatten() {
-        if !record.is_empty() {
-            record.push('\n');
-        }
-        record.push_str(row);
-    }
+    let record = rows_joined(exchanges.iter().flatten());
     exchanges_put(exchanges);
     record
+}
+
+// What goes with another ask about the newest line (see `chat.rs`): the
+// record of the lines before it, as far as they are still remembered, and
+// the rows the newest line has brought so far, without the person's row,
+// since the line itself goes with the ask. Nothing when the rows said now
+// belong to no line, because everything was forgotten.
+pub fn conversation_split() -> Option<(String, String)> {
+    if !unsafe { OPEN } {
+        return None;
+    }
+    let exchanges = exchanges_take();
+    let split = exchanges.split_last().map(|(newest, earlier)| (rows_joined(earlier.iter().flatten()), rows_joined(newest.iter().skip(1))));
+    exchanges_put(exchanges);
+    split
+}
+
+// Rows one to a line, with no line end after the last.
+fn rows_joined<'a>(rows: impl Iterator<Item = &'a String>) -> String {
+    let mut joined = String::new();
+    for row in rows {
+        if !joined.is_empty() {
+            joined.push('\n');
+        }
+        joined.push_str(row);
+    }
+    joined
 }

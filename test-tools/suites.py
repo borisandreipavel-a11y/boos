@@ -36,7 +36,7 @@ APPS = ["src/apps.rs"]
 SECRET = ["src/secret.rs"]  # a key or a password typed and kept
 
 SUITES = [
-    dict(name="app", command=["test_app.py", APP_KINDS, "dump"], watches=STAND_IN + APPS + SECRET, seconds=310),
+    dict(name="app", command=["test_app.py", APP_KINDS, "dump"], watches=STAND_IN + APPS + SECRET, seconds=420),
     dict(name="app nocard", command=["test_app.py", "nocard"], watches=STAND_IN + APPS, seconds=25),
     dict(name="app first start keylater", command=["test_app_first_start.py", "keylater"], watches=STAND_IN + APPS + SECRET, seconds=40),
     dict(name="app first start keyfirst", command=["test_app_first_start.py", "keyfirst"], watches=STAND_IN + APPS + SECRET, seconds=40),
@@ -63,13 +63,13 @@ SUITES = [
     # Every scenario boots the stand-in copy. "older" builds the kernel of an older commit from a clean export of it.
     dict(name="apps kept", command=["test_apps_kept.py"], split=True, watches=STAND_IN + APPS,
          leave_out={"times": "a measurement of how long keeping and opening take, with no verdict"},
-         seconds=dict(first=55, make=85, echo=35, outside=20, requests=60, look=25, small=20, damaged=20, full=95, failing=50,
+         seconds=dict(first=55, make=105, echo=40, outside=20, requests=65, look=25, small=20, damaged=20, full=100, failing=60,
                       cut=360, older=90)),
     # Every line to the model, in the stand-in copy, whose stand-in answers each line with words or a tool call
     # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
-         seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=100, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
-                      bound=125)),
+         seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=130, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
+                      bound=125, rounds=120)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -95,7 +95,7 @@ SUITES = [
     dict(name="model on the Intel card", command=["test_model.py", MODEL_KINDS], env={"DIVIDED_DISK": "", "BOOS_NETWORK_CARD": "e1000"},
          watches=STAND_IN + SECRET, seconds=260),
     dict(name="chat tools on the Intel card", command=["test_chat_tools.py"], split=["words", "dice", "odd"],
-         env={"BOOS_NETWORK_CARD": "e1000"}, watches=STAND_IN + APPS, seconds=dict(words=80, dice=70, odd=100)),
+         env={"BOOS_NETWORK_CARD": "e1000"}, watches=STAND_IN + APPS, seconds=dict(words=80, dice=70, odd=130)),
 ]
 
 # Scripts named test_*.py or run_*_breaks.py that are no entry of their own, and why.
@@ -116,7 +116,7 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 27,
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 35,
                 "intel": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -248,7 +248,7 @@ CAUGHT_BY = {
     'break tools: echo': "tools-nokey 'hello'",
     'break tools: nokeycheck': "tools-nokey 'hello'",
     'break tools: nolooktool': 'words the request for a line',
-    'break tools: norunlist': 'dice the request with the kept app',
+    'break tools: norunlist': 'dice the line asked about again',
     'break tools: nopagetool': 'pages the first request',
     'break tools: kernelwords': "tools-words 'hello'",
     'break tools: notokens': "tools-words 'hello'",
@@ -262,8 +262,8 @@ CAUGHT_BY = {
     'break tools: pagenotturned': 'tools-pages page-2',
     'break tools: jsonfraction': 'words the check of JSON at startup',
     'break tools: norecord': 'remember the second request goes with the first',
-    'break tools: nolinememory': 'remember the second request goes with the first',
-    'break tools: nokernelrows': 'remember the second request goes with the first',
+    'break tools: nolinememory': "tools-remember 'I would like a dice to r'",
+    'break tools: nokernelrows': 'remember the first line asked about again',
     'break tools: nopersonlabel': 'remember the second request goes with the first',
     'break tools: nostar': 'forgetting line 2',
     'break tools: nolinecount': 'bound line 12',
@@ -272,6 +272,14 @@ CAUGHT_BY = {
     'break tools: noforgettool': 'forgetting line 2',
     'break tools: forgetnothing': 'forgetting line 6',
     'break tools: awaitedkept': 'forgetting line 9',
+    'break tools: noback': "tools-rounds 'pick a look'",
+    'break tools: lookback': 'rounds a look that is picked does not go back',
+    'break tools: appnoback': "tools-dice 'I would like a dice to r'",
+    'break tools: asksfour': 'rounds the fix: two asks again',
+    'break tools: lastwithtools': 'rounds line request 3',
+    'break tools: twice': "tools-rounds 'two looks at once'",
+    'break tools: newpiece': 'rounds line request 3',
+    'break tools: nostarkept': 'rounds line request 15',
     'break intel: receiving never switched on': 'start: the network lines are not as meant',
     'break intel: the card may not reach memory': 'start: the network lines are not as meant',
     'break intel: a used card not started over': 'again: the second setup did not start the card over, once',

@@ -211,11 +211,26 @@ pub const SHOWING_APP: [u8; 113] = [
 ];
 
 // What the kernel keeps for an app while it runs: the limits it holds the app
-// to, and how many texts the app has printed and shown so far.
+// to, how many texts the app has printed and shown so far, and the last of
+// each (see `ScriptTexts`).
 struct AppState {
     limits: StoreLimits,
     texts_printed: usize,
     texts_shown: usize,
+    last_printed: Option<String>,
+    last_shown: Option<String>,
+}
+
+// What a script left behind in its run, whether it ran to its end or was
+// stopped: the last text it showed on the screen, which stays there after
+// the run, and the last line it printed, which for a script stopped at a
+// mistake is the interpreter's line that says which. Both were cleaned and
+// held to their bounds when the app handed them over (`app_text`). Nothing
+// is there for what the script did not do in this run.
+#[derive(Default)]
+pub struct ScriptTexts {
+    pub shown: Option<String>,
+    pub printed: Option<String>,
 }
 
 // Fetches a text that an app handed over, for the two calls below. The app
@@ -266,7 +281,9 @@ fn kernel_print(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Re
     }
     let text = app_text(&caller, start, length, APP_TEXT_LIMIT, "print")?;
     serial_print(&format!("App: {}\r\n", text));
-    caller.data_mut().texts_printed += 1;
+    let state = caller.data_mut();
+    state.texts_printed += 1;
+    state.last_printed = Some(text);
     Ok(())
 }
 
@@ -281,7 +298,9 @@ fn kernel_show(mut caller: Caller<'_, AppState>, start: i32, length: i32) -> Res
     }
     let text = app_text(&caller, start, length, APP_SHOWN_TEXT_LIMIT, "show")?;
     screen_panel(&text);
-    caller.data_mut().texts_shown += 1;
+    let state = caller.data_mut();
+    state.texts_shown += 1;
+    state.last_shown = Some(text);
     Ok(())
 }
 
@@ -312,7 +331,7 @@ fn box_start(program: &[u8]) -> Result<(Store<AppState>, Instance), String> {
         .tables(1)
         .instances(1)
         .build();
-    let mut store = Store::new(&engine, AppState { limits, texts_printed: 0, texts_shown: 0 });
+    let mut store = Store::new(&engine, AppState { limits, texts_printed: 0, texts_shown: 0, last_printed: None, last_shown: None });
     store.limiter(|state| &mut state.limits);
     store.set_fuel(APP_FUEL).map_err(reason)?;
 
@@ -359,10 +378,12 @@ pub fn box_accepts(program: &[u8], functions: &[&str]) -> Result<(), String> {
 
 // Why a script did not run to its end: the reason in words, as the kernel
 // says it in its own lines, and what kind of stop it was, where the kernel
-// can tell, so that whoever asked for the run can say it in plainer words.
+// can tell, so that whoever asked for the run can say it in plainer words;
+// and what the script left behind before it was stopped.
 pub struct ScriptStop {
     pub reason: String,
     pub kind: StopKind,
+    pub texts: ScriptTexts,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -382,7 +403,7 @@ pub enum StopKind {
 
 // A stop for a reason of the kernel's own.
 fn script_stop(reason: String) -> ScriptStop {
-    ScriptStop { reason, kind: StopKind::Other }
+    ScriptStop { reason, kind: StopKind::Other, texts: ScriptTexts::default() }
 }
 
 // A stop for an error that came from running the program. wasmi says which
@@ -393,7 +414,7 @@ fn script_stopped(error: Error) -> ScriptStop {
         Some(TrapCode::UnreachableCodeReached) => StopKind::GaveUp,
         _ => StopKind::Other,
     };
-    ScriptStop { reason: reason(error), kind }
+    ScriptStop { reason: reason(error), kind, texts: ScriptTexts::default() }
 }
 
 // Hands a script to a program in the box that can carry scripts out, and has
@@ -411,8 +432,9 @@ fn script_stopped(error: Error) -> ScriptStop {
 // same limits and the same system API. Nothing it says is taken on trust:
 // the place it names for the script is written to through `write`, which
 // refuses if any byte of it lies outside the program's memory. Gives back
-// how many texts the script showed on the screen.
-pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<usize, ScriptStop> {
+// what the script left behind (see `ScriptTexts`), or why it was stopped,
+// with what it left behind before that.
+pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<ScriptTexts, ScriptStop> {
     if script.len() > SCRIPT_LIMIT {
         return Err(script_stop(String::from("the script is too long")));
     }
@@ -433,9 +455,13 @@ pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<usi
         let seed_function = app.get_typed_func::<i64, ()>(&store, "seed").map_err(script_stopped)?;
         seed_function.call(&mut store, value).map_err(script_stopped)?;
     }
-    match run.call(&mut store, length).map_err(script_stopped)? {
-        0 => Ok(store.data().texts_shown),
-        _ => Err(ScriptStop { reason: String::from("the script made a mistake, which is told in the line before"), kind: StopKind::Mistake }),
+    let ran = run.call(&mut store, length);
+    let state = store.data_mut();
+    let texts = ScriptTexts { shown: state.last_shown.take(), printed: state.last_printed.take() };
+    match ran {
+        Ok(0) => Ok(texts),
+        Ok(_) => Err(ScriptStop { reason: String::from("the script made a mistake, which is told in the line before"), kind: StopKind::Mistake, texts }),
+        Err(error) => Err(ScriptStop { texts, ..script_stopped(error) }),
     }
 }
 
