@@ -373,11 +373,12 @@ const LOOK_WORDS: [&str; 4] = [
 // keeps it in the notebook, so that later starts show it too. Gives back what
 // the kernel says, and whether the look in use changed, in which case the
 // whole screen must be painted again (`look_paint`). A number that is not on
-// the list changes nothing. Without a notebook that can be added to, the look
-// lasts until the machine is switched off.
-pub fn look_pick(number: u64) -> (String, bool) {
+// the list changes nothing: the kernel says why, as the model's request
+// turned down. Without a notebook that can be added to, the look lasts until
+// the machine is switched off.
+pub fn look_pick(number: u64) -> Result<(String, bool), String> {
     let Some(place) = number.checked_sub(1).and_then(|place| usize::try_from(place).ok()).filter(|place| *place < LOOKS.len()) else {
-        return (format!("the model asked for look {}, but there are only {} looks.", number, LOOKS.len()), false);
+        return Err(format!("the model asked for look {}, but there are only {} looks.", number, LOOKS.len()));
     };
     let changed = unsafe { IN_USE } != place;
     unsafe { IN_USE = place };
@@ -397,5 +398,5 @@ pub fn look_pick(number: u64) -> (String, bool) {
             Err(reason) => format!("this is {}, but I could not keep it, because {}, so it lasts only until the machine is switched off.", look_named(), reason),
         }
     };
-    (said, changed)
+    Ok((said, changed))
 }

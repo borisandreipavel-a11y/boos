@@ -8,7 +8,7 @@ A model is a program that answers a question put to it in words. This kernel doe
 
 Three kinds of question go to the model, each with the kept secret as the key:
 
-- **Every line typed in the chat box,** but `key` and `setup`, with the list of what the kernel can do for it and the record of what was said before it (`model_chat`; see [tools.md](tools.md)). The model answers in words, or asks for one of the tools.
+- **Every line typed in the chat box,** but `key` and `setup`, with the list of what the kernel can do for it and the record of what was said before it (`model_chat`; see [tools.md](tools.md)). The model answers in words, or asks for one of the tools. When what a tool did needs the model, the same line goes again, with what came of it.
 - **A request for an app,** when the model asked for a new one (`model_app`; see "Asking for an app" below and [apps.md](apps.md)).
 - **One fixed question,** `Say hello in five words.` (`QUESTION`), with which a key typed at the onboarding is tried (`model_tell`; see "Trying a key" below). The line `ask`, which once asked it from the chat box, is an ordinary line now, and goes to the model like any other.
 

@@ -108,6 +108,54 @@ def body_meant(line, apps, shown=1, record="", key=""):
             "tools": tools_meant(apps, shown, remembered=bool(record)), "max_tokens": LIMIT, "stream": False}
 
 
+# ---------- Asking about a line again, when what a tool did goes back to the model ----------
+
+# At most this many asks about one line, the first included; the last goes without the list of tools.
+ASKS_MOST = 3
+
+# What stands before the rows the line brought so far, behind the record of the lines before it, and what ends the
+# instruction text of the last ask.
+AGAIN_LEAD = ("\n\nWhat came of the newest line so far, oldest first. "
+              "\"Model:\" is you, and \"Kernel:\" is the operating system saying what happened. "
+              "The person has typed nothing since. If what they wanted is done, say in plain words what came of it. "
+              "Use a tool again only if it is not done. A new app is written from its request alone, "
+              "so to fix an app, use make_app with a request that says what to do differently.\n")
+LAST_ASK = "\n\nYou are asked about this line for the last time, and no tools are offered now: answer in plain words."
+
+
+def body_again(line, apps, split, last=False, shown=1, key=""):
+    """The whole request when the model is asked about `line` again: `split` is what it goes with (a picture.Chat keeps
+    it in `agains`): the record of the lines before it and the rows the line brought so far. The list of tools is the
+    one for the disk as it is then, with `forget`, since the line is remembered; the last ask has none."""
+    record, done = split
+    told = instructions_meant(record, key) + AGAIN_LEAD + hide(done, key) + (LAST_ASK if last else "")
+    body = {"model": MODEL, "messages": [{"role": "system", "content": told}, {"role": "user", "content": hide(line, key)}],
+            "max_tokens": LIMIT, "stream": False}
+    if not last:
+        body["tools"] = tools_meant(apps, shown, remembered=True)
+    return body
+
+
+def round_line(number):
+    """The terminal's line when the model is asked about a line again, the `number`th time."""
+    return "Round %d of %d: the model is asked again, with what came of the line so far%s" % (
+        number, ASKS_MOST, ", without tools" if number == ASKS_MOST else "")
+
+
+def left_on_screen(text):
+    """What an app left on the screen, as the kernel remembers it when what the app did goes back to the model."""
+    return 'the app left this on the screen: "%s".' % text
+
+
+def terminal_says(printed):
+    """The interpreter's line about an app's mistake, without "App: ", as the kernel remembers it then."""
+    return 'the terminal says: "%s".' % printed
+
+
+NOT_TWICE = "Kernel: the model asked for the same thing again for this line, so I did not do it twice."
+NO_TOOL_LAST = "Kernel: the model asked for a tool in its last answer about this line, when none was offered, so I did nothing."
+
+
 # ---------- Rows (those a line gets at once are in picture.py) ----------
 
 MORE = "Kernel: the model asked for more than one thing at once, so I do only the first."

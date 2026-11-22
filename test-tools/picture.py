@@ -137,6 +137,9 @@ class Chat:
         # which went to the model went with, in turn.
         self.memory = Memory()
         self.records = []
+        # What each further ask about a line went with, in turn, when what a tool did went back to the model: the
+        # record of the lines before it and the rows the line brought so far (Memory.split).
+        self.agains = []
         if self.room:
             self.add("kernel", GREETING)
 
@@ -221,6 +224,15 @@ class Chat:
         self.said.append(text)
         self.add("kernel", text)
         self.memory.answered(text)
+
+    def remember(self, text):
+        """A sentence of the kernel's that is remembered with the line it answers but not said in the chat box or the
+        terminal: what an app left behind, when what a tool did goes back to the model."""
+        self.memory.answered("Kernel: " + text)
+
+    def again(self):
+        """The kernel asks the model about the newest line again: what that ask goes with is kept, in turn."""
+        self.agains.append(self.memory.split())
 
     def keys(self, text):
         for sign in text:

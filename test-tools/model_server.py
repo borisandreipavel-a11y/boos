@@ -8,7 +8,7 @@ Usage: python model_server.py <port> <chain.pem> <key.pem> <log file> <behaviour
 
 Behaviours: wrongkey, credit, echo, echopart, good, goodlong, chunked, page, nothttp, harmful, huge, cutoff,
 silent, empty, flaterror, nobody, keepopen, and more below; for a request for an app, the kinds of app_cases.py
-(app..., run...) and slowapp.
+(app..., run...), slowapp and keyapp.
 
 A request that carries a list of tools is a line typed in the chat box, since every line but `key` and `setup`
 goes to the model (docs/tools.md). When the next behaviour is a kind of app, the line is answered first with the
@@ -16,7 +16,12 @@ tool make_app (its request is what follows "make " in the line, or the whole lin
 request for the app that follows; so is one of the kinds above with "app:" in front (app:realrefusal, say), which
 then answers the request for the app. Otherwise the line gets the next behaviour: one of chat_cases.py's
 (words=..., run=..., ...) or any of the kinds above, which the kernel reads the same way for a line. With no
-behaviour left, a line gets "words=Hello." and anything else "wrongkey"."""
+behaviour left, a line gets "words=Hello." and anything else "wrongkey".
+
+Another ask about a line, when what a tool did needs the model, is a line too, with or without a list of tools (the
+last ask goes without): its instruction text holds chat_cases.AGAIN_MARK. It gets the next behaviour only when that
+begins with "again:", as "again:make=a dice that rolls" does, and chat_cases.AGAIN_WORDS in words otherwise, which
+leaves the list as it is."""
 import json
 import socket
 import ssl
@@ -168,6 +173,11 @@ def answer_for(kind, bearer):
         time.sleep(9)
         message, ending = app_cases.answer("app", bearer)
         return made(message, ending), "goodbye"
+    if kind == "keyapp":
+        # An app that puts the key together out of pieces of five signs, too short to be starred in its script, and
+        # shows it: what it leaves on the screen goes back to the model, starred (docs/tools.md).
+        pieces = " .. ".join('"%s"' % bearer[start:start + 5] for start in range(0, len(bearer), 5))
+        return made({"role": "assistant", "content": "show(%s)\n" % pieces}, "stop"), "goodbye"
     if app_cases.answer(kind, bearer) is not None:
         message, ending = app_cases.answer(kind, bearer)
         return made(message, ending), "goodbye"
@@ -182,14 +192,35 @@ def the_line(parsed):
         return None
 
 
+def the_instructions(parsed):
+    """The text of the system message, or "" if there is none."""
+    try:
+        found = [m["content"] for m in parsed["messages"] if m.get("role") == "system"][0]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return found if isinstance(found, str) else ""
+
+
 def an_app_kind(kind, bearer):
-    return kind.startswith("app:") or kind == "slowapp" or app_cases.answer(kind, bearer) is not None
+    return kind.startswith("app:") or kind in ("slowapp", "keyapp") or app_cases.answer(kind, bearer) is not None
 
 
 def choose(parsed, bearer, note):
     """Gives (bytes to send, how to end) for one request, and notes what it was for and which behaviour answered it."""
-    chat = isinstance(parsed, dict) and "tools" in parsed
+    again = isinstance(parsed, dict) and chat_cases.AGAIN_MARK in the_instructions(parsed)
+    chat = isinstance(parsed, dict) and ("tools" in parsed or again)
     note["request for"] = "a line" if chat else "an app"
+    if chat:
+        note["asked again"] = again
+        note["tools offered"] = "tools" in parsed
+    if again:
+        if behaviours and behaviours[0].startswith("again:"):
+            kind = behaviours.pop(0)[len("again:"):]
+        else:
+            kind = "words=" + chat_cases.AGAIN_WORDS
+        note["behaviour"] = "again, " + kind
+        found = chat_cases.answer(kind, the_line(parsed) or "", bearer)
+        return found if found is not None else answer_for(kind, bearer)
     if chat and behaviours and an_app_kind(behaviours[0], bearer):
         note["behaviour"] = "makeline, for " + behaviours[0]
         return chat_cases.answer("makeline", the_line(parsed) or "", bearer)

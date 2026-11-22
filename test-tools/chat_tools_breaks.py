@@ -23,21 +23,22 @@ BREAKS = {
     # The model's words look like the kernel's own.
     "kernelwords": {"chat.rs": swap('    let row = format!("Model: {}", words);', '    let row = format!("Kernel: {}", words);')},
     # The terminal says nothing about the tokens of a line.
-    "notokens": {"chat.rs": swap("        if let Some(tokens) = &answer.tokens {\n            serial_print(&format!(\"{}\\r\\n\", tokens));\n        }\n        if let Some(reply) = reply {",
-                                 "        if let Some(reply) = reply {")},
+    "notokens": {"chat.rs": swap("        if let Some(tokens) = &answer.tokens {\n            serial_print(&format!(\"{}\\r\\n\", tokens));\n        }\n        // A line ends",
+                                 "        // A line ends")},
     # The router's place for the repeated tokens is not read.
     "nocache": {"model.rs": swap('Step::Name("prompt_tokens_details"), Step::Name("cached_tokens")', 'Step::Name("prompt_tokens_details"), Step::Name("cached")')},
     # Nothing is said when the model asks for two things.
-    "nomore": {"chat.rs": swap("                if reply.more {\n", "                if false {\n")},
+    "nomore": {"chat.rs": swap("        if more {\n            chat_say(", "        if false {\n            chat_say(")},
     # The key is not hidden in what the model gives a tool.
     "nokeyhide": {"model.rs": swap("        key_hide(&mut inputs, key);\n", "")},
     # --- Doing the tools ---
     # A kept app asked for is made again instead of being run.
     "remake": {"tools.rs": swap('                Ok((request, script)) => {\n                    chat_say(&format!("I am running the app made for \\"{}\\".", request));\n'
-                                '                    let (sentence, _) = app_run(&script);\n                    chat_say(&sentence);\n                }\n',
-                                "                Ok((request, _)) => chat_say(&app_make(&request)),\n")},
+                                '                    let run = app_run(&script);\n',
+                                "                Ok((request, _)) => {\n                    let said = match app_make(&request) { Ok(said) | Err(said) => said };\n"
+                                "                    let run = crate::apps::AppRun { sentence: said, ran: true, told: alloc::vec::Vec::new() };\n")},
     # The request the model gave is not cleaned or cut.
-    "rawrequest": {"tools.rs": swap("Some(request) => chat_say(&app_make(&request_cleaned(&request))),", "Some(request) => chat_say(&app_make(&request)),")},
+    "rawrequest": {"tools.rs": swap("Some(request) => match app_make(&request_cleaned(&request)) {", "Some(request) => match app_make(&request) {")},
     # A number written as a text is not taken.
     "nonumbertext": {"tools.rs": swap("    digits.parse().ok()\n", "    None\n")},
     # A look picked by the model is not kept.
@@ -71,6 +72,25 @@ BREAKS = {
     "forgetnothing": {"tools.rs": swap('            conversation_forget();\n            chat_say("I forgot', '            chat_say("I forgot')},
     # A line whose answer comes after `setup` is remembered all the same.
     "awaitedkept": {"conversation.rs": swap("        FORGOTTEN_WHILE_AWAITED = AWAITED;\n", "        FORGOTTEN_WHILE_AWAITED = false;\n")},
+    # --- What goes back to the model (docs/tools.md, "When what a tool did goes back") ---
+    # What the kernel turns down does not go back.
+    "noback": {"tools.rs": swap("    chat_say(&turned_down);\n    ToolDone::Back\n", "    chat_say(&turned_down);\n    ToolDone::Ended\n")},
+    # A look that is picked goes back.
+    "lookback": {"tools.rs": swap("                    if changed {\n                        look_paint();\n                    }\n                    return ToolDone::Ended;\n",
+                                  "                    if changed {\n                        look_paint();\n                    }\n                    return ToolDone::Back;\n")},
+    # What came of a new app does not go back.
+    "appnoback": {"chat.rs": swap("            if answer.tokens.is_some() {\n                ask_again(asks);\n", "            if false {\n                ask_again(asks);\n")},
+    # Four asks a line.
+    "asksfour": {"chat.rs": swap("const ASKS_MOST: usize = 3;", "const ASKS_MOST: usize = 4;")},
+    # The last ask goes with the list of tools.
+    "lastwithtools": {"chat.rs": swap("    let tools = if last { String::new() } else { chat_tools() };\n", "    let tools = chat_tools();\n")},
+    # The same tool with the same inputs is done twice for a line.
+    "twice": {"chat.rs": swap("        let outcome = if asks.wanted.contains(&wanted) {\n", "        let outcome = if false {\n")},
+    # The answer to an ask about a line again begins a piece of its own.
+    "newpiece": {"chat.rs": swap("        if first {\n            conversation_line(answer.sent.as_deref());\n        } else {\n            conversation_again();\n        }\n",
+                                 "        conversation_line(answer.sent.as_deref());\n")},
+    # What an app left behind is remembered with the key as it was, starred only when it goes.
+    "nostarkept": {"model.rs": swap("    let starred = key_starred(text, &key_room[..key_length]);\n", "    let starred = String::from(text);\n")},
 }
 
 CATCH = {
@@ -101,4 +121,12 @@ CATCH = {
     "noforgettool": "forgetting",
     "forgetnothing": "forgetting",
     "awaitedkept": "forgetting",
+    "noback": "rounds",
+    "lookback": "rounds",
+    "appnoback": "dice",
+    "asksfour": "rounds",
+    "lastwithtools": "rounds",
+    "twice": "rounds",
+    "newpiece": "rounds",
+    "nostarkept": "rounds",
 }

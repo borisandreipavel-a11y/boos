@@ -30,7 +30,8 @@ import app_cases
 from app_cases import INSTRUCTIONS, LEAD, clean, hide, outcome
 from boot import HERE, RUNS, Machine
 from certs import test_keys
-from chat_tools_model import body_meant, making, model_row, request_cleaned
+from chat_cases import AGAIN_WORDS
+from chat_tools_model import body_again, body_meant, left_on_screen, making, model_row, request_cleaned, terminal_says
 from interp_helpers import odd_bytes
 from net_copy import build
 from picture import Chat, compare, expected
@@ -82,6 +83,12 @@ def meant(behaviour):
     if app_cases.answer(behaviour, KEY) is not None:
         return outcome(behaviour, KEY)
     return OTHER.get(behaviour), []
+
+
+# The behaviours whose answer to the request for an app is no good one (anything but 200): the line ends there. After
+# every other, what came of the app goes back to the model, which is asked about the line again (docs/tools.md); the
+# stand-in answers that with its words (chat_cases.AGAIN_WORDS).
+NO_GOOD_ANSWER = {"realrefusal", "upstream", "upstreambare", "huge", "nothttp", "silent"}
 
 
 def standin_kind(behaviour):
@@ -193,6 +200,9 @@ def main():
     failures = Failures()
     asked = []  # what each request for an app that reached the stand-in asked for, in order
     sent = []  # each line that reached the stand-in, in order
+    line_bodies = []  # each request for a line meant, in order: a line's first ask, and the ask about it again
+    line_labels = []  # what each of them is, for the report
+    again_words = model_row(AGAIN_WORDS, KEY)
     print("the made-up key is %d signs long" % len(KEY))
     try:
         machine.wait_for(b"repeated here:")
@@ -207,9 +217,12 @@ def main():
         for number, behaviour in enumerate(behaviours):
             request = REQUESTS[number % len(REQUESTS)]
             started = time.time()
+            words_before = sum(1 for line in terminal_lines(machine) if line.startswith("Model: "))
             press(machine, chat, "make " + request + ENTER)
             sent.append("make " + request)
             asked.append(request)
+            line_bodies.append(body_meant("make " + request, [], record=chat.records[-1], key=KEY))
+            line_labels.append("make " + request)
             # The line's answer is the tool make_app: the kernel says so, and asks for the app.
             end = time.time() + 40
             while time.time() < end and len(tool_rows(terminal_lines(machine))) <= number:
@@ -247,6 +260,13 @@ def main():
                         break
                     time.sleep(0.05)
             time.sleep(0.5)  # the script's lines follow the row
+            goes_back = behaviour not in NO_GOOD_ANSWER
+            if goes_back:
+                # What came of the app goes back to the model: the words of the second ask come before the picture.
+                end = time.time() + 40
+                while time.time() < end and sum(1 for line in terminal_lines(machine) if line.startswith("Model: ")) <= words_before:
+                    time.sleep(0.1)
+                time.sleep(0.3)
             lines = terminal_lines(machine)
             places = answers(lines)
             said = lines[places[number]][len("Kernel: "):] if len(places) > number else "(no row came)"
@@ -269,6 +289,8 @@ def main():
             listing_right = listing == listing_wanted
             run_note = ""
             candidates = [panel]
+            shown_now = False  # whether the run showed a text, which then goes back to the model
+            mistake_line = None  # the interpreter's line about a mistake, which goes back too
             if runs:
                 expect = app_cases.run_expect(behaviour, KEY)
                 if expect is None:
@@ -282,6 +304,9 @@ def main():
                         failures.append(behaviour + ": run row")
                     if not lines_right:
                         failures.append(behaviour + ": app lines")
+                    shown_now = bool(giver(app_lines))
+                    if want_row == app_cases.MISTAKE and app_lines:
+                        mistake_line = app_lines[-1][len("App: "):]
                     candidates = giver(app_lines) or [panel]
                     run_note = " | run: row %s, %d app lines %s, its row %s s after the first" % (
                         "as meant" if run_right else "NOT AS MEANT", len(app_lines), "as meant" if lines_right else "NOT AS MEANT",
@@ -292,9 +317,24 @@ def main():
                         run_note += "\n      app lines: %s" % app_lines[:4]
             elif run_row is not None:
                 failures.append(behaviour + ": a run that was not meant")
+            if goes_back:
+                # The words of the second ask stand in the chat box below the rows about the app, for the picture...
+                chat.said.append(again_words)
+                chat.add("kernel", again_words)
             picture, matched = look(machine, chat, "after-%d-%s" % (number, behaviour), failures, candidates)
             if matched is not None:
                 panel = matched
+            if goes_back:
+                # ...and are remembered after what the app left behind, which went back to the model with that ask: the
+                # text it showed (which of the texts the picture says) and its mistake.
+                if shown_now:
+                    chat.remember(hide(left_on_screen(matched if matched is not None else candidates[0]), KEY))
+                if mistake_line is not None:
+                    chat.remember(hide(terminal_says(mistake_line), KEY))
+                chat.again()
+                line_bodies.append(body_again("make " + request, [], chat.agains[-1], key=KEY))
+                line_labels.append("make " + request + ", again")
+                chat.memory.answered(again_words)
             if behaviour == "runrandom":
                 randoms.append(tuple(app_lines))
             if behaviour == "runslow":
@@ -321,10 +361,13 @@ def main():
             if len(set(randoms)) != len(randoms):
                 failures.append("random numbers repeat from run to run")
         # A last line, which the model answers in words: a row of their own.
+        words_before = sum(1 for line in terminal_lines(machine) if line.startswith("Model: "))
         press(machine, chat, LINE + ENTER)
         sent.append(LINE)
+        line_bodies.append(body_meant(LINE, [], record=chat.records[-1], key=KEY))
+        line_labels.append(LINE)
         end = time.time() + 40
-        while time.time() < end and not any(line.startswith("Model: ") for line in terminal_lines(machine)):
+        while time.time() < end and sum(1 for line in terminal_lines(machine) if line.startswith("Model: ")) <= words_before:
             time.sleep(0.1)
         words = [line for line in terminal_lines(machine) if line.startswith("Model: ")]
         said = words[-1] if words else "(no row came)"
@@ -384,16 +427,15 @@ def main():
             want = {"model": MODEL, "messages": [{"role": "system", "content": INSTRUCTIONS}, {"role": "user", "content": LEAD + asked[number]}],
                     "max_tokens": 4000, "stream": False}
         judged(note, want, "request %d" % (number + 1), behaviours[number] if number < len(behaviours) else "?")
+    # Each line goes with the record of the lines before it and what they brought, which the chat model kept; each ask
+    # about a line again with what the line brought so far.
     for number, note in enumerate(lines_seen):
-        line = sent[number] if number < len(sent) else None
-        # Each line goes with the record of the lines before it and what they brought, which the chat model kept.
-        record = chat.records[number] if number < len(chat.records) else None
-        want = body_meant(line, [], record=record, key=KEY) if line is not None and record is not None else None
-        judged(note, want, "line request %d" % (number + 1), line or "?")
+        want = line_bodies[number] if number < len(line_bodies) else None
+        judged(note, want, "line request %d" % (number + 1), line_labels[number] if number < len(line_labels) else "?")
     if len(apps_seen) != len(behaviours):
         failures.append("%d requests for an app reached the stand-in, meant %d" % (len(apps_seen), len(behaviours)))
-    if len(lines_seen) != len(sent):
-        failures.append("%d lines reached the stand-in, meant %d" % (len(lines_seen), len(sent)))
+    if len(lines_seen) != len(line_bodies):
+        failures.append("%d requests for a line reached the stand-in, meant %d" % (len(lines_seen), len(line_bodies)))
     print("FAILURES: %s" % failures if failures else "all as meant")
 
 

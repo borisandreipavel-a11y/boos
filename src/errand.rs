@@ -21,9 +21,12 @@ pub enum Errand {
     KeyTry,
     // Send a line typed in the chat box to the model, with the list of what
     // the kernel can do for it: the JSON that `chat_tools` in `tools.rs` made
-    // when the line was sent; and with the record of what was said before it
-    // (`conversation_record` in `conversation.rs`), which may be empty.
-    ChatLine { line: String, tools: String, record: String },
+    // when the line was sent, or nothing for the last ask about a line (see
+    // `chat.rs`); with the record of what was said before it
+    // (`conversation_record` in `conversation.rs`), which may be empty; and,
+    // when the model is asked about the line again, with what came of it so
+    // far (`conversation_split`), which is empty for the line's first ask.
+    ChatLine { line: String, tools: String, record: String, done: String },
     // Ask the model to write an app. The text says which app: the request the
     // model gave with the tool `make_app` (see `tools.rs`).
     AppRequest(String),

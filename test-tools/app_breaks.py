@@ -26,7 +26,7 @@ BREAKS = {
     # The key is not hidden in the script.
     "nohide": {"model.rs": swap("                key_hide(&mut signs, key);\n", "")},
     # A line is sent with the app's limit of tokens (every line goes to the model, docs/tools.md).
-    "asktokens": {"model.rs": swap("json_text(&sent),\n        tools,\n        ANSWER_TOKENS", "json_text(&sent),\n        tools,\n        APP_TOKENS")},
+    "asktokens": {"model.rs": swap("json_text(&sent),\n        offered,\n        ANSWER_TOKENS", "json_text(&sent),\n        offered,\n        APP_TOKENS")},
     # (No break for the word `make` and for a request without a key: the word is an ordinary line now, and a line
     # without a key is turned away before it reaches the model, which the breaks of model_breaks.py and
     # chat_tools_breaks.py named nokeycheck show.)
@@ -34,7 +34,8 @@ BREAKS = {
     "nolead": {"model.rs": swap("json_text(&format!(\"{}{}\", APP_LEAD, wanted)),", "json_text(wanted),")},
     # --- The run ---
     # The script is shown but not run: no run, no row about it, nothing kept.
-    "norun": {"chat.rs": swap("            let (sentence, ran) = app_run(script);\n            chat_say(&sentence);\n", "            let ran = false;\n")},
+    "norun": {"chat.rs": swap("            let run = app_run(script);\n            chat_say(&run.sentence);\n",
+                              "            let run = crate::apps::AppRun { sentence: String::new(), ran: false, told: Vec::new() };\n")},
     # No new seed: every run starts its random numbers from the same place.
     "noseed": {"apps.rs": swap("let seed = random_number().map(|number| (number >> 1) as i64);", "let seed: Option<i64> = None;")},
     # The interpreter takes the seed but does not use it.
@@ -44,9 +45,9 @@ BREAKS = {
     # Fuel used up is not told apart, nor the interpreter giving up, nor a mistake.
     "fuelkind": {"app_box.rs": swap("Some(TrapCode::OutOfFuel) => StopKind::OutOfFuel,", "Some(TrapCode::OutOfFuel) => StopKind::Other,")},
     "gaveupkind": {"app_box.rs": swap("Some(TrapCode::UnreachableCodeReached) => StopKind::GaveUp,", "Some(TrapCode::UnreachableCodeReached) => StopKind::Other,")},
-    "mistakekind": {"app_box.rs": swap("kind: StopKind::Mistake }),", "kind: StopKind::Other }),")},
+    "mistakekind": {"app_box.rs": swap("kind: StopKind::Mistake, texts }),", "kind: StopKind::Other, texts }),")},
     # A run that showed nothing is said as one that did.
-    "shownothing": {"apps.rs": swap("Ok(0) => (String::from(", "Ok(9999) => (String::from(")},
+    "shownothing": {"apps.rs": swap("Ok(texts) if texts.shown.is_none() => (String::from(", "Ok(texts) if texts.shown.is_some() && false => (String::from(")},
 }
 
 CATCH = {

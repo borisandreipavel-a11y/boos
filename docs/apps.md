@@ -128,6 +128,8 @@ The row after the run, behind `Kernel: `:
 
 The kernel tells the kinds of stop apart by what the box reports, not by its words: `box_script` gives back a `ScriptStop` with a kind, read from wasmi's own kind of trap for fuel and for `unreachable`, and from the interpreter's answer for a mistake.
 
+**What goes back to the model.** After a new app's run, the model is asked about the line again (see "When what a tool did goes back" in [tools.md](tools.md)), with the rows above and what the app left behind, which `box_script` reports either way: the last text it showed in this run, as `Kernel: the app left this on the screen: "Dice: 4".`, and, for a stop at a mistake, the interpreter's line, as `Kernel: the terminal says: "Lua stopped: [string "app"]:3: attempt to perform arithmetic on a nil value".` (`AppRun` in `apps.rs`). Neither is said in the chat box; both are remembered with the line. A kept app's run goes back only when it was stopped. The request for an app itself never gets any of it: a fix is a new app, for a request in other words.
+
 ## Keeping an app
 
 Right after the row about the run, `chat_answer` hands the app to `app_keep` in `apps_kept.rs`, if it ran to its end.

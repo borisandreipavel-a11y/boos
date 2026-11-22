@@ -2,8 +2,10 @@
 //! types, with what was said so far above the line being typed. Every line
 //! that is sent goes to the model, except the two the kernel keeps for
 //! itself, `key` and `setup`; the model's words come back as rows of their
-//! own, and a tool it asks for is done (see `tools.rs`). What a line brought
-//! is remembered, and goes with the next lines (see `conversation.rs`).
+//! own, and a tool it asks for is done (see `tools.rs`). When what a tool did
+//! needs the model, it is asked about the line again, at most three times in
+//! all. What a line brought is remembered, and goes with the next lines (see
+//! `conversation.rs`).
 //! Notes: `docs/chat.md`.
 
 use alloc::format;
@@ -12,7 +14,9 @@ use alloc::vec::Vec;
 
 use crate::apps::{app_print_script, app_run};
 use crate::apps_kept::{app_keep, apps_kept_begin};
-use crate::conversation::{conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent};
+use crate::conversation::{
+    conversation_again, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent, conversation_split,
+};
 use crate::errand::{Answer, Errand, errand_ask};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -24,12 +28,40 @@ use crate::onboarding::{
 };
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
+use crate::model::key_starred_kept;
 use crate::serial::serial_print;
-use crate::tools::{chat_tools, tool_do};
+use crate::tools::{ToolDone, chat_tools, tool_do, tool_wanted};
 
 // The longest line that can be typed, in signs. A key pressed after that is
 // ignored, until a sign is taken away again or the line is sent with Enter.
 const CHAT_LINE_LIMIT: usize = 50;
+
+// How many times the model may be asked about one line, the first ask
+// included, and not counting the requests that write an app. The last ask
+// goes without the list of tools, so that its answer is words.
+const ASKS_MOST: usize = 3;
+
+// The line whose asks are under way, from its first ask until it ends: how
+// many asks went out; the line as it was sent to the model, with the key
+// starred, known once the first answer has come; and what the tools the
+// model asked for were asked to do (`tool_wanted`), so that none is done
+// twice for one line. `setup` ends it, and so does every answer after which
+// the model is not asked again. Only the main loop may touch it; it is taken
+// out of its place and put back by value.
+struct Asks {
+    made: usize,
+    sent: String,
+    wanted: Vec<String>,
+}
+static mut ASKS: Option<Asks> = None;
+
+fn asks_take() -> Option<Asks> {
+    unsafe { (*(&raw mut ASKS)).take() }
+}
+
+fn asks_put(asks: Asks) {
+    unsafe { ASKS = Some(asks) };
+}
 
 // The name under which the last line that was sent is kept in the notebook
 // on the disk, so that it is still known after the machine was switched off.
@@ -400,6 +432,17 @@ fn model_say(words: &str) {
     conversation_row(&row);
 }
 
+// Remembers a sentence of the kernel's with the line it answers, as a row
+// that begins with "Kernel:", without saying it in the chat box or the
+// terminal: what an app left behind, which goes back to the model when it is
+// asked about the line again (see `ask_again`). The screen and the terminal
+// show it already, in the app's box and in the app's own lines. It came from
+// the app, through the box, which cleaned it and held it to its bound; a
+// piece of the key in it is starred here, before it is remembered.
+pub fn chat_remember(text: &str) {
+    conversation_row(&format!("Kernel: {}", key_starred_kept(text)));
+}
+
 // Every line that is sent, but for `key` and `setup`, goes to the model, with
 // the list of what the kernel can do for it (see `tools.rs`) and the record
 // of what was said before it (see `conversation.rs`). That needs a key, and
@@ -409,29 +452,65 @@ fn model_ask(said: &str) -> String {
     if secret_length() == 0 {
         return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
     }
-    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record() }) {
+    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record(), done: String::new() }) {
         Ok(()) => {
             conversation_sent();
+            asks_put(Asks { made: 1, sent: String::new(), wanted: Vec::new() });
             String::from("Kernel: I am asking the model.")
         }
         Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
     }
 }
 
+// Asks the model about the line again, because what a tool did needs it: a
+// new app, an app that was stopped, a tool the kernel turned down, or a
+// second tool it did not do. The ask has the line's first ask's shape: the
+// line, as it was sent, as the person's message; the instruction text with
+// the record of the lines before it, and behind that what came of the line
+// so far (`conversation_split`); the list of tools as it stands now, or none
+// for the last ask. The chat box gets no row for it, and the terminal one
+// line of its own. Nothing is asked when nothing of the line is remembered
+// any more, because everything was forgotten. When the ask cannot go, the
+// kernel says why, and the line ends there.
+fn ask_again(mut asks: Asks) {
+    let Some((record, done)) = conversation_split() else {
+        return;
+    };
+    asks.made += 1;
+    let last = asks.made >= ASKS_MOST;
+    let tools = if last { String::new() } else { chat_tools() };
+    match errand_ask(Errand::ChatLine { line: asks.sent.clone(), tools, record, done }) {
+        Ok(()) => {
+            conversation_sent();
+            let without = if last { ", without tools" } else { "" };
+            serial_print(&format!("Round {} of {}: the model is asked again, with what came of the line so far{}\r\n", asks.made, ASKS_MOST, without));
+            asks_put(asks);
+        }
+        Err(reason) => chat_say(&format!("I cannot ask the model again, because {}", reason)),
+    }
+}
+
 // Says the answer to an errand, which the main loop picks up from the
 // network's task. The answer to the try of a key goes to the onboarding,
 // which says what comes of it. For a line, the line as it was sent is
-// remembered first (see `conversation.rs`), then the model's words come,
-// then what the kernel has to say about the answer, if anything, and then
-// the tool the model asked for is done. For an app, the row about the answer
+// remembered first (see `conversation.rs`); the answer to another ask about
+// it adds to what is remembered of it. Then the model's words come, then
+// what the kernel has to say about the answer, if anything, and then the
+// tool the model asked for is done. For an app, the row about the answer
 // comes first; a script that the model wrote is shown in the terminal below
 // that row, then run, and a second row says how the run went (see `apps.rs`).
 // An app that ran to its end is kept on the disk; a third row comes only if
 // that failed (see `apps_kept.rs`). The terminal's line about the tokens a
-// good answer took follows the row about the answer.
+// good answer took follows the row about the answer. When what came of a
+// tool needs the model, it is asked about the line again (`ask_again`).
 pub fn chat_answer(answer: Answer) {
-    if let Errand::ChatLine { .. } = &answer.errand {
-        conversation_line(answer.sent.as_deref());
+    if let Errand::ChatLine { done, .. } = &answer.errand {
+        let first = done.is_empty();
+        if first {
+            conversation_line(answer.sent.as_deref());
+        } else {
+            conversation_again();
+        }
         let reply = answer.reply;
         if let Some(words) = reply.as_ref().and_then(|reply| reply.words.as_deref()) {
             model_say(words);
@@ -442,29 +521,78 @@ pub fn chat_answer(answer: Answer) {
         if let Some(tokens) = &answer.tokens {
             serial_print(&format!("{}\r\n", tokens));
         }
-        if let Some(reply) = reply {
-            if let Some(call) = &reply.tool {
-                if reply.more {
-                    chat_say("the model asked for more than one thing at once, so I do only the first.");
-                }
-                tool_do(call);
+        // A line ends at every answer that brings no tool, and at every
+        // answer that was no good one: what was done stays done.
+        let asks = asks_take();
+        let Some(call) = reply.as_ref().and_then(|reply| reply.tool.as_ref()) else {
+            return;
+        };
+        let more = reply.as_ref().is_some_and(|reply| reply.more);
+        let Some(mut asks) = asks else {
+            // `setup` was sent while the answer was awaited: the tool is
+            // still done, as before, but the model is not asked again.
+            if more {
+                chat_say("the model asked for more than one thing at once, so I do only the first.");
             }
+            tool_do(call);
+            return;
+        };
+        if asks.made >= ASKS_MOST {
+            chat_say("the model asked for a tool in its last answer about this line, when none was offered, so I did nothing.");
+            return;
+        }
+        if first {
+            asks.sent = answer.sent.unwrap_or_default();
+        }
+        if more {
+            chat_say("the model asked for more than one thing at once, so I do only the first.");
+        }
+        let wanted = tool_wanted(call);
+        let outcome = if asks.wanted.contains(&wanted) {
+            chat_say("the model asked for the same thing again for this line, so I did not do it twice.");
+            ToolDone::Back
+        } else {
+            asks.wanted.push(wanted);
+            tool_do(call)
+        };
+        // A second tool that was not done goes back too.
+        match outcome {
+            ToolDone::Awaited => asks_put(asks),
+            ToolDone::Back => ask_again(asks),
+            ToolDone::Ended if more => ask_again(asks),
+            ToolDone::Ended => {}
         }
         return;
     }
     if let Errand::AppRequest(request) = &answer.errand {
+        let asks = asks_take();
         chat_say(&answer.sentence);
         if let Some(tokens) = &answer.tokens {
             serial_print(&format!("{}\r\n", tokens));
         }
         if let Some(script) = &answer.script {
             app_print_script(script);
-            let (sentence, ran) = app_run(script);
-            chat_say(&sentence);
-            if ran {
+            let run = app_run(script);
+            chat_say(&run.sentence);
+            if asks.is_some() {
+                for told in run.told.iter() {
+                    chat_remember(told);
+                }
+            }
+            if run.ran {
                 if let Some(trouble) = app_keep(request, script) {
                     chat_say(&trouble);
                 }
+            }
+        }
+        // What came of a new app goes back to the model: the app's run, or
+        // why the model's answer is no app. Not when the provider gave no
+        // good answer (only a good one brings a line about tokens): a
+        // request that fails ends the line, as every one does. Nor when
+        // `setup` was sent while the app was awaited.
+        if let Some(asks) = asks {
+            if answer.tokens.is_some() {
+                ask_again(asks);
             }
         }
         return;
@@ -570,7 +698,9 @@ pub fn chat_key(letter: u8) {
                 // And the word that asks the questions of the onboarding
                 // again: the kernel asks for the person's name, and the next
                 // line is the answer. Another person may be at the machine
-                // now, so what was said before is forgotten.
+                // now, so what was said before is forgotten, and the model is
+                // not asked again about a line whose asks are under way.
+                asks_take();
                 conversation_forget();
                 onboarding_again()
             } else {

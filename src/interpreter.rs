@@ -7,7 +7,7 @@
 
 use alloc::string::String;
 
-use crate::app_box::{ScriptStop, box_accepts, box_script};
+use crate::app_box::{ScriptStop, ScriptTexts, box_accepts, box_script};
 
 // The program, byte for byte the file that building the folder
 // `interpreter/` makes. It is read in when the kernel is built, so the
@@ -52,8 +52,10 @@ pub fn script_run(script: &str) -> Result<(), String> {
 
 // Runs a script that came from outside the kernel, such as an app the model
 // wrote, in the same way, with `seed` as the number its random numbers start
-// from, if there is one. Gives back how many texts it showed on the screen,
-// or why it was stopped and what kind of stop it was (see `ScriptStop`).
-pub fn script_run_seeded(script: &str, seed: Option<i64>) -> Result<usize, ScriptStop> {
+// from, if there is one. Gives back what it left behind: the last text it
+// showed on the screen and the last line it printed (see `ScriptTexts`); or
+// why it was stopped, what kind of stop it was, and what it left behind
+// before that (see `ScriptStop`).
+pub fn script_run_seeded(script: &str, seed: Option<i64>) -> Result<ScriptTexts, ScriptStop> {
     box_script(INTERPRETER, script, seed)
 }

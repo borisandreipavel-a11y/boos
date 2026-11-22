@@ -3,10 +3,11 @@
 //! with it goes a list of tools, each with a name, one sentence and what it
 //! needs to be told (`chat_tools`), and what was said before it (see
 //! `conversation.rs`). The model answers in words, or asks for one of the
-//! tools; the kernel then does it and says in one plain sentence how that
-//! went (`tool_do`). What the model asks for comes from outside the kernel,
-//! and is checked before anything is done. Only the main loop may call these
-//! functions.
+//! tools; the kernel then does it, says in one plain sentence how that went,
+//! and gives back whether what came of it needs the model (`tool_do`), which
+//! is then asked about the line again (see `chat.rs`). What the model asks
+//! for comes from outside the kernel, and is checked before anything is
+//! done. Only the main loop may call these functions.
 //! Notes: `docs/tools.md`.
 
 use alloc::format;
@@ -14,7 +15,7 @@ use alloc::string::String;
 
 use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
-use crate::chat::chat_say;
+use crate::chat::{chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
@@ -41,6 +42,25 @@ pub const RECORD_LEAD: &str = concat!(
     "\n\nWhat was said before the newest line, oldest first. ",
     "\"Person:\" is the person at the machine, \"Model:\" is you, and \"Kernel:\" is the operating system saying what happened.\n"
 );
+
+// What stands before the rows the newest line has brought so far, when the
+// model is asked about that line again because what a tool did needs it
+// (see `chat.rs`). It comes behind the instructions and the record of the
+// lines before, if there were any. It says what the rows are, that the
+// person has typed nothing since, and how an app can be fixed: the model
+// that writes an app gets nothing but its request.
+pub const AGAIN_LEAD: &str = concat!(
+    "\n\nWhat came of the newest line so far, oldest first. ",
+    "\"Model:\" is you, and \"Kernel:\" is the operating system saying what happened. ",
+    "The person has typed nothing since. If what they wanted is done, say in plain words what came of it. ",
+    "Use a tool again only if it is not done. A new app is written from its request alone, ",
+    "so to fix an app, use make_app with a request that says what to do differently.\n"
+);
+
+// What ends the instruction text when the model is asked about a line for
+// the last time. That ask goes without the list of tools, so that its answer
+// is words.
+pub const LAST_ASK: &str = "\n\nYou are asked about this line for the last time, and no tools are offered now: answer in plain words.";
 
 // The tool that forgets what was said, so that the next line starts afresh.
 // It needs no inputs. It is offered only while something is remembered.
@@ -140,49 +160,112 @@ pub fn chat_tools() -> String {
     tools
 }
 
-// Does what the model asked for with a tool, and says in the chat box how
-// that went. Only the names of the tools above count. What the model gave the
-// tool is read with the JSON reader, which takes nothing on trust; a number
-// may come written as a text of digits.
-pub fn tool_do(call: &ToolCall) {
-    match call.name.as_str() {
+// What came of a tool the model asked for, as far as the line it answers is
+// concerned: whether it needs the model, which is then asked about the line
+// again, with what came of it (see `chat.rs`). Each tool says which.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ToolDone {
+    // Done, and nothing in what came of it needs the model: the line ends.
+    Ended,
+    // What came of it goes back to the model: the kernel turned the request
+    // down, or a kept app was stopped.
+    Back,
+    // A new app is being written: what comes of it is known when the model's
+    // app has come, and goes back then (see `chat_answer` in `chat.rs`).
+    Awaited,
+}
+
+// Does what the model asked for with a tool, says in the chat box how that
+// went, and gives back whether what came of it goes back to the model. Only
+// the names of the tools above count. What the model gave the tool is read
+// with the JSON reader, which takes nothing on trust; a number may come
+// written as a text of digits. Whatever the kernel turns down goes back.
+pub fn tool_do(call: &ToolCall) -> ToolDone {
+    let turned_down = match call.name.as_str() {
         "make_app" => match input_text(&call.inputs, "request") {
-            Some(request) => chat_say(&app_make(&request_cleaned(&request))),
-            None => chat_say("the model asked for an app, but I could not read what the app should do."),
+            Some(request) => match app_make(&request_cleaned(&request)) {
+                Ok(said) => {
+                    chat_say(&said);
+                    return ToolDone::Awaited;
+                }
+                Err(said) => said,
+            },
+            None => String::from("the model asked for an app, but I could not read what the app should do."),
         },
         "run_app" => match input_number(&call.inputs, "app") {
             Some(number) => match app_kept(number) {
                 Ok((request, script)) => {
                     chat_say(&format!("I am running the app made for \"{}\".", request));
-                    let (sentence, _) = app_run(&script);
-                    chat_say(&sentence);
+                    let run = app_run(&script);
+                    chat_say(&run.sentence);
+                    // A kept app that ran to its end ends the line, as it
+                    // did before; one that was stopped goes back, with what
+                    // it left behind.
+                    if run.ran {
+                        return ToolDone::Ended;
+                    }
+                    for told in run.told.iter() {
+                        chat_remember(told);
+                    }
+                    return ToolDone::Back;
                 }
-                Err(sentence) => chat_say(&sentence),
+                Err(said) => said,
             },
-            None => chat_say("the model asked to run a kept app, but I could not read which one."),
+            None => String::from("the model asked to run a kept app, but I could not read which one."),
         },
         "pick_look" => match input_number(&call.inputs, "look") {
-            Some(number) => {
-                let (said, changed) = look_pick(number);
-                chat_say(&said);
-                if changed {
-                    look_paint();
+            Some(number) => match look_pick(number) {
+                Ok((said, changed)) => {
+                    chat_say(&said);
+                    if changed {
+                        look_paint();
+                    }
+                    return ToolDone::Ended;
                 }
-            }
-            None => chat_say("the model asked for another look, but I could not read which one."),
+                Err(said) => said,
+            },
+            None => String::from("the model asked for another look, but I could not read which one."),
         },
         "turn_page" => match input_number(&call.inputs, "page") {
-            Some(page) => chat_say(&apps_page_turn(page)),
-            None => chat_say("the model asked for another page of the panel of apps, but I could not read which one."),
+            Some(page) => match apps_page_turn(page) {
+                Ok(said) => {
+                    chat_say(&said);
+                    return ToolDone::Ended;
+                }
+                Err(said) => said,
+            },
+            None => String::from("the model asked for another page of the panel of apps, but I could not read which one."),
         },
         // Everything said is forgotten first, the line that asked for it
-        // too, so the row that says so is not remembered either.
+        // too, so the row that says so is not remembered either, and nothing
+        // of the line is left to go back.
         "forget" => {
             conversation_forget();
             chat_say("I forgot what was said so far. The next line starts afresh.");
+            return ToolDone::Ended;
         }
         // The name was cleaned and cut by `model.rs`.
-        other => chat_say(&format!("the model asked for something I cannot do: \"{}\".", other)),
+        other => format!("the model asked for something I cannot do: \"{}\".", other),
+    };
+    chat_say(&turned_down);
+    ToolDone::Back
+}
+
+// What the model asks the kernel to do with a tool, written so that two
+// requests for the same thing give the same text, however the inputs were
+// written: the tool's name, and what it was given as the kernel reads it.
+// No tool is done twice for one line (see `chat.rs`).
+pub fn tool_wanted(call: &ToolCall) -> String {
+    let given = match call.name.as_str() {
+        "make_app" => input_text(&call.inputs, "request").map(|request| request_cleaned(&request)),
+        "run_app" => input_number(&call.inputs, "app").map(|number| format!("{}", number)),
+        "pick_look" => input_number(&call.inputs, "look").map(|number| format!("{}", number)),
+        "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
+        _ => None,
+    };
+    match given {
+        Some(given) => format!("{}: {}", call.name, given),
+        None => call.name.clone(),
     }
 }
 

@@ -21,7 +21,7 @@ use smoltcp::wire::Ipv4Address;
 
 use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_number, json_find_text, json_text};
-use crate::tools::{CHAT_INSTRUCTIONS, RECORD_LEAD};
+use crate::tools::{AGAIN_LEAD, CHAT_INSTRUCTIONS, LAST_ASK, RECORD_LEAD};
 use crate::network::Card;
 use crate::page::{plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
@@ -142,8 +142,10 @@ pub fn model_tell(
 
 // Sends a line typed in the chat box to the model, with the list of what the
 // kernel can do for it (`tools`, the JSON that `chat_tools` in `tools.rs`
-// made when the line was sent) and the record of what was said before it
-// (`record`, from `conversation.rs`, empty when nothing was). Gives back what
+// made when the line was sent, or nothing for the last ask about a line), the
+// record of what was said before it (`record`, from `conversation.rs`, empty
+// when nothing was) and, when the model is asked about the line again, what
+// came of it so far (`done`, empty for the line's first ask). Gives back what
 // the kernel has to say about the answer in one sentence: nothing when the
 // model answered as it should, otherwise why the provider turned the line
 // down, why no answer came, or what was wrong with it. Beside it, what the
@@ -160,13 +162,14 @@ pub fn model_chat(
     line: &str,
     tools: &str,
     record: &str,
+    done: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
     let key_length = key_copy(false, &mut key_room);
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), None, None, None)
     } else {
-        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools, record)
+        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools, record, done)
     };
     wipe(&mut key_room);
     told
@@ -244,7 +247,10 @@ fn question_ask(
 // a model how to behave before it reads what it is asked, with the record of
 // what was said before the line behind it; then the line, as the "user"
 // message, as it was typed. Behind them comes the list of tools: what the
-// kernel can do when the model asks for it. The key goes to the provider in
+// kernel can do when the model asks for it. When the model is asked about
+// the line again (see `chat.rs`), the instruction text goes on with what came
+// of the line so far, behind `AGAIN_LEAD`; the last such ask goes without the
+// list of tools, and says so (`LAST_ASK`). The key goes to the provider in
 // the notes only: a key typed into a line by mistake, or remembered in the
 // record, is starred in both before they go, as in the provider's answer
 // (see `key_hide`).
@@ -257,6 +263,7 @@ fn chat_question_ask(
     line: &str,
     tools: &str,
     record: &str,
+    done: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let sent = key_starred(line, key);
     let mut told = String::from(CHAT_INSTRUCTIONS);
@@ -264,12 +271,22 @@ fn chat_question_ask(
         told.push_str(RECORD_LEAD);
         told.push_str(&key_starred(record, key));
     }
+    if !done.is_empty() {
+        told.push_str(AGAIN_LEAD);
+        told.push_str(&key_starred(done, key));
+    }
+    let offered = if tools.is_empty() {
+        told.push_str(LAST_ASK);
+        String::new()
+    } else {
+        format!(",\"tools\":{}", tools)
+    };
     let body = format!(
-        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"tools\":{},\"max_tokens\":{},\"stream\":false}}",
+        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]{},\"max_tokens\":{},\"stream\":false}}",
         json_text(MODEL_NAME),
         json_text(&told),
         json_text(&sent),
-        tools,
+        offered,
         ANSWER_TOKENS
     );
     match provider_exchange(interface, card, sockets, name_server, key, &body) {
@@ -289,6 +306,20 @@ fn key_starred(text: &str, key: &[u8]) -> String {
     let mut signs = text.as_bytes().to_vec();
     key_hide(&mut signs, key);
     String::from_utf8_lossy(&signs).into_owned()
+}
+
+// A text of plain signs from an app, with a star over every piece of the key
+// that is kept: what an app left behind, before it is remembered and goes to
+// the model with the line it answers (see `chat_remember` in `chat.rs`). An
+// app cannot read the key, but the model may have written it into the
+// script in pieces too short to be starred there, which the app then puts
+// together. The key is borrowed as for a question, and wiped after.
+pub fn key_starred_kept(text: &str) -> String {
+    let mut key_room = [0u8; SECRET_LIMIT];
+    let key_length = key_copy(false, &mut key_room);
+    let starred = key_starred(text, &key_room[..key_length]);
+    wipe(&mut key_room);
+    starred
 }
 
 // The request for an app, with the key in hand. It holds two messages: first

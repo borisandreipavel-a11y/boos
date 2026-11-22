@@ -11,11 +11,13 @@ Made-up key only.
             gives them and when it gives none; an answer cut off, one spent on thinking, one with the key in it, a
             refusal, and a good answer without words or a tool.
   dice      the thing this part is done by: a line asks for an app, the model asks for make_app, the app is made, runs
-            and is kept; after a restart "roll the dice" runs the kept app without asking for it to be made again.
-  pages     seven kept apps: the tool that turns the panel's page is offered, and turns it; a kept app by number.
+            and is kept, and what it left on the screen goes back to the model; after a restart "roll the dice" runs
+            the kept app without asking for it to be made again, in one request.
+  pages     seven kept apps: the tool that turns the panel's page is offered, and turns it; a kept app by number; a
+            page that is not there, which goes back to the model.
   odd       what the model may send that must not be believed: words beside a tool, two tools, a tool the kernel does
             not have, an odd name, inputs that cannot be read, numbers as text, numbers that fit nothing, and
-            requests for an app that are long, odd, empty or hold the key.
+            requests for an app that are long, odd, empty or hold the key; each that is turned down goes back.
   busy      a line sent while the answer to the one before is awaited.
   nocard    a machine without a network card.
   nodisk    a disk that is not divided: no notebook, so a look picked by the model lasts until the machine is off.
@@ -26,6 +28,11 @@ Made-up key only.
             the tool `forget`, and `setup`, sent while an answer is awaited; every body searched for the name, the
             password and the key.
   bound     the bound on what is remembered: 10 lines, then 8,000 bytes when the rows are long.
+  rounds    what a tool did goes back to the model: a new app that stops at a mistake goes back, and the model's fix
+            is made, runs and is kept; a model that keeps asking gets three asks, the last without tools, and a tool
+            in its last answer is not done; a look that is picked does not go back; a second tool goes back, and the
+            same tool is not done twice for a line; an ask again that the provider turns down ends the line; an app
+            that puts the key together goes back starred; `setup` while a new app is awaited stops the asks.
 
 Usage: python test_chat_tools.py [scenario ...]        (with none: all)
 Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
@@ -38,9 +45,10 @@ os.environ["DIVIDED_DISK"] = ""
 import app_cases
 import chat_cases
 from apps_kept_model import app_things, kept_line, kept_script, note, read_things, screen
-from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, NO_ADDRESS, NO_KEY, NO_REQUEST, THOUGHT_ALL,
-                              ToolsChat, body_meant, cannot_do, key_pieces, making, model_row, no_page_row, no_such_app,
-                              page_row, refused_row, request_cleaned, running, words_cut)
+from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, NO_ADDRESS, NO_KEY, NO_REQUEST, NO_TOOL_LAST, NOT_TWICE,
+                              THOUGHT_ALL, ToolsChat, body_again, body_meant, cannot_do, key_pieces, left_on_screen, making,
+                              model_row, no_page_row, no_such_app, page_row, refused_row, request_cleaned, round_line, running,
+                              terminal_says, words_cut)
 from conversation_model import BYTES_REMEMBERED, LINES_REMEMBERED
 from disk_helpers import make
 from keyed_model import LOCKED
@@ -48,6 +56,8 @@ from lockref import lock
 from test_apps_kept import (KEY, SCRIPT, Run, answer_row, answered_disk, failures, give_key, report, run_row)
 
 SHOWN = ("You:", "Kernel:", "Model:", "Tokens:", "Apps:")
+# Another made-up key, which shares no six signs with KEY, given in the middle of a scenario.
+OTHER_KEY = "pk-test-QUILL/Rm6Hv9Tc3Wd8Yn2Lf5=="
 # The check of JSON at startup, with its six checks of whole numbers (docs/json.md).
 JSON_LINE = "JSON: 19 of 19 checks of making and reading it are right"
 APP_BODY = {"model": "deepseek/deepseek-v4.1-flash-1017",
@@ -75,26 +85,48 @@ def shown_since(run, shown=SHOWN):
 
 def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
     """Sends `line` (the chat model takes it too), waits for the last line meant, and compares what the terminal
-    showed since with the person's row, the row said at once, and `after`. Rows in `after` that belong in the chat
-    box are added to the chat model. `shown`: how the terminal's lines that count begin (the person's rows begin
-    with their name when one is kept)."""
+    showed since with the person's row, the row said at once, and the rows in `after`. Rows in `after` that belong in
+    the chat box are added to the chat model, in turn with its other items: steps of the chat model's own (see
+    remembered and AGAIN below), which the terminal does not show. `shown`: how the terminal's lines that count begin
+    (the person's rows begin with their name when one is kept)."""
     run.mark()
     run.press(line + "\n", chat)
     pressed = time.time()
-    meant = chat.said[-2:] + after
-    wanted = last or (after[-1] if after else meant[-1])
+    rows = [item for item in after if isinstance(item, str)]
+    meant = chat.said[-2:] + rows
+    wanted = last or (rows[-1] if rows else meant[-1])
+    # The last row meant may stand earlier too (the line about tokens does), so the wait is also for as many rows.
     end = time.time() + timeout
-    while time.time() < end and wanted not in run.since():
+    while time.time() < end and (wanted not in run.since() or len(shown_since(run, shown)) < len(meant)):
         time.sleep(0.02)
     # How long the last line meant took to come after Enter, for a measurement (no verdict).
     run.answered_after = time.time() - pressed
     time.sleep(0.6)
     got = shown_since(run, shown)
     report(run.tag + " %r" % line[:24], got == meant, None if got == meant else "got %r, meant %r" % (got[-8:], meant[-8:]))
-    for row in after:
-        if row.startswith(("Kernel:", "Model:")):
-            chat.row(row)
+    for item in after:
+        if not isinstance(item, str):
+            item(chat)
+        elif item.startswith(("Kernel:", "Model:")):
+            chat.row(item)
     return got
+
+
+def remembered(text):
+    """A step for `exchange`: the kernel remembers a sentence with the line without saying it, such as what an app left
+    behind when what it did goes back to the model. `text` may be a function that gives it, called when the step is
+    taken, after the wait, for what is known only once the app has run (the number a dice rolled)."""
+    return lambda chat: chat.remember(text() if callable(text) else text)
+
+
+def AGAIN(chat):
+    """A step for `exchange`: the kernel asks the model about the line again, with what came of it so far."""
+    chat.again()
+
+
+def rounds_since(run):
+    """The terminal's lines about asking the model again, since the mark."""
+    return [line for line in run.since() if line.startswith("Round ")]
 
 
 def check_body(tag, note_, meant):
@@ -108,6 +140,31 @@ def app_after(request, kind="app", kept=True):
     """What the terminal shows after the model asked for make_app with `request`, up to the line about keeping."""
     rows = [chat_cases.TOKENS_LINE, making(request), answer_row(kind), "Tokens: 12 in; 1000 out", run_row(kind)]
     return rows + ([kept_line(request)] if kept else [])
+
+
+def back(words=chat_cases.AGAIN_WORDS):
+    """What follows when what a tool did goes back to the model: it is asked about the line again (by the stand-in's
+    default, answered with words), and the words come, with their tokens."""
+    return [AGAIN, model_row(words), chat_cases.TOKENS_LINE]
+
+
+def dice_left(run):
+    """What a new dice app left on the screen, as the kernel remembers it: known once the app has run (see
+    `remembered`)."""
+    def left():
+        found = app_lines_since(run, "You rolled a ")
+        return left_on_screen("Dice: " + found[-1][len("You rolled a "):] if found else "(no dice line)")
+    return left
+
+
+def dice_back(run, words=chat_cases.AGAIN_WORDS):
+    """What follows a new dice app's run, which goes back to the model with what the app left on the screen."""
+    return [remembered(dice_left(run))] + back(words)
+
+
+def app_lines_since(run, start):
+    """The App lines since the mark that begin with `start`, without "App: "."""
+    return [line[len("App: "):] for line in run.since() if line.startswith("App: " + start)]
 
 
 def no_key_in(tag, lines):
@@ -172,16 +229,18 @@ def scenario_dice():
     give_key(run, chat)
     line = "I would like a dice to roll"
     run.mark()
-    got = exchange(run, chat, line, app_after("a dice that rolls"), timeout=150)
+    # The new app's run goes back to the model, which is asked about the line again (the stand-in's words answer it).
+    got = exchange(run, chat, line, app_after("a dice that rolls") + dice_back(run), timeout=150)
     app_lines = [l for l in run.since() if l.startswith("App: ")]
     shown = app_cases.run_expect("app", KEY)[2](app_lines)
     run.shot("made", screen(1280, 800, chat, ["a dice that rolls"], panel_text=shown[0] if shown else ""))
     run.end()
     seen = posts(run)
-    report("dice two requests", len(seen) == 2, "%d requests" % len(seen))
-    if len(seen) == 2:
+    report("dice three requests", len(seen) == 3, "%d requests" % len(seen))
+    if len(seen) == 3:
         check_body("dice the request for the line", seen[0], body_meant(line, []))
         check_body("dice the request for the app", seen[1], app_body("a dice that rolls"))
+        check_body("dice the line asked about again", seen[2], body_again(line, [(1, "a dice that rolls")], chat.agains[0], key=KEY))
     after = read_things(disk)
     things = after["things"]
     report("dice script byte for byte", things.get("app 1 script", (0, b""))[1] == kept_script("app", KEY))
@@ -221,14 +280,16 @@ def scenario_pages():
     exchange(run, chat, "show me the next page", [chat_cases.TOKENS_LINE, page_row(2, 2)])
     run.shot("page-2", screen(1280, 800, chat, [r for _, r in apps], page=1))
     exchange(run, chat, "run the third one", [chat_cases.TOKENS_LINE, running("app number 3 of seven"), run_row("app")])
-    exchange(run, chat, "page five", [chat_cases.TOKENS_LINE, no_page_row(5, 2)])
+    # A page that is not there: the kernel turns it down, which goes back to the model.
+    exchange(run, chat, "page five", [chat_cases.TOKENS_LINE, no_page_row(5, 2)] + back())
     run.end()
     seen = posts(run)
-    report("pages requests", len(seen) == 3, "%d requests" % len(seen))
-    if len(seen) == 3:
+    report("pages requests", len(seen) == 4, "%d requests" % len(seen))
+    if len(seen) == 4:
         check_body("pages the first request", seen[0], body_meant("show me the next page", apps, shown=1))
         # The second line goes with the first and what came of it (docs/tools.md, "What the model remembers").
         check_body("pages the second request", seen[1], body_meant("run the third one", apps, shown=2, record=chat.records[1]))
+        check_body("pages the third line asked about again", seen[3], body_again("page five", apps, chat.agains[0], shown=2, key=KEY))
 
 
 def scenario_odd():
@@ -240,28 +301,31 @@ def scenario_odd():
     chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
     give_key(run, chat)
     t = chat_cases.TOKENS_LINE
+    # A kept app that runs to its end ends the line; everything the kernel turns down, a second tool and a new app go
+    # back to the model, which is asked about the line again (the stand-in's words answer it).
     exchange(run, chat, "roll it", [model_row("Rolling it for you."), t, running("a dice that rolls"), run_row("app")])
-    exchange(run, chat, "two looks", [t, MORE, "Kernel: this is look 3, Paper. It is kept on the disk."])
+    exchange(run, chat, "two looks", [t, MORE, "Kernel: this is look 3, Paper. It is kept on the disk."] + back())
     chat.look, chat.look_kept = "Paper", "Paper"
-    exchange(run, chat, "format it", [t, cannot_do("format_disk")])
-    exchange(run, chat, "odd name", [t, cannot_do("\u0007" + chat_cases.LONG_NAME)])
-    exchange(run, chat, "which", [t, CANNOT_READ["run_app"]])
-    exchange(run, chat, "no inputs", [t, CANNOT_READ["pick_look"]])
-    exchange(run, chat, "too much", [t, CANNOT_READ["make_app"]])
+    exchange(run, chat, "format it", [t, cannot_do("format_disk")] + back())
+    exchange(run, chat, "odd name", [t, cannot_do("\u0007" + chat_cases.LONG_NAME)] + back())
+    exchange(run, chat, "which", [t, CANNOT_READ["run_app"]] + back())
+    exchange(run, chat, "no inputs", [t, CANNOT_READ["pick_look"]] + back())
+    exchange(run, chat, "too much", [t, CANNOT_READ["make_app"]] + back())
     exchange(run, chat, "as text", [t, running("a dice that rolls"), run_row("app")])
-    exchange(run, chat, "app seven", [t, no_such_app(7)])
-    exchange(run, chat, "look nine", [t, "Kernel: the model asked for look 9, but there are only 4 looks."])
-    exchange(run, chat, "page three", [t, no_page_row(3, 1)])
+    exchange(run, chat, "app seven", [t, no_such_app(7)] + back())
+    exchange(run, chat, "look nine", [t, "Kernel: the model asked for look 9, but there are only 4 looks."] + back())
+    exchange(run, chat, "page three", [t, no_page_row(3, 1)] + back())
     keyed = request_cleaned(app_cases.hide("an app about " + KEY, KEY))
-    exchange(run, chat, "an app with my key", app_after(keyed), timeout=150)
+    exchange(run, chat, "an app with my key", app_after(keyed) + dice_back(run), timeout=150)
     long_request = request_cleaned(chat_cases.LONG_REQUEST)
-    exchange(run, chat, "a long request", app_after(long_request), timeout=150)
+    exchange(run, chat, "a long request", app_after(long_request) + dice_back(run), timeout=150)
     odd_request = request_cleaned(chat_cases.ODD_REQUEST)
-    exchange(run, chat, "an odd request", app_after(odd_request), timeout=150)
-    exchange(run, chat, "an empty request", [t, NO_REQUEST])
+    exchange(run, chat, "an odd request", app_after(odd_request) + dice_back(run), timeout=150)
+    exchange(run, chat, "an empty request", [t, NO_REQUEST] + back())
     lines = run.end()
     seen = posts(run)
-    report("odd requests", len(seen) == len(behaviours), "%d requests" % len(seen))
+    again = [n for n in seen if n.get("asked again")]
+    report("odd requests", len(seen) == len(behaviours) + 13 and len(again) == 13, "%d requests, %d of them again" % (len(seen), len(again)))
     apps_asked = [n["body"]["messages"][1]["content"] for n in seen if n.get("request for") == "an app"]
     meant = [app_cases.LEAD + r for r in (keyed, long_request, odd_request)]
     report("odd the requests for apps as sent", apps_asked == meant, None if apps_asked == meant else "%r" % apps_asked)
@@ -342,20 +406,26 @@ def scenario_remember():
     chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
     give_key(run, chat)
     first, second = "I would like a dice to roll", "make it roll two dice"
-    exchange(run, chat, first, app_after("a dice that rolls"), timeout=150)
+    exchange(run, chat, first, app_after("a dice that rolls") + dice_back(run), timeout=150)
+    rolled = app_lines_since(run, "You rolled a ")
     exchange(run, chat, second, [model_row("Two dice it is."), chat_cases.TOKENS_LINE])
     lines = run.end()
     seen = posts(run)
-    report("remember three requests", len(seen) == 3, "%d requests" % len(seen))
-    # What the second line is meant to go with, written out from the notes: the first line as the person's, and the
-    # kernel's three rows about it; not the row said at once, not the terminal's lines, not the script.
-    meant = "\n".join(["Person: " + first, making("a dice that rolls"), answer_row("app"), run_row("app")])
+    report("remember four requests", len(seen) == 4, "%d requests" % len(seen))
+    # What the second line is meant to go with, written out from the notes: the first line as the person's, the
+    # kernel's three rows about it, what the app left on the screen, which went back to the model, and the model's
+    # words when it was asked about the line again; not the row said at once, not the terminal's lines, not the script.
+    left = left_on_screen("Dice: " + rolled[-1][len("You rolled a "):] if rolled else "(no dice line)")
+    meant = "\n".join(["Person: " + first, making("a dice that rolls"), answer_row("app"), run_row("app"), "Kernel: " + left,
+                       model_row(chat_cases.AGAIN_WORDS)])
     report("remember the chat model keeps the same record", chat.records == ["", meant], "%r" % chat.records)
-    if len(seen) == 3:
+    if len(seen) == 4:
         check_body("remember the first request", seen[0], body_meant(first, []))
-        check_body("remember the second request goes with the first", seen[2],
+        check_body("remember the first line asked about again", seen[2],
+                   body_again(first, [(1, "a dice that rolls")], ("", "\n".join(meant.split("\n")[1:-1]))))
+        check_body("remember the second request goes with the first", seen[3],
                    body_meant(second, [(1, "a dice that rolls")], record=meant))
-        got = record_of(seen[2])
+        got = record_of(seen[3])
         report("remember exactly the remembered rows", got == meant, None if got == meant else "got %r" % got)
     no_key_in("remember", lines)
 
@@ -497,9 +567,145 @@ def scenario_bound():
     no_key_in("bound", lines)
 
 
+def scenario_rounds():
+    print("rounds: what a tool did goes back to the model, at most three asks a line, the last without tools")
+    disk, _ = answered_disk("tools-rounds")
+    behaviours = [
+        # A new app that stops at a mistake goes back; the model's fix, a new app with another request, runs, is
+        # kept and goes back too; the third ask has no tools, and is answered in words.
+        "runmistake", "again:make=a dice that rolls", "app", "again:words=Here is your dice.",
+        # A model that keeps asking: a look that is not there, a page that is not there, and in its last answer a tool
+        # again, which is not done.
+        "look=9", "again:turn=4", "again:look=2",
+        # A look that is picked ends the line: one ask.
+        "look=3",
+        # Two tools at once: the second, not done, goes back; asked for the first again, the kernel does not do it twice.
+        "two", "again:look=3", "again:words=Paper it is.",
+        # A look that is not there goes back, and the provider turns that ask down: the line ends there.
+        "look=9", "again:refused",
+        # An app that puts the key together and shows it: what it left goes back starred (the stand-in's words answer
+        # that ask); after another key is given, the next line goes with it, still starred.
+        "keyapp", "words=Hello again.",
+        # `setup`, sent while a new app is awaited: the app comes, runs and is kept, and the model is not asked again.
+        "slowapp",
+    ]
+    run = Run("tools-rounds", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    t = chat_cases.TOKENS_LINE
+    tokens_app = "Tokens: 12 in; 1000 out"
+    lines_meant, apps_meant = [], []    # every request meant, for a line and for an app, in turn
+    dice = "a dice that rolls"
+    kept = [(1, dice)]
+
+    def mistake():
+        found = app_lines_since(run, "Lua stopped: ")
+        return terminal_says(found[0] if found else "(no line about the mistake)")
+
+    def rolled():
+        found = app_lines_since(run, "You rolled a ")
+        return left_on_screen("Dice: " + found[0][len("You rolled a "):] if found else "(no dice line)")
+
+    line = "make a dice"
+    exchange(run, chat, line, [t, making("a dice"), answer_row("runmistake"), tokens_app, run_row("runmistake"), remembered(mistake), AGAIN,
+                               t, making(dice), answer_row("app"), tokens_app, run_row("app"), kept_line(dice), remembered(rolled), AGAIN,
+                               model_row("Here is your dice."), t], timeout=150)
+    report("rounds the fix: two asks again", rounds_since(run) == [round_line(2), round_line(3)], "got %r" % rounds_since(run))
+    rolls = app_lines_since(run, "You rolled a ")
+    run.shot("fixed", screen(1280, 800, chat, [dice], panel_text="Dice: " + rolls[0][len("You rolled a "):] if rolls else ""))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[0], key=KEY),
+                    body_again(line, kept, chat.agains[1], last=True, key=KEY)]
+    apps_meant += [app_body("a dice"), app_body(dice)]
+
+    line = "pick a look"
+    exchange(run, chat, line, [t, "Kernel: the model asked for look 9, but there are only 4 looks.", AGAIN, t, no_page_row(4, 1), AGAIN,
+                               t, NO_TOOL_LAST])
+    report("rounds the model that keeps asking: two asks again", rounds_since(run) == [round_line(2), round_line(3)], "got %r" % rounds_since(run))
+    lines_meant += [body_meant(line, kept, record=chat.records[-1], key=KEY), body_again(line, kept, chat.agains[2], key=KEY),
+                    body_again(line, kept, chat.agains[3], last=True, key=KEY)]
+
+    line = "make it paper"
+    exchange(run, chat, line, [t, "Kernel: this is look 3, Paper. It is kept on the disk."])
+    chat.look, chat.look_kept = "Paper", "Paper"
+    report("rounds a look that is picked does not go back", rounds_since(run) == [], "got %r" % rounds_since(run))
+    run.shot("paper", screen(1280, 800, chat, [dice], panel_text="Dice: " + rolls[0][len("You rolled a "):] if rolls else ""))
+    lines_meant += [body_meant(line, kept, record=chat.records[-1], key=KEY)]
+
+    line = "two looks at once"
+    exchange(run, chat, line, [t, MORE, "Kernel: this is look 3, Paper, which is kept on the disk already.", AGAIN, t, NOT_TWICE, AGAIN,
+                               model_row("Paper it is."), t])
+    lines_meant += [body_meant(line, kept, record=chat.records[-1], key=KEY), body_again(line, kept, chat.agains[4], key=KEY),
+                    body_again(line, kept, chat.agains[5], last=True, key=KEY)]
+
+    # An ask about a line again that the provider turns down says why, and ends the line: nothing more is asked.
+    line = "look nine again"
+    exchange(run, chat, line, [t, "Kernel: the model asked for look 9, but there are only 4 looks.", AGAIN, refused_row(chat_cases.REFUSAL)])
+    time.sleep(2)
+    report("rounds a refused ask ends the line", rounds_since(run) == [round_line(2)], "got %r" % rounds_since(run))
+    lines_meant += [body_meant(line, kept, record=chat.records[-1], key=KEY), body_again(line, kept, chat.agains[6], key=KEY)]
+
+    # The key, put together by an app and shown: starred when it is remembered, so that it stays starred when it goes
+    # with a line after another key is given (the stars of the request are then for the other key only).
+    line = "make a key app"
+    exchange(run, chat, line, [t, making("a key app"), "Kernel: the model wrote an app of 1 line. It is shown in the terminal.", tokens_app,
+                               "Kernel: the app ran to its end.", kept_line("a key app"), remembered(app_cases.hide(left_on_screen(KEY), KEY))]
+             + back(), timeout=150)
+    kept = [(2, "a key app")] + kept
+    lines_meant += [body_meant(line, kept[1:], record=chat.records[-1], key=KEY), body_again(line, kept, chat.agains[7], key=KEY)]
+    apps_meant += [app_body("a key app")]
+    run.mark()
+    run.press("key\n" + OTHER_KEY + "\n", chat)
+    run.wait_line("Kernel: I took a secret of", timeout=30)
+    line = "hello again"
+    exchange(run, chat, line, [model_row("Hello again."), t])
+    lines_meant += [(body_meant(line, kept, record=chat.records[-1], key=OTHER_KEY), OTHER_KEY)]
+
+    # `setup` while the slow app is awaited: what came of it is not asked about, and the line goes nowhere again.
+    line = "make a slow one"
+    run.mark()
+    run.press(line + "\n", chat)
+    lines_meant += [(body_meant(line, kept, record=chat.records[-1], key=OTHER_KEY), OTHER_KEY)]
+    apps_meant += [(app_body("a slow one"), OTHER_KEY)]
+    asked = run.wait_line("Kernel: I am asking the model to make", timeout=60)
+    report("rounds the slow app is asked for", asked == making("a slow one"), "got %r" % asked)
+    run.press("setup\n")
+    came = run.wait_line("Apps: ", timeout=60)
+    report("rounds the slow app is kept after setup", came == kept_line("a slow one"), "got %r" % came)
+    time.sleep(5)
+    report("rounds setup stops the asks", rounds_since(run) == [], "got %r" % rounds_since(run))
+    lines = run.end()
+
+    seen = posts(run)
+    lines_seen = [n for n in seen if n.get("request for") == "a line"]
+    apps_seen = [n for n in seen if n.get("request for") == "an app"]
+    report("rounds requests for a line", len(lines_seen) == len(lines_meant), "%d, meant %d" % (len(lines_seen), len(lines_meant)))
+    report("rounds requests for an app", len(apps_seen) == len(apps_meant), "%d, meant %d" % (len(apps_seen), len(apps_meant)))
+    # Each request meant, with the key it goes with (the other key after it was given).
+    for kind, got, wanted in (("line", lines_seen, lines_meant), ("app", apps_seen, apps_meant)):
+        for number, (note_, meant) in enumerate(zip(got, wanted)):
+            body, key = meant if isinstance(meant, tuple) else (meant, KEY)
+            tag = "rounds %s request %d" % (kind, number + 1)
+            report(tag, note_.get("body") == body, None if note_.get("body") == body else "got %s" % json.dumps(note_.get("body"))[:300])
+            report(tag + " key", note_.get("key came as") == "Bearer " + key)
+    # The third ask about a line goes without tools, and only that one.
+    offered = [n.get("tools offered") for n in lines_seen]
+    meant_offered = [True, True, False, True, True, False, True, True, True, False, True, True, True, True, True, True]
+    report("rounds tools offered", offered == meant_offered, "got %r" % offered)
+    everything = "\n".join(json.dumps(n.get("body")) for n in seen)
+    report("rounds no piece of either key in any request", not key_pieces(everything, KEY) and not key_pieces(everything, OTHER_KEY))
+    # The fix: the mistake went back with the second ask, and the app the model asked for then was made and kept.
+    if len(lines_seen) > 1:
+        told = lines_seen[1]["body"]["messages"][0]["content"]
+        report("rounds the mistake went back", "Kernel: the terminal says: \"Lua stopped: [string \"app\"]:3:" in told, "got %r" % told[-300:])
+    things = read_things(disk)["things"]
+    report("rounds the fix is kept", things.get("app 1 script", (0, b""))[1] == kept_script("app", KEY) and
+           things.get("app 1", (0, b""))[1] == note(dice))
+    no_key_in("rounds", lines)
+
+
 SCENARIOS = {"nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
              "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
-             "forgetting": scenario_forgetting, "bound": scenario_bound}
+             "forgetting": scenario_forgetting, "bound": scenario_bound, "rounds": scenario_rounds}
 
 
 def main():

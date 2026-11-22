@@ -35,7 +35,7 @@ BREAKS = {
     # An app is not kept.
     "nokeep": {"chat.rs": swap("                if let Some(trouble) = app_keep(request, script) {\n                    chat_say(&trouble);\n                }\n", "")},
     # An app that was stopped is kept too.
-    "keepstopped": {"chat.rs": swap("            chat_say(&sentence);\n            if ran {\n", "            chat_say(&sentence);\n            if true {\n")},
+    "keepstopped": {"chat.rs": swap("            if run.ran {\n", "            if true {\n")},
     # The same request again gets a number of its own.
     "nosamerequest": {"apps_kept.rs": swap("let same = apps.iter().find(|app| app.request == request).map(|app| app.number);",
                                            "let same: Option<u32> = None;")},
