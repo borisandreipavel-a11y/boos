@@ -85,8 +85,9 @@ pub fn secure_ready() -> Result<(), &'static str> {
 // One exchange over an encrypted link with the site called `name`: greet it,
 // check its certificate, send `request`, and hand every piece of the answer
 // to `taker`, unscrambled. Answers "true" if the site said through the link
-// itself that it had sent everything, and "false" if the link simply ended.
-pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &mut dyn FnMut(&[u8])) -> Result<bool, String> {
+// itself that it had sent everything. The taker may stop the exchange
+// early by returning false once it has enough.
+pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &mut dyn FnMut(&[u8]) -> bool) -> Result<bool, String> {
     secure_ready()?;
     let (settings, root_count) = link_settings()?;
     let site = ServerName::try_from(String::from(name)).map_err(|_| String::from("the site's name is not a usable name"))?;
@@ -179,7 +180,9 @@ pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &
                     let AppDataRecord { discard: used, payload } = record.map_err(why)?;
                     discard += used;
                     answer_begun = true;
-                    taker(payload);
+                    if !taker(payload) {
+                        return Ok(false);
+                    }
                 }
             }
             // The site has said, through the link, that it has sent everything.

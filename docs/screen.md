@@ -49,12 +49,48 @@ The screen only knows dots, so every sign needs a small picture of itself. The p
 An app can ask the kernel to show a text on the screen (`kernel.show`, see [box.md](box.md)). The kernel shows it in a box. The code calls that box a panel, because "box" already means the locked box that apps run in.
 
 - **The app says what, the kernel decides how.** An app hands over a text and nothing else. It cannot paint, and it cannot say where the panel goes or how it looks.
-- **Its sizes are kept in one place,** `PANEL_STYLE` in `screen.rs`: the panel's width and height, the thickness of its frame, the size of the letters, and how far the text begins from the left and top edges. Where the panel sits is decided next to them: in the middle of the screen. They are fixed when the kernel is built. **Its colours come from the look in use** (see "The look" below): the frame's, the inside's and the letters'. Changing how every app's text looks means changing these values or picking another look, and nothing else.
+- **Its sizes are kept in one place,** `PANEL_STYLE` in `screen.rs`: the panel's width and height, the thickness of its frame, the size of the letters, and how far the text begins from the left and top edges. Where the panel sits is decided next to them. It sits 20 dots below the panel of apps, aligned to its left edge. They are fixed when the kernel is built. **Its colours come from the look in use** (see "The look" below): the frame's, the inside's and the letters'. Changing how every app's text looks means changing these values or picking another look, and nothing else.
 - **Its sizes today:** 520 by 60 dots, a frame 3 dots thick, letters at size 2, the text 20 dots from the left edge and 21 from the top. At that width and letter size one line of 40 signs fits, which is why an app's text may be 40 bytes long. In the first look the frame is orange, the inside light (240, 240, 240) and the letters black.
 - **`screen_panel(text)`** paints the whole panel in the frame's colour, paints the inside over it, smaller by the frame's thickness on every side, and writes the text. Painting the whole panel each time wipes out what it showed before, so a short text after a long one leaves nothing of the long one. It remembers the signs it wrote, at most 160 bytes, which holds 40 signs of any kind, so that **`screen_panel_again()`** can paint the panel again with them in another look. Before any app has shown a text, `screen_panel_again` does nothing.
 - **Nothing an app shows lands outside the panel.** `screen_text` stops only at the screen's edges, so `screen_panel` holds the text to the panel itself: it writes only as many signs as fit whole between the left and right edges, and writes nothing if a line of letters does not fit between top and bottom. This holds for any values in the style, and does not lean on the 40-byte limit in `app_box.rs`. On a screen smaller than the panel, the panel and its text are cut off at the screen's edges like everything else.
 - **There is one panel for every app.** The app that shows last wins. What it shows stays after the app has ended. The kernel keeps the text it shows and nothing else about it, so that a change of look can paint the panel again.
 - On a machine without a usable screen `screen_panel` does nothing.
+
+## Tables beside the apps
+
+The model can ask the kernel to draw a table in a frame. The first table makes the frame appear. It starts at column 660 and row 80, 20 dots to the right of the panel of apps. It reaches the chat box's right edge and stops 20 dots above it. The frame is 580 by 480 dots at 1280 by 800, with room for a title, headings and 14 data rows. At 1024 by 768 it is 324 by 448 dots and holds 13 data rows. A screen narrower than 1000 dots, a screen too short for the frame or a machine without a usable screen has no drawing tool.
+
+The title and frame follow the current look. Table cells use letters at size 2. They can use the model's colours for the header, the rows, their letters and the grid. The kernel checks the contrast between the letters and the cell's background. If the proposed colour falls below 4.5:1, it uses whichever of black or white gives the higher ratio. The kernel uses whole numbers and a table of sRGB channel values made by `test-tools/make_light_values.py`. [W3C contrast calculation](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum)
+
+One table is open at a time. A draft stays in memory. A saved table can be reopened by name after a restart. Opening a document fits the picture to the current screen. Its full contents stay in the notebook. Changing the look or coming back from the kernel's lines repaints the table, including any colours it gets from the look. Switching off, running `setup` or using the `forget` tool closes the current table. [The table tool](tools.md#draw_table-a-table-beside-the-apps)
+
+While the drawing tool's input streams in, the frame can show a preview built from complete rows. Later rows extend the grid as they arrive. If the stream fails, the previous table returns.
+
+### Diagrams in the drawing frame
+
+Ask for a diagram such as a flowchart with Start, Review and Done. The model can place rectangle outlines, lines, arrows and text labels inside the frame beside the apps. The kernel checks the diagram before showing it and adjusts low-contrast ink for the current look.
+
+A follow-up request can revise the current diagram. Press **Esc** or **Tab** to close it and reveal the open table if there is one. The diagram stays in memory. [Diagram tool](tools.md#draw_diagram-a-diagram-beside-the-apps)
+
+### Bar charts from tables
+
+Ask for a bar chart from the open table and say which column should supply the labels and which should supply the values. The chart uses the full cell values, including digits clipped in the table view. It shows a zero line, bars extending left for negative values and right for positive ones, and the number beside each bar.
+
+The chart uses the current look and fits inside the table frame. When more rows exist than the frame can show, the chart shows the first rows and chat reports how many fit. Press **Tab** or **Escape** to return to the underlying table. [Chart tool](tools.md#chart_table-a-bar-chart-from-an-open-table)
+
+### Editing a table with the keyboard
+
+Press **Tab** from chat to highlight the first data cell of the open table. Use the **arrow keys** to move between visible data cells and **Enter** to edit the highlighted cell. Typing first replaces the old value. **Backspace** removes one character at a time from the end of the value. For a clipped saved cell, the editor shows the end of the full value so Backspace can shorten it without losing other characters. Typed characters are limited by the column width. The vertical bar is reserved for separating cells.
+
+Press **Enter** again to apply the change. A draft stays in memory. An open saved document is updated in the notebook and keeps its off-screen data. If the notebook refuses the write, the edit stays open and the saved value remains intact. These keys act locally. The next chat request carries the updated table.
+
+**Escape** cancels a pending edit. From the highlighted cell, **Escape** or **Tab** returns to the chat line, with any text you were typing still there.
+
+Typing repaints the edited cell. Moving the selection repaints the old and new cells. The table frame and grid stay in place, and the chat instruction changes only when focus or editing mode changes.
+
+### Documents on the left
+
+Saved names appear below the app's output box and above the chat. The list shows up to eight names per page, with the most recently saved names first. The number of rows depends on the screen. A `>` marks the open document. Ask in chat to open or rename a document, remove it from the list, or show another page. After a restart the names appear again and a document opens when asked for. [Document tools](tools.md#saved-table-documents)
 
 ## The kernel's lines
 
@@ -90,7 +126,7 @@ Code: `src/lines.rs`. Everything the kernel says goes out through the serial por
 
 Right after the takeover `efi_main` covers the screen with the kernel's lines: the firmware's own text is painted over with the dark blue (red 0, green 40, blue 90), "Hello from my kernel!" stands at the top left in white, and every line is added below as it is printed (see "The kernel's lines" above). The usual picture is made ready at the screen line, where `screen_background` and `chat_setup` are called, but it waits.
 
-When the start is over, about four seconds after the devices start, the whole usual picture is painted at once, in the look kept in the notebook: the screen in the look's background colour, in the first look the dark blue, with one sentence in the look's colour for it, white in the first look, at size 2, its top left corner 40 dots from the left and 40 from the top: "Hello from my kernel! I draw my own letters now."; the chat box along the bottom ([chat.md](chat.md) says where it sits and how it looks); and in the middle the panel with "Hello from a Lua script!!!" in it, the text that a script, run by the interpreter in the box, asked to have shown at startup (see [interpreter.md](interpreter.md)). Before it, after the encryption line, an app in the box had the panel show "Hello from an app in the box", while the usual picture waited, so that text is not seen. On QEMU's usual screen of 1280 by 800 dots the panel covers columns 380 to 899 and rows 370 to 429, and its text begins at column 400, row 391.
+When the start is over, about four seconds after the devices start, the whole usual picture is painted at once, in the look kept in the notebook: the screen in the look's background colour, in the first look the dark blue, with one sentence in the look's colour for it, white in the first look, at size 2, its top left corner 40 dots from the left and 40 from the top: "Hello from my kernel! I draw my own letters now."; the chat box along the bottom ([chat.md](chat.md) says where it sits and how it looks); and below the space for the panel of apps, a box with "Hello from a Lua script!!!" in it, the text that a script, run by the interpreter in the box, asked to have shown at startup (see [interpreter.md](interpreter.md)). Before it, after the encryption line, an app in the box had the panel show "Hello from an app in the box", while the usual picture waited, so that text is not seen. On QEMU's usual screen of 1280 by 800 dots the panel covers columns 40 to 559 and rows 258 to 317. The text begins at column 60, row 279.
 
 The sentence is a demonstration and can go when something better shows that drawing works. An orange rectangle that used to be painted in the middle was such a demonstration and went when the panel came.
 

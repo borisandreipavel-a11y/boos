@@ -7,6 +7,7 @@ request the stand-in saw is compared with what the notes say is sent, and the di
 Made-up key only.
 
   nokey     no key kept: lines, the words that retired among them, get the row that no key is kept; nothing is sent.
+  streaming live words and complete table rows, then a failed stream and a truncated rename.
   words     the model's words as rows of their own; the terminal's line about the tokens, in both places a provider
             gives them and when it gives none; an answer cut off, one spent on thinking, one with the key in it, a
             refusal, and a good answer without words or a tool.
@@ -17,6 +18,14 @@ Made-up key only.
             not have, an odd name, inputs that cannot be read, numbers as text, numbers that fit nothing, and
             requests for an app that are long, odd, empty or hold the key.
   results   a failed app corrected, repeated inputs, a failed follow-up and the final round without tools.
+  drawing   a table beside the apps, then changing one amount and repainting in another look.
+  chart     a signed bar chart from the open saved table, with a look change and return to the table.
+  diagram   a streamed flowchart, an edited label, edge strokes and dismissal.
+  document_keys         local cell editing in a draft and a saved table, including cancel and restart.
+  document_keys_full    a failed keyboard save retains both the saved value and the pending replacement.
+  table_cut complete rows from a cut answer, bounds on text and rows, and refusal of malformed input.
+  table_medium the smaller frame and key masking inside an escaped description.
+  table_small the tool is absent on narrow screens and machines without a screen.
   cancel    a stopped kept app, its key-starred output, and setup during the follow-up.
   busy      a line sent while the answer to the one before is awaited.
   nocard    a machine without a network card.
@@ -34,6 +43,7 @@ Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (4
 import json
 import os
 import time
+from copy import copy
 
 os.environ["DIVIDED_DISK"] = ""
 
@@ -45,6 +55,7 @@ from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, 
                               page_row, refused_row, request_cleaned, running, words_cut)
 from conversation_model import BYTES_REMEMBERED, LINES_REMEMBERED
 from disk_helpers import make
+from drawing_model import bar_chart, diagram_picture, documents_panel, named_document, table
 from keyed_model import LOCKED
 from lockref import lock
 from test_apps_kept import (KEY, SCRIPT, Run, answer_row, answered_disk, failures, give_key, report, run_row)
@@ -76,7 +87,7 @@ def shown_since(run, shown=SHOWN):
     return [line for line in run.since() if line.startswith(shown)]
 
 
-def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
+def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN, during=None):
     """Sends `line` (the chat model takes it too), waits for the last line meant, and compares what the terminal
     showed since with the person's row, the row said at once, and `after`. Rows in `after` that belong in the chat
     box are added to the chat model. `shown`: how the terminal's lines that count begin (the person's rows begin
@@ -84,6 +95,8 @@ def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
     run.mark()
     run.press(line + "\n", chat)
     pressed = time.time()
+    if during is not None:
+        during()
     meant = chat.said[-2:] + after
     wanted = last or (after[-2] if after[-2:] == FOLLOW else meant[-1])
     end = time.time() + timeout
@@ -173,6 +186,80 @@ def scenario_words():
     if seen:
         check_body("words the request for a line", seen[0], body_meant("hello", []))
     no_key_in("words", lines)
+
+
+def scenario_streaming():
+    print("streaming: words and table rows appear before the answer is whole")
+    original = "head Item|Count\nrow Soup|2"
+    disk, _ = answered_disk("tools-streaming", [("document 1", named_document("Budget", original))])
+    run = Run("tools-streaming", disk, behaviours=["stream-chat", "stream-table", "stream-error", "stream-truncated"])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    names = ["Budget"]
+    gate = run.log + ".stream-next"
+    if os.path.exists(gate):
+        os.remove(gate)
+    give_key(run, chat)
+
+    def picture(model=chat):
+        return documents_panel(screen(1280, 800, model, []), model, names)
+
+    def advance():
+        report("streaming preview had no committed reply", not any(
+            row.startswith(("Model:", "Tokens:", "Kernel: I drew")) for row in run.since()))
+        with open(gate, "w"):
+            pass
+
+    def live_words():
+        live = copy(chat)
+        live.rows = list(chat.rows)
+        live.add("kernel", "Model: The balance is ready. ")
+        run.shot("words-before-done", picture(live))
+        advance()
+
+    exchange(run, chat, "show the balance",
+             [model_row("The balance is ready. " + KEY + " is private.", KEY), chat_cases.TOKENS_LINE],
+             timeout=12, during=live_words)
+
+    fruit_rows = [["Pear", "3"], ["Plum", "4"], ["Fig", "2"]]
+
+    def fruit(count):
+        return table(picture(), chat, "Fruit", [4, 5], ["Item", "Count"], fruit_rows[:count])
+
+    def live_table():
+        run.shot("first-complete-row", fruit(1))
+        advance()
+        run.shot("second-complete-row", fruit(2))
+        advance()
+
+    exchange(run, chat, "draw a fruit table", [chat_cases.TOKENS_LINE, "Kernel: I drew the table."],
+             timeout=12, during=live_table)
+    run.shot("final-row", fruit(3))
+
+    def error_preview():
+        width = 45
+        run.shot("preview-before-error", table(picture(), chat, "", [width], ["Item"], [["Preview"]]))
+        advance()
+
+    exchange(run, chat, "draw another table",
+             ["Kernel: the provider's stream ended with an error: Upstream stopped.", chat_cases.NO_TOKENS_LINE],
+             timeout=12, during=error_preview)
+    run.shot("restored-after-error", fruit(3))
+    exchange(run, chat, "rename budget",
+             ["Kernel: the provider's stream ended before the answer was complete.", chat_cases.NO_TOKENS_LINE],
+             timeout=12)
+    run.shot("name-unchanged", fruit(3))
+    no_key_in("streaming", run.end())
+    saved = read_things(disk)["things"]
+    report("streaming the incomplete rename did not write the document",
+           saved.get("document 1", (0, b""))[1] == named_document("Budget", original))
+    seen = posts(run)
+    report("streaming one request per line", len(seen) == 4)
+    if len(seen) == 4:
+        check_body("streaming asked for events and usage", seen[0], body_meant("show the balance", [], documents=(1, 1, names)))
+        report("streaming chat uses HTTP/1.1", all(
+            entry.get("first line") == "POST /v1/chat/completions HTTP/1.1" for entry in seen))
+        report("streaming a final table is in the next request",
+               seen[-1]["body"]["messages"][0]["content"].endswith("row Fig|2"))
 
 
 def scenario_dice():
@@ -351,6 +438,564 @@ def scenario_cancel():
         report("cancel reported the failed kept app without the key", "App showed: ********" in told and
                "App error: Lua stopped:" in told and not key_pieces(told, KEY))
     report("cancel dropped the late answer", "Model: Old answer." not in lines)
+
+
+def scenario_drawing():
+    print("drawing: a table beside a kept app, and the same table in another look")
+    apps = [(1, "an older app")]
+    disk, _ = answered_disk("tools-drawing", app_things(1, apps[0][1], SCRIPT))
+    description = ("title Fruit\nwidths 4 5\n"
+                   "colours head #eeeeee head-letters #fefefe rows #102030 letters #101010 lines #445566\n"
+                   "head Name | Count\nrow Pear | 3\nrow Plum")
+    run = Run("tools-drawing", disk, behaviours=["table=" + description, "edit-pear", "look=3"])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    line = "draw a fruit table"
+    exchange(run, chat, line, [chat_cases.TOKENS_LINE, "Kernel: I drew the table."])
+    colours = dict(head=(238, 238, 238), head_ink=(0, 0, 0), rows=(16, 32, 48),
+                   ink=(255, 255, 255), lines=(68, 85, 102))
+
+    def meant(amount):
+        return table(screen(1280, 800, chat, [apps[0][1]]), chat,
+                     "Fruit", [4, 5], ["Name", "Count"], [["Pear", amount], ["Plum", ""]], colours)
+
+    run.shot("fruit", meant("3"))
+    edit = "change pear to 7"
+    exchange(run, chat, edit, [chat_cases.TOKENS_LINE, "Kernel: I drew the table."], timeout=20)
+    run.shot("fruit-edited", meant("7"))
+    look_line = "change the look"
+    exchange(run, chat, look_line,
+             [chat_cases.TOKENS_LINE, "Kernel: this is look 3, Paper. It is kept on the disk."])
+    chat.look, chat.look_kept = "Paper", "Paper"
+    run.shot("paper", meant("7"))
+    run.end()
+    seen = posts(run)
+    report("drawing edit and look needed one request each", len(seen) == 3, "%d requests" % len(seen))
+    if len(seen) == 3:
+        check_body("drawing description of this screen's room", seen[0], body_meant(line, apps))
+        original = ("title Fruit\ncolours head #eeeeee head-letters #fefefe rows #102030 letters #101010 lines #445566\n"
+                    "widths 4 5\nhead Name|Count\nrow Pear|3\nrow Plum")
+        check_body("drawing sends the displayed table to the edit", seen[1],
+                   body_meant(edit, apps, record=chat.records[1], table=original))
+        check_body("drawing sends the updated amount thereafter", seen[2],
+                   body_meant(look_line, apps, record=chat.records[2], table=original.replace("Pear|3", "Pear|7")))
+
+    again = Run("tools-drawing-again", disk)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"Paper", last_line=b"change the look")
+    again.shot("no-table", screen(1280, 800, chat, [apps[0][1]]))
+    again.end()
+
+
+def scenario_diagram():
+    print("diagram: a streamed flowchart stays in the frame and can be revised or closed")
+    description = "widths 4 5\nhead Item|Count\nrow Pear|3"
+    original = named_document("Budget", description)
+    disk, _ = answered_disk("tools-diagram", [("document 1", original)])
+    flowchart = chat_cases.FLOWCHART
+    edited = flowchart.replace("Review", "Check") + "\nline 292 416 297 421\narrow 297 365 297 392"
+    invalid = "line 0 0 5 5\nrect 297 421 2 2"
+    extra = ["-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768"]
+    run = Run("tools-diagram", disk, width=1024, height=768, extra=extra, behaviours=[
+        "stream-flowchart", "draw_diagram=" + json.dumps({"drawing": edited}),
+        "draw_diagram=" + json.dumps({"drawing": invalid}),
+        'open_table={"name":"Budget"}', "draw_diagram=" + json.dumps({"drawing": flowchart}),
+    ])
+    chat = ToolsChat(1024, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    drawn = "Kernel: I drew the diagram. Press Esc to close it."
+
+    def picture(active=None):
+        return documents_panel(screen(1024, 768, chat, []), chat, ["Budget"], active=active)
+
+    def wait_for_rest():
+        run.shot("incomplete-drawing", picture())
+        with open(run.log + ".stream-next", "w"):
+            pass
+
+    gate = run.log + ".stream-next"
+    if os.path.exists(gate):
+        os.remove(gate)
+    exchange(run, chat, "draw a three step flowchart", [tokens, drawn], timeout=20, during=wait_for_rest)
+    run.shot("three-steps", diagram_picture(picture(), chat))
+    exchange(run, chat, "rename review to check", [tokens, drawn], timeout=20)
+    run.shot("edited-at-the-edge", diagram_picture(picture(), chat, edited=True))
+    run.m.named_key("f1")
+    run.m.named_key("f2")
+    run.shot("repaint-after-kernel-lines", diagram_picture(picture(), chat, edited=True))
+    exchange(run, chat, "try drawing outside",
+             [tokens, "Kernel: diagram line 2 has invalid inputs or goes outside the frame."] + FOLLOW, timeout=20)
+    run.shot("outside-rejected", diagram_picture(picture(), chat, edited=True))
+    run.m.named_key("esc")
+    run.shot("cleared-diagram", picture())
+    exchange(run, chat, "open budget", [tokens, 'Kernel: I opened "Budget".'], timeout=20)
+    exchange(run, chat, "draw the flowchart again", [tokens, drawn], timeout=20)
+    run.shot("diagram-over-table", diagram_picture(picture(active="Budget"), chat))
+    run.m.named_key("esc")
+    run.shot("source-table-restored", table(picture(active="Budget"), chat, "", [4, 5], ["Item", "Count"], [["Pear", "3"]]))
+    run.end()
+    saved = read_things(disk)["things"]
+    report("diagram kept the original document", saved.get("document 1", (0, b""))[1] == original)
+    seen = posts(run)
+    report("diagram five lines and one tool refusal follow-up", len(seen) == 6)
+    if len(seen) == 6:
+        check_body("diagram offered inside the screen room", seen[0],
+                   body_meant("draw a three step flowchart", [], width=1024, height=768, documents=(1, 1, ["Budget"])))
+        check_body("diagram follow-up edit got the complete description", seen[1],
+                   body_meant("rename review to check", [], width=1024, height=768, documents=(1, 1, ["Budget"]),
+                             record=chat.records[1], diagram=flowchart))
+        check_body("diagram dismissal clears its context", seen[4],
+                   body_meant("open budget", [], width=1024, height=768, documents=(1, 1, ["Budget"]), record=chat.records[3]))
+
+
+def scenario_chart():
+    print("chart: the first bars use full signed values, keep the table, and follow the look")
+    rows = [("Loss", "-5.5"), ("Flat", "0"), ("Gain", "12.25")] + [(f"R{i}", str(i)) for i in range(3, 14)]
+    description = "title Budget\nwidths 5 4 4\nhead Item|Cash|Note\n" + "\n".join(f"row {name}|{value}|None" for name, value in rows)
+    original = named_document("Budget", description)
+    disk, _ = answered_disk("tools-chart", [("document 1", original)])
+    extra = ["-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768"]
+    run = Run("tools-chart", disk, width=1024, height=768, extra=extra, behaviours=[
+        'open_table={"name":"Budget"}', "stream-chart",
+        'chart_table={"label_column":1,"value_column":3}', "look=2",
+        "table=head Item|Cash\nrow Rent|-10\nrow Food|-4.25", "stream-chart",
+    ])
+    chat = ToolsChat(1024, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    exchange(run, chat, "open budget", [tokens, 'Kernel: I opened "Budget". Only part of the full document fits on this screen.'])
+    exchange(run, chat, "chart the budget", [tokens, "Kernel: I drew a bar chart from the open table. Showing the first 13 of 14 rows."])
+
+    def picture(active="Budget"):
+        return documents_panel(screen(1024, 768, chat, []), chat, ["Budget"], active=active)
+
+    def chart_picture():
+        return bar_chart(picture(), chat, "Cash by Item", rows[:13])
+
+    run.shot("signed-amounts", chart_picture())
+    exchange(run, chat, "chart the notes", [tokens, "Kernel: row 1 needs a plain number in column 3 for the bar chart."] + FOLLOW)
+    run.shot("invalid-column-keeps-chart", chart_picture())
+    exchange(run, chat, "switch to night", [tokens, "Kernel: this is look 2, Night. It is kept on the disk."])
+    chat.look, chat.look_kept = "Night", "Night"
+    run.shot("chart-in-night", chart_picture())
+    run.m.named_key("tab")
+    visible = [[name, value[:4], "None"] for name, value in rows[:13]]
+    run.shot("return-to-table", table(picture(), chat, "Budget", [5, 4, 4], ["Item", "Cash", "Note"], visible,
+                                      colours=dict(head_ink=(0, 0, 0))))
+
+    exchange(run, chat, "draw a draft table", [tokens, "Kernel: I drew the table."])
+    exchange(run, chat, "chart the draft", [tokens, "Kernel: I drew a bar chart from the open table."])
+    run.shot("chart-of-draft", bar_chart(picture(active=None), chat, "Cash by Item", [("Rent", "-10"), ("Food", "-4.25")]))
+    run.end()
+    saved = read_things(disk)["things"]
+    report("chart the original document stayed intact", saved.get("document 1", (0, b""))[1] == original)
+    seen = posts(run)
+    report("chart six requests and one correction", len(seen) == 7)
+    if len(seen) == 7:
+        check_body("chart waits for an open table before appearing in the tool list", seen[0],
+                   body_meant("open budget", [], width=1024, height=768, documents=(1, 1, ["Budget"])))
+        check_body("chart asks for two column positions and carries the whole table", seen[1],
+                   body_meant("chart the budget", [], width=1024, height=768, documents=(1, 1, ["Budget"]),
+                             record=chat.records[1], table="Saved document: Budget\n" + description))
+
+
+def scenario_documents():
+    print("documents: save a draft, make another document, then open and edit after restart")
+    disk, _ = answered_disk("tools-documents", app_things(1, "an older app", SCRIPT))
+    draft = "title Fruit\nwidths 4 5\nhead Name|Count\nrow Pear|3\nrow Plum|4"
+    other = "title Lunch\nwidths 5 5\nhead Meal|Count\nrow Soup|2"
+    run = Run("tools-documents", disk, behaviours=[
+        "table=" + draft, 'save_table={"name":"Fruit budget"}',
+        "save_table=" + json.dumps({"name": "Lunch", "table": other}),
+        "save_table=" + json.dumps({"name": "fruit budget", "table": other}),
+    ])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    exchange(run, chat, "draw a fruit budget", [tokens, "Kernel: I drew the table."], timeout=30)
+    exchange(run, chat, "save it as fruit budget", [tokens, 'Kernel: I saved "Fruit budget".'], timeout=30)
+    exchange(run, chat, "make and save lunch", [tokens, 'Kernel: I saved "Lunch".'], timeout=30)
+    exchange(run, chat, "save over fruit budget",
+             [tokens, 'Kernel: a document called "fruit budget" already exists. Open it before editing it.'] + FOLLOW, timeout=30)
+    names = ["Lunch", "Fruit budget"]
+    picture = documents_panel(screen(1280, 800, chat, ["an older app"]), chat, names, active="Lunch")
+    run.shot("named-tables", table(picture, chat, "Lunch", [5, 5], ["Meal", "Count"], [["Soup", "2"]]))
+    run.end()
+    saved = read_things(disk)["things"]
+    report("documents original saved by name", saved.get("document 1", (0, b""))[1] == named_document("Fruit budget", draft))
+    report("documents one step save", saved.get("document 2", (0, b""))[1] == named_document("Lunch", other))
+
+    run = Run("tools-documents-open", disk, behaviours=['open_table={"name":"fruit budget"}', "edit-pear"])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"", last_line=b"save over fruit budget")
+    run.shot("list-after-restart", documents_panel(screen(1280, 800, chat, ["an older app"]), chat, names))
+    give_key(run, chat)
+    exchange(run, chat, "open fruit budget", [tokens, 'Kernel: I opened "Fruit budget".'], timeout=30)
+    exchange(run, chat, "change pear to 7", [tokens, 'Kernel: I updated "Fruit budget".'], timeout=30)
+    picture = documents_panel(screen(1280, 800, chat, ["an older app"]), chat,
+                              ["Fruit budget", "Lunch"], active="Fruit budget")
+    run.shot("updated", table(picture, chat, "Fruit", [4, 5], ["Name", "Count"], [["Pear", "7"], ["Plum", "4"]]))
+    run.end()
+    seen = posts(run)
+    report("documents open and edit each take one request", len(seen) == 2)
+    if len(seen) == 2:
+        check_body("documents the list is available without an open table", seen[0],
+                   body_meant("open fruit budget", [(1, "an older app")], documents=(1, 1, names)))
+        check_body("documents the edit sees the full named table", seen[1],
+                   body_meant("change pear to 7", [(1, "an older app")], documents=(1, 1, names),
+                             record=chat.records[1], table="Saved document: Fruit budget\n" + draft))
+    switched = read_things(disk)["things"]
+    want = draft.replace("Pear|3", "Pear|7")
+    report("documents saved update and retained the other document",
+           switched.get("document 1", (0, b""))[1] == named_document("Fruit budget", want) and switched.get("document 2") == saved.get("document 2"))
+
+
+def scenario_documents_fit():
+    print("documents_fit: the list pages and a complete saved table on a smaller screen")
+    rows = [[f"Item {i}", "abcdefghijklmnopqrstuvwxyz"] for i in range(14)]
+    original = "title Ledger\nwidths 8 26\nhead Item|Amount\n" + "\n".join("row " + "|".join(row) for row in rows)
+    small = b"\x01head Item\nrow One"
+    disk, _ = answered_disk("tools-documents-fit", [("table Ledger", b"\x01" + original.encode())]
+                            + [(f"table Note {i}", small) for i in range(1, 9)])
+    changed = original.replace("row Item 13|abcdefghijklmnopqrstuvwxyz", "row Item 13|99")
+    extra = ["-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768"]
+    run = Run("tools-documents-fit", disk, width=1024, height=768, extra=extra, behaviours=[
+        'turn_document_page={"page":2}', 'open_table={"name":"Ledger"}',
+        "update_table=" + json.dumps({"table": changed}), "words=Saved.",
+    ])
+    chat = ToolsChat(1024, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    exchange(run, chat, "show documents page two", [tokens, "Kernel: The documents list shows page 2 of 2."], timeout=30)
+    run.shot("second-page", documents_panel(screen(1024, 768, chat, []), chat, ["Note 1", "Ledger"], page=2, pages=2))
+    suffix = " Only part of the full document fits on this screen."
+    exchange(run, chat, "open ledger", [tokens, 'Kernel: I opened "Ledger".' + suffix], timeout=30)
+    exchange(run, chat, "set the last amount to 99", [tokens, 'Kernel: I updated "Ledger".' + suffix], timeout=30)
+    exchange(run, chat, "confirm", [model_row("Saved."), tokens], timeout=30)
+    run.end()
+    seen = posts(run)
+    report("documents_fit one request for each action", len(seen) == 4)
+    if len(seen) == 4:
+        check_body("documents_fit the hidden row went with the edit", seen[2],
+                   body_meant("set the last amount to 99", [], width=1024, height=768, record=chat.records[2],
+                             documents=(2, 2, ["Note 1", "Ledger"]), table="Saved document: Ledger\n" + original))
+        system = seen[3]["body"]["messages"][0]["content"]
+        report("documents_fit the hidden row in later requests shows the new amount", system.endswith("row Item 13|99"))
+    disk_values = read_things(disk)
+    report("documents_fit all rows survived the write", disk_values["things"].get("table Ledger", (0, b""))[1] == named_document("Ledger", changed))
+    report("documents_fit the long update used notebook pieces", sum(n[0] == "table Ledger" for n in disk_values["entries"]) == 4)
+
+
+def scenario_documents_full():
+    print("documents_full: a failed update leaves the old document on screen and on disk")
+    original = "title Budget\nwidths 4 5\nhead Item|Count\nrow Pear|3"
+    expected_data = b"\x01" + original.encode()
+    disk, last = answered_disk("tools-documents-full", [("table Budget", expected_data)], blocks=10)
+    larger = "head Count\nrow " + "x" * 1900
+    run = Run("tools-documents-full", disk, behaviours=[
+        'open_table={"name":"Budget"}', "update_table=" + json.dumps({"table": larger}), "words=Still here.",
+    ])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    exchange(run, chat, "open budget", [tokens, 'Kernel: I opened "Budget".'], timeout=30)
+    exchange(run, chat, "replace the budget",
+             [tokens, 'Kernel: I could not save "Budget", because the notebook is full.'] + FOLLOW, timeout=30)
+    picture = documents_panel(screen(1280, 800, chat, []), chat, ["Budget"], active="Budget")
+    run.shot("unchanged", table(picture, chat, "Budget", [4, 5], ["Item", "Count"], [["Pear", "3"]]))
+    exchange(run, chat, "show the amount", [model_row("Still here."), tokens], timeout=30)
+    run.end()
+    seen = posts(run)
+    report("documents_full kept the older text for the next request",
+           len(seen) == 4 and seen[-1]["body"]["messages"][0]["content"].endswith("Saved document: Budget\n" + original))
+    disk_values = read_things(disk, last=last)
+    report("documents_full disk kept the previous complete version",
+           disk_values["things"].get("table Budget", (0, b""))[1] == expected_data and
+           sum(n[0] == "table Budget" for n in disk_values["entries"]) == 1)
+
+
+def scenario_documents_names():
+    print("documents_names: rename, remove, and reuse a name")
+    fruit = "title Fruit\nwidths 4 5\nhead Item|Count\nrow Pear|3"
+    lunch = "title Lunch\nwidths 4 5\nhead Meal|Count\nrow Soup|2"
+    disk, _ = answered_disk("tools-documents-names", [
+        ("table Fruit", b"\x01" + fruit.encode()), ("table Lunch", b"\x01" + lunch.encode()),
+    ])
+    tokens = chat_cases.TOKENS_LINE
+    run = Run("tools-documents-names", disk, behaviours=[
+        'open_table={"name":"Fruit"}', 'rename_table={"name":"Fruit","new_name":"lunch"}',
+        'rename_table={"name":"fruit","new_name":"Fruit budget"}',
+    ])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    exchange(run, chat, "open fruit", [tokens, 'Kernel: I opened "Fruit".'], timeout=30)
+    exchange(run, chat, "rename it to lunch",
+             [tokens, 'Kernel: a document called "lunch" already exists.'] + FOLLOW, timeout=30)
+    exchange(run, chat, "rename to fruit budget", [tokens, 'Kernel: I renamed "Fruit" to "Fruit budget".'], timeout=30)
+    picture = documents_panel(screen(1280, 800, chat, []), chat, ["Fruit budget", "Lunch"], active="Fruit budget")
+    run.shot("renamed", table(picture, chat, "Fruit", [4, 5], ["Item", "Count"], [["Pear", "3"]]))
+    run.end()
+    saved = read_things(disk)["things"]
+    report("documents_names rename kept the same key and contents",
+           saved["table Fruit"][1] == named_document("Fruit budget", fruit) and saved["table Lunch"][1] == b"\x01" + lunch.encode())
+
+    run = Run("tools-documents-remove", disk, behaviours=[
+        'open_table={"name":"Fruit"}', 'open_table={"name":"fruit budget"}',
+        'delete_table={"name":"Lunch"}', 'delete_table={"name":"Fruit budget"}',
+        "save_table=" + json.dumps({"name": "Lunch", "table": "head Meal\nrow Salad"}),
+    ])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"", last_line=b"rename to fruit budget")
+    run.shot("renamed-list-after-restart", documents_panel(screen(1280, 800, chat, []), chat, ["Fruit budget", "Lunch"]))
+    give_key(run, chat)
+    exchange(run, chat, "open fruit",
+             [tokens, 'Kernel: I could not find a document called "Fruit".'] + FOLLOW, timeout=30)
+    exchange(run, chat, "open fruit budget", [tokens, 'Kernel: I opened "Fruit budget".'], timeout=30)
+    exchange(run, chat, "delete lunch", [tokens, 'Kernel: I removed "Lunch" from the documents list.'], timeout=30)
+    picture = documents_panel(screen(1280, 800, chat, []), chat, ["Fruit budget"], active="Fruit budget")
+    run.shot("other-removed", table(picture, chat, "Fruit", [4, 5], ["Item", "Count"], [["Pear", "3"]]))
+    exchange(run, chat, "delete fruit budget", [tokens, 'Kernel: I removed "Fruit budget" from the documents list.'], timeout=30)
+    run.shot("list-and-table-cleared", screen(1280, 800, chat, []))
+    exchange(run, chat, "save a new lunch", [tokens, 'Kernel: I saved "Lunch".'], timeout=30)
+    run.end()
+    seen = posts(run)
+    if len(seen) == 6:
+        check_body("documents_names nothing deleted is advertised", seen[-1],
+                   body_meant("save a new lunch", [], record=chat.records[-1]))
+    report("documents_names all six expected requests", len(seen) == 6)
+    saved = read_things(disk)["things"]
+    report("documents_names the new lunch has its own identity",
+           saved["table Fruit"][1] == saved["table Lunch"][1] == b"\x03" and
+           saved["document 1"][1] == named_document("Lunch", "head Meal\nrow Salad"))
+
+    run = Run("tools-documents-removed-again", disk)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"", last_line=b"save a new lunch")
+    run.shot("only-new-document-after-restart", documents_panel(screen(1280, 800, chat, []), chat, ["Lunch"]))
+    run.end()
+
+
+class TableKeysChat(ToolsChat):
+    hint = None
+
+    def typing_text(self):
+        return self.hint or super().typing_text()
+
+
+CELL_SELECTED = "Arrows move. Enter edits. Esc returns to chat."
+CELL_EDITING = "Type to replace. Backspace deletes. Enter saves. Esc cancels."
+
+
+def scenario_document_keys():
+    print("document_keys: keyboard edits stay local and preserve the complete table")
+    rows = [["Pear", "3"], ["Plum bow", ""]] + [[f"Item {i}", "4"] for i in range(2, 13)]
+    records = ["row Pear|3", "row Plum bowl large"] + ["row " + "|".join(row) for row in rows[2:]]
+    original = "\r\n".join(["title Budget", "widths 8 5", "head Item|Count"] + records + ["row Hidden|88888"])
+    changed = original.replace("row Plum bowl large\r\n", "row Plum bowl larg|9\r\n")
+    draft = "head Name|Count\nrow Soup|2"
+    disk, _ = answered_disk("tools-document-keys", [("document 1", named_document("Budget", original))])
+    extra = ["-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768"]
+    run = Run("tools-document-keys", disk, width=1024, height=768, extra=extra, behaviours=[
+        'open_table={"name":"Budget"}', "words=Checked.", "table=" + draft, 'save_table={"name":"Lunch"}',
+    ])
+    chat = TableKeysChat(1024, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    opened = 'Kernel: I opened "Budget". Only part of the full document fits on this screen.'
+    exchange(run, chat, "open budget", [tokens, opened], timeout=30)
+
+    def picture(focus=None, editing=False):
+        canvas = documents_panel(screen(1024, 768, chat, []), chat, ["Budget"], active="Budget")
+        return table(canvas, chat, "Budget", [8, 5], ["Item", "Count"], rows, focus=focus, editing=editing)
+
+    run.press("check ", chat)
+    for name in ("tab", "up", "left", "ret"):
+        run.m.named_key(name)
+    run.press("\b")
+    chat.hint = CELL_EDITING
+    rows[0][0] = "Pea"
+    run.shot("backspace-existing-value", picture(focus=(0, 0), editing=True))
+    run.m.named_key("esc")
+    rows[0][0] = "Pear"
+    chat.hint = CELL_SELECTED
+    run.shot("cancelled-cell", picture(focus=(0, 0)))
+
+    run.m.named_key("down")
+    run.m.named_key("ret")
+    run.press("\b")
+    chat.hint = CELL_EDITING
+    rows[1][0] = "owl larg"
+    run.shot("backspace-clipped-value", picture(focus=(1, 0), editing=True))
+    run.m.named_key("ret")
+    rows[1][0] = "Plum bow"
+    run.m.named_key("right")
+    run.m.named_key("ret")
+    run.press("93\b")
+    rows[1][1] = "9"
+    chat.hint = CELL_EDITING
+    run.shot("editing-missing-cell", picture(focus=(1, 1), editing=True))
+    run.m.named_key("ret")
+    run.m.named_key("tab")
+    chat.hint = None
+    run.shot("saved-cell-and-chat-draft", picture())
+    report("document_keys neither edit sent a request", len(posts(run)) == 1)
+
+    exchange(run, chat, "table", [model_row("Checked."), tokens], timeout=30)
+    exchange(run, chat, "draw lunch", [tokens, "Kernel: I drew the table."], timeout=30)
+    for name in ("tab", "right", "ret"):
+        run.m.named_key(name)
+    run.press("7")
+    run.m.named_key("ret")
+    run.m.named_key("esc")
+    exchange(run, chat, "save lunch", [tokens, 'Kernel: I saved "Lunch".'], timeout=30)
+    run.end()
+    seen = posts(run)
+    report("document_keys only the four chat lines were sent", len(seen) == 4)
+    if len(seen) == 4:
+        check_body("document_keys next request had the full edited document", seen[1],
+                   body_meant("check table", [], width=1024, height=768, record=chat.records[1],
+                             documents=(1, 1, ["Budget"]), table="Saved document: Budget\n" + changed))
+    saved = read_things(disk)["things"]
+    report("document_keys disk retained hidden cells and rows",
+           saved.get("document 1", (0, b""))[1] == named_document("Budget", changed))
+    report("document_keys the saved draft kept its keyboard edit",
+           saved.get("document 2", (0, b""))[1] == named_document("Lunch", draft.replace("Soup|2", "Soup|7")))
+
+    run = Run("tools-document-keys-reopen", disk, behaviours=['open_table={"name":"Budget"}'],
+              width=1024, height=768, extra=extra)
+    chat = ToolsChat(1024, kept_name=b"", key_entry=b"", kept_look=b"", last_line=b"save lunch")
+    give_key(run, chat)
+    exchange(run, chat, "open budget", [tokens, opened], timeout=30)
+    canvas = documents_panel(screen(1024, 768, chat, []), chat, ["Lunch", "Budget"], active="Budget")
+    run.shot("reopened-cell", table(canvas, chat, "Budget", [8, 5], ["Item", "Count"], rows))
+    run.end()
+
+
+def scenario_document_keys_full():
+    print("document_keys_full: a failed keyboard save keeps the old table and the pending edit")
+    original = "head Item|Count\nwidths 4 5\nrow Pear|3"
+    expected_data = b"\x01" + original.encode()
+    # The notebook has room for the key and open lines before it fills.
+    disk, last = answered_disk("tools-document-keys-full", [("table Budget", expected_data)], blocks=8)
+    run = Run("tools-document-keys-full", disk, behaviours=['open_table={"name":"Budget"}'])
+    chat = TableKeysChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    exchange(run, chat, "open budget", [chat_cases.TOKENS_LINE, 'Kernel: I opened "Budget".'], timeout=30)
+    for name in ("tab", "right", "ret"):
+        run.m.named_key(name)
+    run.mark()
+    run.press("9\n")
+    trouble = 'Kernel: I could not save "Budget", because the notebook is full.'
+    report("document_keys_full reported the failed save", run.wait_line(trouble, timeout=5) == trouble)
+    chat.add("kernel", trouble)
+    chat.hint = CELL_EDITING
+    canvas = documents_panel(screen(1280, 800, chat, []), chat, ["Budget"], active="Budget")
+    run.shot("replacement-still-editing",
+             table(canvas, chat, "", [4, 5], ["Item", "Count"], [["Pear", "9"]], focus=(0, 1), editing=True))
+    run.m.named_key("esc")
+    run.m.named_key("esc")
+    chat.hint = None
+    canvas = documents_panel(screen(1280, 800, chat, []), chat, ["Budget"], active="Budget")
+    run.shot("cancel-reveals-saved-value", table(canvas, chat, "", [4, 5], ["Item", "Count"], [["Pear", "3"]]))
+    run.end()
+    saved = read_things(disk, last=last)["things"]
+    report("document_keys_full disk was unchanged", saved.get("table Budget", (0, b""))[1] == expected_data)
+    report("document_keys_full only opening sent a request", len(posts(run)) == 1)
+
+
+def scenario_table_cut():
+    print("table_cut: only complete rows from an unfinished answer, and clipping at the frame")
+    disk, _ = answered_disk("tools-table-cut")
+    # Outer JSON is complete. The model's arguments string runs out during
+    # a Unicode escape in the final row, after two complete rows.
+    unfinished = r'{"table":"title Cut\nwidths 3 2\nhead Key | Q\nrow longer | 123 | skip\nrow A | B\nrow lost\u00'
+    wide = ("title Full\nhead A | B | C | D | E | F | G\nwidths 100 1 1 1 1 1\n" +
+            "\n".join("row %d | b | c | d | e | f" % n for n in range(20)) +
+            "\ncolours head #000000")
+    run = Run("tools-table-cut", disk, behaviours=[
+        "tablecut=" + unfinished, "tablejson=" + unfinished,
+        "table=head X\nrow " + "x" * 2048, "table=" + wide, "forget", "words=Fresh."])
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    tokens = chat_cases.TOKENS_LINE
+    exchange(run, chat, "draw a cut table", [CUT_OFF, tokens,
+             "Kernel: I drew the table. Some text was shortened, extra cells were left out, "
+             "the answer ended early and only complete rows were used."] + FOLLOW)
+
+    def cut_picture():
+        return table(screen(1280, 800, chat, []), chat, "Cut", [3, 2], ["Key", "Q"], [["lon", "12"], ["A", "B"]])
+
+    run.shot("complete-rows", cut_picture())
+    bad = [tokens, "Kernel: the model asked for a table, but I could not read its description."] + FOLLOW
+    exchange(run, chat, "draw invalid", bad)
+    exchange(run, chat, "draw over limit", bad)
+    run.shot("kept-after-refusals", cut_picture())
+    exchange(run, chat, "draw a large table", [tokens,
+             "Kernel: I drew the table. Extra cells were left out, column widths were changed to fit, "
+             "rows below the frame were left out."] + FOLLOW)
+    rows = [[str(n), "b", "c", "d", "e", "f"] for n in range(14)]
+    run.shot("full-frame", table(screen(1280, 800, chat, []), chat, "Full", [7, 7, 7, 7, 7, 6], list("ABCDEF"), rows))
+    exchange(run, chat, "forget", [tokens, FORGOT])
+    run.shot("table-cleared", screen(1280, 800, chat, []))
+    exchange(run, chat, "hello", [model_row("Fresh."), tokens])
+    run.end()
+    seen = posts(run)
+    report("table_cut every affected line had a follow-up",
+           [n.get("request for") for n in seen] == ["a line", "a follow-up"] * 4 + ["a line"] * 2)
+    if len(seen) == 10:
+        first_follow = seen[1]["body"]["messages"][0]["content"]
+        report("table_cut the follow-up sees only the displayed rows",
+               "head Key|Q\nrow lon|12\nrow A|B" in first_follow and "row lost" not in first_follow)
+        check_body("table_cut forgot the table and chat history", seen[-1], body_meant("hello", []))
+
+
+def scenario_table_medium():
+    print("table_medium: a frame on 1024 by 768 and key masking inside escaped input")
+    disk, _ = answered_disk("tools-table-medium")
+    fragment = KEY[8:16]
+    description = "title " + fragment + "\nwidths 3 3\nhead A | B\n"
+    description += "\n".join("row %d | x" % n for n in range(13))
+    escaped = "".join(r"\u%04x" % ord(sign) for sign in fragment)
+    arguments = json.dumps({"table": description}).replace(fragment, escaped)
+    extra = ["-vga", "std", "-global", "VGA.xres=1024", "-global", "VGA.yres=768"]
+    run = Run("tools-table-medium", disk, width=1024, height=768, extra=extra, behaviours=["tablejson=" + arguments])
+    chat = ToolsChat(1024, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    line = "draw thirteen rows"
+    exchange(run, chat, line, [chat_cases.TOKENS_LINE, "Kernel: I drew the table."])
+    cells = [[str(n), "x"] for n in range(13)]
+    meant = table(screen(1024, 768, chat, []), chat, "*" * len(fragment), [3, 3], ["A", "B"], cells)
+    run.shot("rows-and-stars", meant)
+    run.end()
+    seen = posts(run)
+    report("table_medium one request", len(seen) == 1)
+    if seen:
+        check_body("table_medium advertises the smaller frame", seen[0], body_meant(line, [], width=1024, height=768))
+
+
+def scenario_table_small():
+    print("table_small: a narrow screen offers no tool and refuses a table")
+    disk, _ = answered_disk("tools-table-small")
+    run = Run("tools-table-small", disk, width=800, height=600, extra=["-vga", "cirrus"],
+              behaviours=["table=head A | B\nrow x | y"])
+    chat = ToolsChat(800, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    line = "draw a table"
+    exchange(run, chat, line, [chat_cases.TOKENS_LINE, "Kernel: this screen has no room for a table."] + FOLLOW)
+    run.shot("no-frame", screen(800, 600, chat, []))
+    run.end()
+    seen = posts(run)
+    report("table_small refused before drawing", len(seen) == 2)
+    if seen:
+        check_body("table_small no drawing tool advertised", seen[0], body_meant(line, [], width=800, height=600))
+
+    headless = Run("tools-table-headless", disk, extra=["-vga", "none"], behaviours=["words=Hello."])
+    give_key(headless)
+    headless.mark()
+    headless.press("hello\n")
+    report("table_small headless chat still works", headless.wait_line("Model: Hello.") is not None)
+    headless.end()
+    seen = posts(headless)
+    report("table_small one headless request", len(seen) == 1)
+    if seen:
+        check_body("table_small no drawing tool when headless", seen[0], body_meant("hello", [], width=0, height=0))
 
 
 def scenario_busy():
@@ -595,7 +1240,12 @@ def scenario_bound():
     no_key_in("bound", lines)
 
 
-SCENARIOS = {"cancel": scenario_cancel, "results": scenario_results, "nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
+SCENARIOS = {"streaming": scenario_streaming, "documents": scenario_documents, "documents_fit": scenario_documents_fit, "documents_full": scenario_documents_full,
+             "documents_names": scenario_documents_names,
+             "document_keys": scenario_document_keys, "document_keys_full": scenario_document_keys_full,
+             "drawing": scenario_drawing, "chart": scenario_chart, "diagram": scenario_diagram, "table_cut": scenario_table_cut,
+             "table_medium": scenario_table_medium, "table_small": scenario_table_small,
+             "cancel": scenario_cancel, "results": scenario_results, "nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
              "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
              "forgetting": scenario_forgetting, "bound": scenario_bound}
 

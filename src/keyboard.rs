@@ -78,7 +78,7 @@ pub fn next_key() -> Option<u8> {
     Some(key)
 }
 
-// What `key_letter` gives for the Backspace key, the key that takes the last
+// The text code for the Backspace key, the key that takes the last
 // typed sign away. It is the number computers have long used for it.
 pub const BACKSPACE: u8 = 8;
 
@@ -99,24 +99,33 @@ const RIGHT_SHIFT_LET_GO: u8 = RIGHT_SHIFT + 128;
 // to such a key.
 const MARK: u8 = 224;
 
+pub enum Key {
+    Text(u8),
+    Tab,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 // Whether each Shift key is held down right now, and whether the number
-// taken last was the mark. Only `key_letter` reads and changes these, and
+// taken last was the mark. Only `key_press` reads and changes these, and
 // only the main loop calls it.
 static mut LEFT_SHIFT_HELD: bool = false;
 static mut RIGHT_SHIFT_HELD: bool = false;
 static mut AFTER_MARK: bool = false;
 
-// Turns a key number into its letter on a US keyboard. A key number says where
-// the key sits, not what is printed on it: the keys are numbered row by row.
-// Letting a key go sends its number plus 128, which has no letter here.
-// Enter and Backspace have no letter either; they come back as the numbers
-// that stand for them, `b'\n'` and `BACKSPACE`.
+// Turns a key press into text on a US keyboard or a navigation event.
+// Key numbers follow the positions of keys, row by row. Letting a key go
+// sends its number plus 128. Enter and Backspace use the text codes
+// `b'\n'` and `BACKSPACE`.
 //
 // While a Shift key is held down, a key gives its second sign: a capital
 // letter, or the sign printed above a digit. The Shift keys give no letter
 // themselves; this function remembers whether they are down. So it must be
 // handed every key number, in the order the numbers arrived.
-pub fn key_letter(key: u8) -> Option<u8> {
+pub fn key_press(key: u8) -> Option<Key> {
     // The mark gives nothing. Remember it for the number that comes next.
     if key == MARK {
         unsafe { AFTER_MARK = true };
@@ -137,19 +146,28 @@ pub fn key_letter(key: u8) -> Option<u8> {
             _ => {}
         }
     }
+    match (after_mark, key) {
+        (false, 1) => return Some(Key::Escape),
+        (false, 15) => return Some(Key::Tab),
+        (true, 72) => return Some(Key::Up),
+        (true, 80) => return Some(Key::Down),
+        (true, 75) => return Some(Key::Left),
+        (true, 77) => return Some(Key::Right),
+        _ => {}
+    }
     let shift = unsafe { LEFT_SHIFT_HELD || RIGHT_SHIFT_HELD };
 
     // Each row of keys, as it is without Shift and as it is with Shift.
     let (first_key, plain, shifted): (u8, &[u8], &[u8]) = match key {
         2..=13 => (2, b"1234567890-=", b"!@#$%^&*()_+"),
-        14 => return Some(BACKSPACE),
+        14 => return Some(Key::Text(BACKSPACE)),
         16..=27 => (16, b"qwertyuiop[]", b"QWERTYUIOP{}"),
-        28 => return Some(b'\n'), // Enter.
+        28 => return Some(Key::Text(b'\n')), // Enter.
         30..=41 => (30, b"asdfghjkl;'`", b"ASDFGHJKL:\"~"),
         43..=53 => (43, b"\\zxcvbnm,./", b"|ZXCVBNM<>?"),
-        57 => return Some(b' '), // The space bar.
+        57 => return Some(Key::Text(b' ')), // The space bar.
         _ => return None,
     };
     let row = if shift { shifted } else { plain };
-    Some(row[(key - first_key) as usize])
+    Some(Key::Text(row[(key - first_key) as usize]))
 }

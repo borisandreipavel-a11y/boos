@@ -17,7 +17,7 @@ The chat box is the place on the screen where the person at the machine types. I
 - **What is said is repeated in the terminal,** as whole lines: the person's line and the answer, sent in one go when Enter is pressed. Single keys are not echoed there any more, so the terminal never gets a byte that is not plain text.
 - **On a machine without a usable screen** nothing is shown and no rows are kept, but typing works: the line is collected, held to 50 signs, and repeated with its answer in the terminal on Enter.
 
-Only the keys `key_letter` knows can be typed: the letters, small and with Shift capital, the digits, the signs of a US keyboard with and without Shift, the space bar, Enter and Backspace. That is every one of the 95 signs the screen has a picture for. Caps Lock does nothing. The arrow keys, Esc, Tab, Delete and the F keys type nothing; F1 shows the kernel's own lines on the whole screen instead of the chat box, until the next key (see "The kernel's lines" in [screen.md](screen.md)). See [interrupts.md](interrupts.md) for how Shift is followed.
+The US keyboard layout covers all 95 printable signs, with Shift used for capitals and the second sign on a key. Caps Lock and Delete do nothing. F1 shows the kernel's own lines until the next key press. When a table is open and chat is ready, Tab can focus the table and the bottom row shows its controls. [Keyboard decoding](interrupts.md) · [Table editing](screen.md#editing-a-table-with-the-keyboard)
 
 ## The name
 
@@ -104,7 +104,7 @@ Code: `model_ask`, `model_say` and `chat_answer` in `src/chat.rs`; the tools in 
 ## Apps
 
 - **When the model asks for a new app** (the tool `make_app`), the kernel asks the model again, for the app itself, and says so at once: `Kernel: I am asking the model to make "a dice that rolls".` The answer comes later as a row of its own.
-- **The script the model wrote is not put in the chat box.** The row says how many lines it has, and the terminal shows it, line by line. `chat_answer` hands it to `app_print_script` for that, and then runs it with `app_run`, here in the main loop, and says a second row of its own about how the run went, such as `Kernel: the app ran to its end.` While the app runs, nothing is painted in the chat box and keys wait in the keyboard's line; what the app shows appears in the box in the middle of the screen.
+- **The script the model wrote is not put in the chat box.** The row says how many lines it has, and the terminal shows it, line by line. `chat_answer` hands it to `app_print_script` for that, and then runs it with `app_run`, here in the main loop, and says a second row of its own about how the run went, such as `Kernel: the app ran to its end.` While the app runs, nothing is painted in the chat box and keys wait in the keyboard's line; what the app shows appears in the box below the panel of apps.
 - **When the model asks for a kept app** (the tool `run_app`), it runs as it was kept, with the row `Kernel: I am running the app made for "a dice that rolls".` before it and the row about how the run went after it. Nothing is asked of the model for that, and nothing is written.
 - **An app that ran to its end is kept on the disk** (`app_keep` in `apps_kept.rs`), and the panel of apps near the top left of the screen lists it. Nothing is said in the chat box when it is kept; a third row comes only if it could not be, such as `Kernel: I could not keep the app, because the notebook is full.` At every start, `chat_begin` ends by finding the kept apps again and showing the panel, if any app is kept.
 

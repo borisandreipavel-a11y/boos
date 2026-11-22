@@ -1224,6 +1224,41 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 - A dice app's actual roll matched the display, the follow-up request and the record sent with the next line. Running the kept app after a restart took one request. A change of look also took one. A repeated call with the same app number written two ways ran at most once. A tool sent on the final round had no effect. A refused follow-up ended the line with the refusal in memory.
 - A stopped kept app assembled part of the test key at run time. Its displayed text and error reached the stand-in with that part starred. A line typed during the follow-up was turned away. Sending `setup` discarded the late reply. A deliberate change that offered tools on the final round was caught by the check of the request body.
 - In a run of 22 typed lines, the oldest lines were dropped as the record filled. All nine follow-up requests kept the earlier history and the pending results within 8,000 bytes together. On a machine with no screen, the result of a call to show text correctly said that nothing appeared.
+- The live run confirmed that the model reported the dice result shown on screen and stopped. A clean export of `a68d0ba` matched all 704 tracked files. Both builds finished in about 63 seconds without a warning. The interpreter matched byte for byte, and the kernels matched after masking linker timestamps and the CodeView ID. The exported kernel reached the prompt in 35 lines on a freshly divided disk.
+
+**Drawing a table**
+
+- In QEMU at 1280 by 800, the fruit table, its frame, the apps panel and the relocated app box matched the expected screen pixel for pixel. When the look changed to Paper, the table repainted. After a restart the app was still listed and the table was gone. A deliberate break that kept unreadable ink was caught by the same screen comparison.
+- The next typed line, `change pear to 7`, sent the displayed fruit table to the stand-in. It changed 3 to 7 and drew the complete table again. The screen matched the expected result pixel for pixel, including the other row and formatting. The next request carried the revised value.
+- A cut-off description drew two complete rows and discarded its incomplete row. A malformed description and a description over the size limit left that table in place. A new table with seven headings and twenty rows showed six columns and fourteen rows. The model received the clipping notices.
+- At 1024 by 768, thirteen rows fit and a piece of the test key in the title stayed starred even when sent as JSON escapes. On an 800-by-600 screen the request omitted the drawing tool. An unsolicited drawing call was refused and the screen stayed free of a frame. A start without a screen also omitted the drawing tool and still handled chat.
+- The follow-up for a clipped table carried the visible rows. Forgetting the conversation cleared the frame. The next request carried neither the table nor the old chat history.
+
+**Diagrams**
+
+- In QEMU at 1024 by 768, a streamed request drew a three-step flowchart after its full description arrived. The next request carried that description and changed a label. The pictures matched the expected rectangle outlines, arrows, lines and labels pixel for pixel.
+- Strokes at the boundary stayed inside the frame. An out-of-bounds rectangle left the previous diagram in place. The diagram survived showing and closing the kernel's lines. Escape dismissed it, and over an open table it revealed the table with the saved record unchanged.
+
+**Bar charts**
+
+- A streamed tool call charted a saved table on the 1024-by-768 screen. The chart used signed and zero values, including digits clipped in the table view. QEMU showed the first 13 of 14 rows with the expected scale and values.
+- An invalid numeric column left the chart in place. The chart repainted in Night, and Tab restored the source table. Its notebook record stayed byte for byte the same. A chart from an unsaved draft also matched the expected screen.
+
+**Streaming chat**
+
+- The stand-in paused a text reply between events. QEMU showed the safe prefix before the provider sent the rest. The completed reply appeared once in the terminal with usage counts, and the fabricated key split across the events was masked.
+- A chunked tool reply split an event across HTTP chunks and split the chunk header across writes. The first and second complete rows appeared while the third was still pending. The finished table appeared in the next request.
+- An in-stream error removed the temporary table and restored the previous one. A rename call that ended without `[DONE]` left the saved document and its name unchanged.
+
+**Saved table documents**
+
+- In QEMU, the tools saved a draft by name and created a second document in one request. A duplicate name with different capitalization kept the original intact. Both names were listed after restart. Opening the fruit budget and asking to change Pear from 3 to 7 produced the expected screen pixel for pixel. The notebook held the edited document and the unchanged second document. Another restart opened the fruit budget with 7 still in the edited cell.
+- On a 1024-by-768 screen, the second list page matched the expected display. The tool opened a table with more rows and wider cells than would fit. The full description went with the edit, and the changed last row was saved in a multi-entry value without dropping other rows.
+- A full notebook refused a larger update. The previous document matched the expected screen pixel for pixel and remained the newest whole version on disk. The next request still carried that version.
+- Renaming an open document kept its data and changed the name on the screen and after restart. A case-insensitive collision was refused. Deleting a different document left the open table in place. Deleting the open document cleared the table and the empty list. A new document could reuse a deleted name, and after restart only the new one appeared.
+- In the keyboard editing test, Backspace changed `Pear` to `Pea` and Escape restored the original. Backspace on a clipped cell removed the final character of its full value. Editing preserved the chat draft and off-screen data. No request went to the provider while editing. The next chat request carried the new value, and reopening after restart showed it. A draft also kept its keyboard edit when saved under a name. The chat and Shift regression passed.
+- With a full notebook, Enter reported the failed save and kept the replacement open for editing. Canceling showed the original value. The notebook still held the original document, and only the chat line that opened it sent a request.
+- A QEMU trace of drawing calls checked keyboard repaints after opening a table. A move repainted the two affected cells, typing repainted one, and an arrow at the edge did no drawing. Saving repainted the selected cell and updated the chat instruction.
 
 **Intel's network card**
 

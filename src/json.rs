@@ -21,6 +21,8 @@ pub enum Step<'a> {
 }
 
 // Why a text could not be found.
+const TEXT_ENDED: &str = "the input ended inside a text";
+
 pub const NOT_JSON: &str = "it is not sound JSON";
 pub const NOT_THERE: &str = "it has no such part";
 pub const NOT_A_TEXT: &str = "that part of it is not a text";
@@ -85,6 +87,32 @@ pub fn json_find_text(json: &[u8], path: &[Step]) -> Result<String, &'static str
     }
 }
 
+// A table description cut by the model's answer limit may have an unclosed
+// string. Keep only the complete lines it had reached. The ordinary reader
+// remains strict, including for every other tool. If the string itself is
+// whole but its closing braces were cut, keep the whole string.
+pub fn json_find_cut_text(json: &[u8], path: &[Step]) -> Result<String, &'static str> {
+    let mut reader = reader_at(json, path)?;
+    if reader.take() != Some(b'"') {
+        return Err(NOT_A_TEXT);
+    }
+    let mut bytes = Vec::new();
+    match reader.text_bytes(&mut bytes) {
+        Ok(()) => {
+            reader.skip_space();
+            if reader.peek().is_some() {
+                return Err(NOT_JSON);
+            }
+        }
+        Err(TEXT_ENDED) => {
+            let end = bytes.iter().rposition(|&byte| byte == b'\n').map_or(0, |place| place + 1);
+            bytes.truncate(end);
+        }
+        Err(reason) => return Err(reason),
+    }
+    String::from_utf8(bytes).map_err(|_| NOT_PROPER_TEXT)
+}
+
 // Finds one whole number in a piece of JSON, such as how many tokens an
 // answer took. `path` says where, as for `json_find_text`. Only digits alone
 // make such a number: one with a minus sign, a point or a power of ten is not
@@ -101,6 +129,19 @@ pub fn json_find_number(json: &[u8], path: &[Step]) -> Result<u64, &'static str>
         Some(byte) if value_starts(byte) => Err(NOT_A_NUMBER),
         _ => Err(NOT_JSON),
     }
+}
+
+// Borrows a complete JSON value, with its surrounding brackets checked.
+pub fn json_find_value<'a>(json: &'a [u8], path: &[Step]) -> Result<&'a [u8], &'static str> {
+    let mut reader = reader_at(json, path)?;
+    if !reader.peek().is_some_and(value_starts) {
+        return Err(NOT_JSON);
+    }
+    let start = reader.at;
+    reader.skip_value()?;
+    let end = reader.at;
+    reader.rest_closes(path.len())?;
+    Ok(&json[start..end])
 }
 
 // Goes along `path` from the start of a piece of JSON, and gives back a reader
@@ -301,9 +342,14 @@ impl Reader<'_> {
     // quote and gives it back as plain text.
     fn text(&mut self) -> Result<String, &'static str> {
         let mut out: Vec<u8> = Vec::new();
+        self.text_bytes(&mut out).map_err(|reason| if reason == TEXT_ENDED { NOT_JSON } else { reason })?;
+        String::from_utf8(out).map_err(|_| NOT_PROPER_TEXT)
+    }
+
+    fn text_bytes(&mut self, out: &mut Vec<u8>) -> Result<(), &'static str> {
         loop {
             match self.take() {
-                Some(b'"') => break,
+                Some(b'"') => return Ok(()),
                 Some(b'\\') => {
                     let sign = match self.take() {
                         Some(b'"') => '"',
@@ -315,6 +361,7 @@ impl Reader<'_> {
                         Some(b'b') => '\u{8}',
                         Some(b'f') => '\u{c}',
                         Some(b'u') => self.numbered_sign()?,
+                        None => return Err(TEXT_ENDED),
                         _ => return Err(NOT_JSON),
                     };
                     let mut room = [0u8; 4];
@@ -323,11 +370,9 @@ impl Reader<'_> {
                 // A control sign may not stand in a text as it is.
                 Some(byte) if byte < 0x20 => return Err(NOT_JSON),
                 Some(byte) => out.push(byte),
-                None => return Err(NOT_JSON),
+                None => return Err(TEXT_ENDED),
             }
         }
-        // The bytes between the quotes have to be proper text (UTF-8).
-        String::from_utf8(out).map_err(|_| NOT_PROPER_TEXT)
     }
 
     // Behind `\u`: reads the four digits that give a sign's number. Signs
@@ -390,6 +435,7 @@ impl Reader<'_> {
                 Some(byte @ b'0'..=b'9') => byte - b'0',
                 Some(byte @ b'a'..=b'f') => byte - b'a' + 10,
                 Some(byte @ b'A'..=b'F') => byte - b'A' + 10,
+                None => return Err(TEXT_ENDED),
                 _ => return Err(NOT_JSON),
             };
             number = number * 16 + digit as u32;

@@ -31,7 +31,7 @@ MODEL_KINDS = ("wrongkey,credit,echo,echopart,echoescaped,echocut,good,goodlong,
                "nocontent,oddending,noending,blank,echo200,nochoices,streamed,otherform,echobody,notfound,upstream,upstreambare")
 
 # Kernel files that only some suites go through. Every other file in src/ is on the path of every start.
-STAND_IN = ["src/model.rs", "src/page.rs", "src/errand.rs"]  # asking the provider (the stand-in in tests)
+STAND_IN = ["src/model.rs", "src/model/stream.rs", "src/page.rs", "src/errand.rs"]  # asking the provider (the stand-in in tests)
 APPS = ["src/apps.rs"]
 SECRET = ["src/secret.rs"]  # a key or a password typed and kept
 
@@ -68,7 +68,7 @@ SUITES = [
     # Every line to the model, in the stand-in copy, whose stand-in answers each line with words or a tool call
     # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
-         seconds=dict(cancel=55, results=85, nokey=30, words=80, dice=70, pages=45, odd=100, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
+         seconds=dict(streaming=80, documents=125, documents_fit=90, documents_full=60, documents_names=150, document_keys=100, document_keys_full=35, drawing=85, chart=105, diagram=105, table_cut=80, table_medium=40, table_small=60, cancel=55, results=85, nokey=30, words=80, dice=70, pages=45, odd=100, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
                       bound=125)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
@@ -116,7 +116,7 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 28,
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 29,
                 "intel": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -245,6 +245,7 @@ CAUGHT_BY = {
     'break lines: the report left off the stop screen': 'stop-own',
     "break lines: a failure early on painted in the lines' colours": 'stop-firmware',
     'break lines: no stop screen while the lines cover the screen': 'stop-view',
+    'break tools: faint_table': 'tools-drawing fruit',
     'break tools: lasttools': 'results last ask has no tools',
     'break tools: echo': "tools-nokey 'hello'",
     'break tools: nokeycheck': "tools-nokey 'hello'",

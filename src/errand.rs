@@ -23,9 +23,10 @@ pub enum Errand {
     // the kernel can do for it: the JSON that `chat_tools` in `tools.rs` made
     // when the line was sent; and with the record of what was said before it
     // (`conversation_record` in `conversation.rs`), which may be empty.
+    // The open table and current diagram are copied when the request is made.
     // Follow-ups keep the same line and put this line's results in their own block.
     // The final round leaves the tool list empty.
-    ChatLine { line: String, tools: String, record: String, results: String },
+    ChatLine { line: String, tools: String, record: String, table: String, diagram: String, results: String },
     // Ask the model to write an app. The text says which app: the request the
     // model gave with the tool `make_app` (see `tools.rs`).
     AppRequest(String),
@@ -49,6 +50,13 @@ pub struct Answer {
     pub sent: Option<String>,
 }
 
+// A snapshot of the safe text and complete table lines received so far.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ChatProgress {
+    pub words: Option<String>,
+    pub table: Option<String>,
+}
+
 // How far the one errand has got. There is room for one at a time.
 const NONE: u8 = 0; // Nothing is asked for.
 const WAITING: u8 = 1; // Asked for, and not picked up by the network's task yet.
@@ -61,6 +69,22 @@ static STATE: AtomicU8 = AtomicU8::new(NONE);
 // then switch to the other task half-way through.
 static mut ERRAND: Option<Errand> = None;
 static mut ANSWER: Option<Answer> = None;
+static mut PROGRESS: Option<ChatProgress> = None;
+
+// Keep only the latest snapshot. The main loop may be busy painting.
+pub fn errand_progress(progress: ChatProgress) {
+    let were_on = signals_off();
+    let older = unsafe { core::ptr::replace(&raw mut PROGRESS, Some(progress)) };
+    signals_back(were_on);
+    drop(older);
+}
+
+pub fn errand_progress_take() -> Option<ChatProgress> {
+    let were_on = signals_off();
+    let progress = unsafe { (*(&raw mut PROGRESS)).take() };
+    signals_back(were_on);
+    progress
+}
 
 // Whether the network's task is there and this machine has an address. Without
 // that nobody would ever pick an errand up.
@@ -112,12 +136,13 @@ pub fn errand_answer(answer: Answer) {
 // errand can be asked for.
 pub fn errand_answer_take() -> Option<Answer> {
     let were_on = signals_off();
-    let answer = if STATE.load(Ordering::Relaxed) == ANSWERED {
+    let (answer, progress) = if STATE.load(Ordering::Relaxed) == ANSWERED {
         STATE.store(NONE, Ordering::Relaxed);
-        unsafe { (*(&raw mut ANSWER)).take() }
+        unsafe { ((*(&raw mut ANSWER)).take(), (*(&raw mut PROGRESS)).take()) }
     } else {
-        None
+        (None, None)
     };
     signals_back(were_on);
+    drop(progress);
     answer
 }

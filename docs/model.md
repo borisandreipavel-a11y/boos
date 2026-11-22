@@ -1,6 +1,6 @@
 # Asking the model
 
-Code: `src/model.rs`; the lender of the key in `src/secret.rs`; the general exchange with a site in `src/page.rs`; the lines of the chat box in `src/chat.rs`. A line typed in the chat box and the request for an app go through the same file; see [tools.md](tools.md) and [apps.md](apps.md).
+The model client is in `src/model.rs` and `src/model/stream.rs`. It borrows the key from `src/secret.rs` and exchanges bytes with the provider through `src/page.rs`. [Chat tools](tools.md) · [Apps](apps.md)
 
 A model is a program that answers a question put to it in words. This kernel does not run one. It asks one over the internet, through a provider: a service that takes a question, passes it on to a model, and sends the model's answer back. The provider wants a key with every question, which says who is asking and who pays. The key is the secret that the person at the machine types into the chat box: after the line `key`, for one start, or when the onboarding asks for it, which tries it with the question below, locks it with a password and keeps it on the disk, and unlocks it again at every start with that password (see [chat.md](chat.md)).
 
@@ -53,7 +53,7 @@ A 200 whose body the kernel cannot read still counts as `Works`: the answer came
 
 ## The request
 
-One request per connection, over an encrypted link whose certificate was checked for the provider's name. It is put together like this, here for the fixed question; a line typed in the chat box and a request for an app differ only in the body (see [tools.md](tools.md) and "Asking for an app" below):
+One request per connection, over an encrypted link whose certificate was checked for the provider's name. The example shows the fixed question. App-writing uses the same headers and sends a different body. Chat lines use HTTP/1.1 and ask for an event stream. [Chat tools](tools.md)
 
 ```text
 POST /v1/chat/completions HTTP/1.0
@@ -67,8 +67,8 @@ Authorization: Bearer <the key>
 ```
 
 - `POST` hands something in at the place named behind it. The lines after it are notes: which site is meant, what form the body has, how many bytes long it is, that the connection may be closed after the answer, and the key. An empty line ends the notes, and the body follows.
-- The body is JSON. The two texts in it are written with `json_text` (see [json.md](json.md)). `max_tokens` is the longest answer the model may give (`ANSWER_TOKENS`, 1000); models count in tokens, which are pieces of words. The model can think before it answers (its page at the provider says it has a thinking and a non-thinking way, and not which it takes when nothing is said), and thinking may be paid out of the same tokens, so the limit leaves room for far more than a five-word answer. The provider is paid by the token used, not by the limit: at the model's prices in November 2026 (0.60 dollars a million tokens out, twice that in the provider's busy hours) the whole limit would cost about a tenth of a cent.
-- `"stream":false` asks for the whole answer in one piece. The provider's documentation does not say what it does when nothing is said; sent word by word, the answer would not read as JSON.
+- The body is JSON. The two texts in it are written with `json_text` (see [json.md](json.md)). `max_tokens` is the longest answer the model may give (`KEY_ANSWER_TOKENS`, 1000); models count in tokens, which are pieces of words. The model can think before it answers (its page at the provider says it has a thinking and a non-thinking way, and not which it takes when nothing is said), and thinking may be paid out of the same tokens, so the limit leaves room for far more than a five-word answer. The provider is paid by the token used, not by the limit: at the model's prices in November 2026 (0.60 dollars a million tokens out, twice that in the provider's busy hours) the whole limit would cost about a tenth of a cent.
+- `"stream":false` asks for a whole answer. The key check and app-writing requests use this setting.
 - Nothing is sent to choose thinking or not. The model's page at the provider now lists `reasoning_effort` among the settings it takes, and the model's maker says its model thinks unless told not to, but neither says which values the provider passes on for this model; a value it does not take could make it refuse every question. The terminal's line about the tokens of each answer to a line or an app shows how much went on thinking (see [tools.md](tools.md)).
 - The length note counts bytes, not signs.
 - `HTTP/1.0` and `Connection: close` ask the provider to close the connection after its answer, which is how the kernel knows the answer is over.
@@ -97,7 +97,15 @@ Connection: close
 - With any other number, the reason is looked for at `error` then `message`, then at `error` as a text, then at `message`. A number from 500 to 599 is "the provider could not answer", any other "the provider turned the question down". The provider's page for the model gave an error rate of about 5 in 100 over a week in November 2026, so a 502 or 503 now and then is to be expected.
 - The words are cleaned like every text from outside (`plain_text`) and cut at 300 signs (`WORDS_SHOWN`). Only the signs that are said, and as many behind them as the key is long, are cleaned and searched for the key: a piece of the key that begins among the signs that are said ends among those.
 - The reader takes bytes from outside, so it reads them with `get` and the JSON reader's rules; see [json.md](json.md). 11,499 damaged and made-up answers were put through it; see [testing.md](testing.md).
-- An answer sent in pieces with their lengths in between (the web calls it "chunked") is not put together again: its body does not read as JSON, and the sentence is "I could not read why". The provider did not answer that way.
+- The buffered reader reads the body as JSON. HTTP chunk framing is decoded for chat event streams, as described below.
+
+## Streaming a chat reply
+
+Chat requests use HTTP/1.1 with `Connection: close`, `"stream":true` and `"stream_options":{"include_usage":true}`. The two request types that use HTTP/1.0 still ask for whole replies. An ordinary JSON reply to a chat request goes through the buffered reader.
+
+A successful `text/event-stream` response can use a content length, HTTP chunks or a body that ends when the connection closes. Network reads can split either an HTTP chunk or a data line. The reader joins those pieces, ignores keep-alive comments and reads the JSON after `data:`. `[DONE]` ends the exchange, even when the server keeps the connection open. Usage counts go to the terminal when the provider supplies them. The 60-second exchange limit still applies. [OrcaRouter streaming](https://docs.orcarouter.ai/advanced/streaming)
+
+The first choice supplies text in `delta.content` and tool input in `delta.tool_calls`. Arguments build up by tool index. The kernel collects only the first tool and records whether there were more. Text previews hold back a few signs to mask key fragments split across events. Thinking is left out of the preview and transcript. Tool execution waits for a complete response. An in-stream error or missing end marker leaves saved documents intact and removes an unfinished table preview. A completed response that ended at its token limit can still draw the complete rows it supplied. [DeepSeek chat completions](https://api-docs.deepseek.com/api/create-chat-completion/)
 
 ## The key
 

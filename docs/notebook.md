@@ -115,6 +115,9 @@ Apps the model made are kept under the names `app 1`, `app 2` and so on, by `app
 - On a machine with no disk, no part of the kernel's own, or a notebook that cannot be added to, the chat box says nothing about keeping; the lines at startup have said it.
 - The kept line comes from the disk, so it is treated as text from outside: at most 50 signs of it are shown, and every byte that is not a plain sign becomes a dot.
 
+
+A saved table has a stable notebook key so renaming it takes one write. New keys are `document ` followed by a number. Older keys beginning with `table ` still open. Format 1 uses the name in the key and stores the description after its format byte. Format 2 puts the name length and the name before the description. A rename or update writes format 2 under the existing key. Deletion appends a value containing only format byte 3, which removes the document from the list. Older entries stay in the append-only notebook. An interrupted write leaves the previous complete value available. [Saved table documents](tools.md#saved-table-documents)
+
 ## What a boot prints
 
 One line, after the line about the kernel's own part and before the count of starts:

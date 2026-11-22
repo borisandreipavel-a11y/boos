@@ -85,7 +85,7 @@ def M(words, *after):
     return ["Model: " + hide(clean(words.strip()), KEY)[:300]] + ["Kernel: " + sentence for sentence in after]
 
 
-CUT = "the model's answer was cut off at the limit of 1000 tokens."
+CUT = "the model's answer was cut off at the limit of 4000 tokens."
 HELD = "the provider held part of the model's answer back."
 
 # The rows meant for each behaviour of the stand-in, in order.
@@ -109,15 +109,15 @@ MEANT = {
     "huge": K("no answer came that I could read, because the provider's answer is larger than the room for it"),
     "silent": K("no answer came, because the site took too long"),
     "empty": K("no answer came, because the provider sent nothing"),
-    "lengthempty": K("the model's answer was empty, because it spent all of its 1000 tokens thinking."),
-    "lengthnull": K("the model's answer was empty, because it reached the limit of 1000 tokens."),
+    "lengthempty": K("the model's answer was empty, because it spent all of its 4000 tokens thinking."),
+    "lengthnull": K("the model's answer was empty, because it reached the limit of 4000 tokens."),
     "nullthink": K("the model's answer was empty."),
     "pieces": M("Hello in pieces, my friend."),
     "lengthwords": M("Hello there, my good", CUT),
     "filtered": K("the model's answer was empty, because the provider held it back."),
     "filteredwords": M("Hello", HELD),
     "spaces": M("\n\n  Hello world, nice to meet you.\n"),
-    "nocontent": K("the model's answer was empty, because it spent all of its 1000 tokens thinking."),
+    "nocontent": K("the model's answer was empty, because it spent all of its 4000 tokens thinking."),
     "oddending": M("Hi, hello, greetings, hey, howdy."),
     "noending": M("Five words of hello here."),
     "blank": K("the model's answer was empty."),
@@ -259,7 +259,7 @@ def main():
         if note.get("request for") == "a line":
             record = chat.records[lines_seen] if lines_seen < len(chat.records) else None
             lines_seen += 1
-            body_right = record is not None and note.get("body") == body_meant(LINE, [], record=record, key=KEY)
+            body_right = record is not None and note.get("body") == body_meant(LINE, [], record=record, key=KEY, writable=bool(os.environ.get("DIVIDED_DISK")))
         else:
             body_right = note.get("body as meant") is True
         for what, right in (("body as meant", body_right),

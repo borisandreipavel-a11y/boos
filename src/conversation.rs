@@ -16,6 +16,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::drawing::table_forget;
+
 // How many lines are remembered, each with what came of it. When a newer one
 // comes, the oldest goes.
 const LINES_REMEMBERED: usize = 10;
@@ -124,6 +126,7 @@ pub fn conversation_row(row: &str) {
 // which may mean that another person is at the machine. A line whose answer
 // is still awaited is forgotten too, when its answer comes.
 pub fn conversation_forget() {
+    table_forget();
     exchanges_put(Vec::new());
     unsafe {
         OPEN = false;

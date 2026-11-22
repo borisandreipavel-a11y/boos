@@ -97,6 +97,13 @@ REQUEST_45 = "a dice that rolls and shows the number it got"
 LONG_REASON = "This key may not ask for that, and here is a long reason why. " * 8
 
 
+FLOWCHART = "\n".join((
+    "ink #eeeeee", "rect 56 24 186 46", "rect 56 117 186 46", "rect 56 210 186 46",
+    "arrow 149 73 149 113", "arrow 149 166 149 206",
+    "ink default", "text 119 38 Start", "text 113 131 Review", "text 125 224 Done",
+))
+
+
 def answer(kind, line, bearer):
     """Gives (bytes to send, how to end) for a behaviour, or None if `kind` is none of these."""
     name, _, given = kind.partition("=")
@@ -119,6 +126,13 @@ def answer(kind, line, bearer):
         return good(body(message("Rolling it for you.", [call("run_app", {"app": int(given)})]), "tool_calls")), "goodbye"
     if name == "look":
         return good(body(message(None, [call("pick_look", {"look": int(given)})]), "tool_calls")), "goodbye"
+    if name == "table":
+        return good(body(message(None, [call("draw_table", {"table": given})]), "tool_calls")), "goodbye"
+    if name in ("tablecut", "tablejson"):
+        ending = "length" if name == "tablecut" else "tool_calls"
+        return good(body(message(None, [call("draw_table", given)]), ending)), "goodbye"
+    if name in ("draw_diagram", "chart_table", "save_table", "open_table", "update_table", "rename_table", "delete_table", "turn_document_page"):
+        return good(body(message(None, [call(name, json.loads(given))]), "tool_calls")), "goodbye"
     if name == "turn":
         return good(body(message(None, [call("turn_page", {"page": int(given)})]), "tool_calls")), "goodbye"
     if name == "two":

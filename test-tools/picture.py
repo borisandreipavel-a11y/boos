@@ -18,6 +18,7 @@ WHITE = (255, 255, 255)
 ORANGE = (255, 150, 0)
 BLACK = (0, 0, 0)
 PANEL_INSIDE = (240, 240, 240)
+APP_BOX_LEFT, APP_BOX_TOP = 40, 258
 
 # The chat box's look, typed in here by hand.
 CHAT_ROWS = 6
@@ -109,8 +110,7 @@ class Picture:
     def panel(self, text, look=None):
         look = look or LOOK_COLOURS["Blue"]
         width, height, frame = 520, 60, 3
-        left = self.width // 2 - width // 2
-        top = self.height // 2 - height // 2
+        left, top = APP_BOX_LEFT, APP_BOX_TOP
         self.rectangle(left, top, width, height, look["panel_frame"])
         self.rectangle(left + frame, top + frame, width - 2 * frame, height - 2 * frame, look["panel_inside"])
         self.text(left + 20, top + 21, text[:40], 2, look["panel_text"])
@@ -264,9 +264,9 @@ def expected(width, height, chat, panel_text="Hello from a Lua script!!!"):
     if panel_text is not None:
         picture.panel(panel_text, look)
         # The parts must not lie on top of each other on this screen.
-        panel_bottom = height // 2 - 30 + 60
+        panel_bottom = APP_BOX_TOP + 60
         assert panel_bottom <= box[1], "the panel and the chat box overlap"
-        assert 40 + 18 <= height // 2 - 30, "the sentence and the panel overlap"
+        assert 40 + 18 <= APP_BOX_TOP, "the sentence and the panel overlap"
     return picture
 
 

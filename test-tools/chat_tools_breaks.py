@@ -5,6 +5,8 @@ name."""
 from apps_kept_breaks import swap
 
 BREAKS = {
+    # Low-contrast text is painted with the ink the model chose.
+    "faint_table": {"drawing.rs": swap("if 2 * lighter", "if true || 2 * lighter")},
     # The final chat round still invites the model to call a tool.
     "lasttools": {"chat.rs": swap("if round.number < LAST_ROUND { chat_tools() }", "if round.number <= LAST_ROUND { chat_tools() }")},
     # --- Where a line goes ---
@@ -20,7 +22,8 @@ BREAKS = {
     # The kept apps are not offered.
     "norunlist": {"tools.rs": swap("    if !apps.is_empty() {\n", "    if false {\n")},
     # The page of the panel cannot be turned.
-    "nopagetool": {"tools.rs": swap("    if pages > 1 {\n", "    if pages > 9 {\n")},
+    "nopagetool": {"tools.rs": swap("    if pages > 1 {\n        tools.push(',');\n        tools.push_str(&turn_page_tool",
+                                    "    if pages > 9 {\n        tools.push(',');\n        tools.push_str(&turn_page_tool")},
     # --- What the model answers ---
     # The model's words look like the kernel's own.
     "kernelwords": {"chat.rs": swap('    let row = format!("Model: {}", words);', '    let row = format!("Kernel: {}", words);')},
@@ -32,7 +35,7 @@ BREAKS = {
     # Nothing is said when the model asks for two things.
     "nomore": {"chat.rs": swap("                if reply.more {\n", "                if false {\n")},
     # The key is not hidden in what the model gives a tool.
-    "nokeyhide": {"model.rs": swap("        key_hide(&mut inputs, key);\n", "")},
+    "nokeyhide": {"model.rs": swap("    key_hide(&mut inputs, key);\n", "")},
     # --- Doing the tools ---
     # A kept app asked for is made again instead of being run.
     "remake": {"tools.rs": swap("            Ok((request, script)) => {",
@@ -75,6 +78,7 @@ BREAKS = {
 }
 
 CATCH = {
+    "faint_table": "drawing",
     "lasttools": "results",
     "echo": "nokey",
     "nokeycheck": "nokey",

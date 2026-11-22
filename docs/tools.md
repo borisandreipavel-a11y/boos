@@ -15,18 +15,18 @@ Every line sent in the chat box goes to the model, except the two lines the kern
 A line goes to the provider like every question (see "The request" in [model.md](model.md)), with this body, shortened here:
 
 ```text
-{"model":"deepseek/deepseek-v4.1-flash-1017","messages":[{"role":"system","content":"You are the voice of ..."},{"role":"user","content":"roll the dice"}],"tools":[{"type":"function","function":{"name":"make_app",...}},...],"max_tokens":1000,"stream":false}
+{"model":"deepseek/deepseek-v4.1-flash-1017","messages":[{"role":"system","content":"You are the voice of ..."},{"role":"user","content":"roll the dice"}],"tools":[{"type":"function","function":{"name":"make_app",...}},...],"max_tokens":4000,"stream":true,"stream_options":{"include_usage":true}}
 ```
 
 - **The instruction text** (`CHAT_INSTRUCTIONS`), as the system message, every time, word for word: "You are the voice of a small home-made operating system. The person at the machine types one line at a time into its chat box. You get the newest line, and below these instructions a record of the last lines before it and what came of them, if there were any. If the person asks you to forget what was said or to start over, use forget: saying so in words forgets nothing. Answer in plain words, in one or two short sentences, or use one of the tools when the person wants something done that a tool does. Use run_app for a kept app that fits the wish, and make_app only when none fits." It names no project and no person. The sentence about `forget` came after a person's run in which the real model, asked to forget what was said, answered "Done, clean slate" in words and used no tool, so that nothing was forgotten.
 - **The record of what was said before the line,** behind the instruction text in the same system message, when anything was (see "What the model remembers" below).
 - **The line**, as it was typed, as the user message; only a piece of the key in it is starred.
-- **The tools**, in this order: `make_app` always; `run_app` while any app is kept; `pick_look` always; `turn_page` while the panel of apps has more than one page; `forget` while anything is remembered. The list and the record are made by the main loop when the line is sent (`chat_tools`, `conversation_record`), because only the main loop may read the kept apps and what is remembered, and they travel to the network's task with the errand (`Errand::ChatLine`).
-- **1000 tokens at most** for the answer (`ANSWER_TOKENS`), as for the fixed question; a model that thinks pays its thinking out of them.
+- **The tools**, in this order: `make_app` always; `run_app` while any app is kept; `pick_look` always; `turn_page` while the panel of apps has more than one page; `draw_table` and `draw_diagram` if a frame fits on the screen; `chart_table` while a table with at least two columns and a data row is open; the saved document tools for the notebook in use; `forget` while anything is remembered. The list and the record are made by the main loop when the line is sent (`chat_tools`, `conversation_record`), because only the main loop may read the kept apps and what is remembered, and they travel to the network's task with the errand (`Errand::ChatLine`).
+- **4000 tokens at most** for a chat answer (`ANSWER_TOKENS`). A model that thinks pays its thinking out of them.
 - **Nothing else is sent:** no `tool_choice`, no `parallel_tool_calls`, no `strict`, and nothing about thinking. Each would be a risk that only a paid request could show: the model's maker says that `tool_choice` set to `required` or to one tool gives a 400 while the model thinks, and its reference does not list `parallel_tool_calls`; the provider's documentation does not say what `strict` does.
-- **Its size:** about 1,700 bytes with no app kept and nothing remembered (1,723 for the line `roll the dice`). The first kept app adds the tool `run_app`, some 330 bytes, and each further app its number and request in its sentence and its number in the list of numbers, some 20 to 60 bytes. Once anything is remembered, the record adds its rows and some 180 bytes before them, and the tool `forget` 360 bytes: the line `make it roll two dice` with the record of the example below, and no app kept, comes to 2,474 bytes.
+- The list grows when the screen can draw tables, when apps are kept or when earlier lines are remembered. Each kept app adds its number and request to the list of apps the model can run.
 
-## The five tools
+## The tools
 
 Each is written out by hand in `tools.rs`, as JSON (see [json.md](json.md)), with every text in it written with `json_text`.
 
@@ -67,27 +67,74 @@ Each is written out by hand in `tools.rs`, as JSON (see [json.md](json.md)), wit
 
 - `Kernel: the panel of apps shows page 2 of 2.` and the panel is painted again (`apps_page_turn` in `apps_kept.rs`). A page that is not there: `Kernel: the model asked for page 5 of the panel of apps, but it has 2 pages.` The panel goes back to its first page when an app is kept and at every start.
 
+### `draw_table`, a table beside the apps
+
+The tool takes one text input, `table`. Start with any of the optional shape lines, then give column headings and one line per row. The tool tells the model the available rows and characters. For example, on a screen that fits two columns:
+
+```text
+title Fruit
+colours head #eeeeee rows #102030
+widths 8 5
+head Fruit | Count
+row Pear | 3
+row Plum | 5
+```
+
+The first `row` ends the shape lines. The headings determine the column count, up to six. Usable `widths` give each column its character count. Otherwise the kernel divides the space evenly. A missing cell is blank. The kernel trims the text, stars pieces of the key and changes other bytes outside plain ASCII to dots. It clips long cells and drops extra cells and rows below the frame. The five colour names are `head`, `head-letters`, `rows`, `letters` and `lines`. Missing or invalid colours use the current look.
+
+A description can be up to 2,048 bytes, in tool arguments of up to 4,096 bytes. When the provider returns whole JSON and says the answer reached the token limit, the reader can use the complete lines of a cut-off description. An unreadable description, a missing heading or a screen without space leaves the previous table in place. The kernel follows up with the model when it clipped a table or refused to draw it. A table that fits usually finishes in one request. [The screen](screen.md#tables-beside-the-apps)
+
+Once a draft is drawn, chat requests include its current description separately from the conversation history. It contains the title, visible headings and cells, and any colours and widths the tool specified and the kernel accepted. Pieces of the key are starred again before sending. For an edit to a draft, the model calls `draw_table` with the entire revised table, keeping the other values and formatting. The next request sees the updated table.
+
+### `draw_diagram`, a diagram beside the apps
+
+The `drawing` input holds up to 48 shapes and 2048 bytes, with one command to a line. Coordinates count dots from the top left of the inner drawing area. The tool advertises its width and height for the current screen.
+
+- `rect X Y WIDTH HEIGHT` draws an outline.
+- `line X1 Y1 X2 Y2` joins two points.
+- `arrow X1 Y1 X2 Y2` puts an arrowhead at the second point.
+- `text X Y LABEL` draws a plain ASCII label with 12 dots per character and 18 dots in height.
+- `ink #rrggbb` sets the colour for following shapes, and `ink default` restores the look's ink. The renderer adjusts ink that would be hard to read.
+
+The kernel checks every line before drawing. The current diagram goes with later chat requests so the model can revise it by sending a complete new description. It occupies the frame until another picture is drawn or it is closed. An open table remains available underneath. [Screen controls](screen.md#diagrams-in-the-drawing-frame)
+
+### `chart_table`, a bar chart from an open table
+
+Give `label_column` and `value_column` as two different column positions, counting from 1. The value column must contain plain whole numbers or signed decimals with up to six fractional digits. Each row makes a bar in table order. An empty label appears as its row number. The kernel reads the original cell values and reports the row if a number is missing or invalid.
+
+The result occupies the drawing frame. It keeps the open table and any saved document data intact. The chat continues to carry the table so the model can answer questions about it. Opening or drawing another table replaces the chart, and **Tab** or **Escape** returns to the source table. [Screen controls](screen.md#bar-charts-from-tables)
+
+### Saved table documents
+
+Ask to save the table on screen under a name, or ask for a new table and a name together. `save_table` accepts a `name` and an optional complete `table` in the drawing format. If the person leaves the name to the model, it chooses a short one. Names hold up to 26 plain characters. Capitalization is ignored when matching an existing name.
+
+Ask to open a saved name with `open_table`. The current page of the saved list goes with the tool, and a name on another page can be opened directly. Ask for another page to browse the list with `turn_document_page`. The chat continues to send the name and complete description of the open document, including rows and cells beyond the screen. A request to the model can therefore contain both saved names and the data from the open document.
+
+Edits to the open saved document use `update_table` with the full revised description. The kernel checks the description, saves it, and then shows the new version. A failed write leaves the previous version open. Saving under a name that already exists asks the person to open it before editing. A newly drawn draft has its own contents. [The notebook](notebook.md)
+
+Ask to rename a document with `rename_table` and give its existing name and the new one. The name changes in the list and the contents stay with it. An open document stays open under its new name. A name already used by another document is refused. Ask to delete a whole document with `delete_table` and give its name. Deleting the open document closes its table. The name is available for a new document after deletion. Both changes survive a restart.
+
 **`forget`: start afresh.** Offered only while anything that was said is remembered.
 
 ```text
-{"type":"function","function":{"name":"forget","description":"Forgets everything said before the newest line, so that the next line starts afresh. Only this tool makes the system forget; saying so in words does not. Use it whenever the person asks to forget what was said, to start over, or for a clean slate.","parameters":{"type":"object","properties":{}}}}
+{"type":"function","function":{"name":"forget","description":"Forgets everything said before the newest line and clears the table on screen, so that the next line starts afresh. Only this tool makes the system forget; saying so in words does not. Use it whenever the person asks to forget what was said, to start over, or for a clean slate.","parameters":{"type":"object","properties":{}}}}
 ```
 
 - It needs no inputs, and what the model gives it is not read.
-- Everything remembered is forgotten, the line that asked for it too, and then: `Kernel: I forgot what was said so far. The next line starts afresh.` That row is not remembered either, so the next line goes with nothing, and without this tool.
+- The kernel closes the current table and forgets the conversation, including the line that asked for it. It then says `Kernel: I forgot what was said so far. The next line starts afresh.` That row is not remembered either, so the next line goes with nothing, and without this tool.
 
 ## The answer
 
-- **Where the kernel looks,** from the provider's documentation and the model's maker's: the model's words at `choices`, the first of them, `message`, `content`, as for every answer; a tool it asks for at `choices`, the first, `message`, `tool_calls`, the first, `function`, with the tool's `name` and its inputs at `arguments`, a text that is itself JSON. Whether a second tool call stands there is only looked at.
+- **Streaming replies** carry the model's text in `choices[0].delta.content` and tool fragments in `choices[0].delta.tool_calls`. For a buffered reply, the same fields are in `choices[0].message`. Each tool's `function.arguments` holds another piece of JSON. Live text and complete drawing rows can appear before the stream ends. The final reply is the one recorded in chat history. [Stream format](model.md#streaming-a-chat-reply)
 - **The model's words** are said as a row of their own that begins with `Model:`, so that they cannot be taken for the kernel's own sentences: cleaned like every text from outside, the key hidden, cut at 300 signs. Words and a tool may come together: the words first, then the tool is done.
 - **Only the first tool is done.** When the model asks for more than one, `Kernel: the model asked for more than one thing at once, so I do only the first.` comes before it.
 - **What the model asks for comes from outside, and is checked before anything is done:**
-  - only the five names above count: any other gets `Kernel: the model asked for something I cannot do: "...".`, with the name cleaned and cut at 64 signs;
+  - unknown tools get `Kernel: the model asked for something I cannot do: "...".`, with the name cleaned and cut at 64 signs;
   - the inputs are held to 1,024 bytes (more counts as none), the key is hidden in them, and they are read with the JSON reader, which takes nothing on trust; the model's maker warns that its model does not always write sound JSON there;
   - a number may come as a number or as a text of digits alone;
   - inputs that cannot be read get a row of their own, such as `Kernel: the model asked to run a kept app, but I could not read which one.`;
   - a request for an app is cleaned byte by byte like every text from outside (every byte that is not a plain sign becomes a dot), spaces at either end go, and it is cut at 45 signs, before it is shown, sent on, or kept; an empty one gets `Kernel: the model asked for an app, but did not say what it should do.`
-- **An answer cut off or held back** is said after the words: `Kernel: the model's answer was cut off at the limit of 1000 tokens.` A good answer with neither words nor a tool is said as for the fixed question: empty (with the reason, such as `because it spent all of its 1000 tokens thinking`), or, if its shape is not the documented one, with its first 160 signs. Any other answer (a refusal, a mistake on the provider's side, no answer) is said as for the fixed question (see [model.md](model.md)).
+- **An answer cut off or held back** is said after the words: `Kernel: the model's answer was cut off at the limit of 4000 tokens.` A good answer with neither words nor a tool is said as for the fixed question: empty (with the reason, such as `because it spent all of its 4000 tokens thinking`), or, if its shape is not the documented one, with its first 160 signs. Any other answer (a refusal, a mistake on the provider's side, no answer) is said as for the fixed question (see [model.md](model.md)).
 
 ## What goes back after a tool runs
 
@@ -145,7 +192,7 @@ Prices as the model's page gave them in November 2026, per million tokens: $0.15
 
 - a request of about 600 tokens and an answer of about 40, most of the request repeated after the first line: about a hundredth of a cent; thinking, if the model thinks for some hundred tokens, a few hundredths more;
 - what is remembered goes to the provider again with every line, and is paid for each time: a row can go with up to ten later typed lines and their follow-ups. A usual record of 10 short lines is about 2,000 bytes, roughly 500 tokens, the tool `forget` (360 bytes) some 100 to 150 more, and the instruction text's sentence about it some 25 with every line; at the full price that is about 0.01 cent more per line, so that a line costs about 0.02 cent instead of about 0.01, twice that in the busy hours. The record changes the beginning of the request at every line, so the part the provider counts as repeated may be smaller than before; how much is not known;
-- each chat request has its own limit of 1000 tokens of answer at the busy price, about 0.12 cent, and the request with it, which the full record of 8,000 bytes, about 2,000 tokens, makes up to about 0.06 cent dearer;
+- each chat request has a limit of 4000 answer tokens, which cost about 0.48 cent at the busy price, and the request with it, which the full record of 8,000 bytes, about 2,000 tokens, makes up to about 0.06 cent dearer;
 - each app-writing request can add about half a cent (see [apps.md](apps.md)). A single line can use up to three chat requests and two app-writing requests.
 
 The token line in the terminal shows what each answer really took, and how much of the request was repeated.

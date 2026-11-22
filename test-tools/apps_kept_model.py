@@ -14,7 +14,7 @@ from keyed_model import KeyedChat
 from chat_tools_model import ToolsChat
 from look_values import LOOKS
 from nb import BLOCK, ENTRY_LETTERS, FIRST, LAST, head, put_block
-from picture import LETTER_HEIGHT, LETTER_WIDTH, expected
+from picture import APP_BOX_TOP, LETTER_HEIGHT, LETTER_WIDTH, expected
 
 DATA_MOST = 448                       # the most data one entry holds
 THING_MOST = 32 * 1024                # the most data one thing holds
@@ -245,7 +245,7 @@ def panel(picture, requests, page=0, look="Blue"):
         picture.text(p["left"] + p["frame"] + p["padding"], y, row[:room], p["size"], colours["panel_text"])
         y += row_height
     # It must lie under the sentence and above the box with an app's text.
-    assert p["top"] >= 40 + 18 and p["top"] + height <= picture.height // 2 - 30, "the panel of apps overlaps"
+    assert p["top"] >= 40 + 18 and p["top"] + height <= APP_BOX_TOP, "the panel of apps overlaps"
 
 
 def screen(width, height, chat, requests, page=0, panel_text="Hello from a Lua script!!!"):

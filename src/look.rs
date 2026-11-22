@@ -17,6 +17,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::documents::documents_paint;
+use crate::drawing::table_again;
 use crate::apps_kept::apps_panel_again;
 use crate::chat::chat_paint;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
@@ -345,6 +347,8 @@ pub fn look_paint() {
     chat_paint();
     screen_panel_again();
     apps_panel_again();
+    table_again();
+    documents_paint();
 }
 
 // The looks as the model is told about them with the tool `pick_look` (see

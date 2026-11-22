@@ -90,6 +90,23 @@ pub fn site_exchange(
     wait: u64,
     taker: &mut dyn FnMut(&[u8]),
 ) -> Result<bool, String> {
+    site_exchange_while(interface, card, sockets, name_server, site, request, wait, &mut |bytes| {
+        taker(bytes);
+        true
+    })
+}
+
+// A streaming answer can stop reading at the protocol's end marker.
+pub fn site_exchange_while(
+    interface: &mut Interface,
+    card: &mut Card,
+    sockets: &mut SocketSet,
+    name_server: Option<Ipv4Address>,
+    site: &str,
+    request: &[u8],
+    wait: u64,
+    taker: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<bool, String> {
     let Some(name_server) = name_server else {
         return Err("the network named no name server".into());
     };
@@ -235,7 +252,7 @@ fn conversation(
     site: &str,
     request: &[u8],
     wait: u64,
-    taker: &mut dyn FnMut(&[u8]),
+    taker: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<bool, String> {
     // This side needs a port number too. Any number from the range kept for
     // this use will do. The processor's count of its own steps picks one, so

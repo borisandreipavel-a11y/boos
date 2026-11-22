@@ -25,8 +25,8 @@ BREAKS = {
     "nocut": {"apps.rs": swap("const SCRIPT_LINE_SHOWN: usize = 200;", "const SCRIPT_LINE_SHOWN: usize = 400;")},
     # The key is not hidden in the script.
     "nohide": {"model.rs": swap("                key_hide(&mut signs, key);\n", "")},
-    # A line is sent with the app's limit of tokens (every line goes to the model, docs/tools.md).
-    "asktokens": {"model.rs": swap("json_text(&sent),\n        offered,\n        ANSWER_TOKENS", "json_text(&sent),\n        offered,\n        APP_TOKENS")},
+    # A line is sent with the fixed question's token limit (every line goes to the model, docs/tools.md).
+    "asktokens": {"model.rs": swap("json_text(&sent),\n        offered,\n        ANSWER_TOKENS", "json_text(&sent),\n        offered,\n        KEY_ANSWER_TOKENS")},
     # (No break for the word `make` and for a request without a key: the word is an ordinary line now, and a line
     # without a key is turned away before it reaches the model, which the breaks of model_breaks.py and
     # chat_tools_breaks.py named nokeycheck show.)

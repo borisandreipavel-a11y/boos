@@ -13,8 +13,10 @@ use alloc::vec::Vec;
 use crate::apps::{AppRun, app_print_script, app_run};
 use crate::apps_kept::{app_keep, apps_kept_begin};
 use crate::conversation::{conversation_follow_up, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent};
-use crate::errand::{Answer, Errand, errand_ask};
-use crate::keyboard::BACKSPACE;
+use crate::documents::documents_begin;
+use crate::drawing::{diagram_context, table_context, table_edit_hint, table_key, table_preview, table_preview_clear};
+use crate::errand::{Answer, ChatProgress, Errand, errand_ask};
+use crate::keyboard::{BACKSPACE, Key};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
@@ -88,6 +90,7 @@ enum Speaker {
 // file.
 static mut CHAT_ROWS: Vec<(Speaker, String)> = Vec::new();
 static mut CHAT_LINE: String = String::new();
+static mut STREAM_WORDS: Option<String> = None;
 
 // Rust refuses a plain reference to a `static mut`, so these two hand the
 // lists out through their addresses (`&raw mut`). Rust cannot check what
@@ -185,6 +188,12 @@ fn chat_place() -> Option<ChatPlace> {
     Some(ChatPlace { left, top, width, height, row_height, typing_top, room })
 }
 
+// The table reaches the chat box's right edge and stops above its top.
+pub fn chat_edges() -> Option<(u32, u32)> {
+    let place = chat_place()?;
+    Some((place.left + place.width, place.top))
+}
+
 // How many signs the line being typed may have on this machine: the limit,
 // or less if the screen is so narrow that fewer fit on the row. Three places
 // of the row are taken: two by the "> " in front and one by the "_" behind.
@@ -230,7 +239,15 @@ fn chat_paint_rows() {
     screen_rectangle(inside_left, inside_top, inside_width, place.typing_top.saturating_sub(inside_top), look.chat_inside);
 
     let mut top = inside_top.saturating_add(style.padding);
-    for (speaker, text) in chat_rows().iter() {
+    let room = (place.room as usize).max(1);
+    let history = chat_rows();
+    let pending = unsafe { &*(&raw const STREAM_WORDS) }.as_deref().unwrap_or("");
+    let newest = pending.as_bytes().chunks(room);
+    let skip = (history.len() + newest.len()).saturating_sub(style.rows as usize);
+    let rows = history.iter().map(|(speaker, text)| (*speaker, text.as_str())).chain(
+        newest.map(|text| (Speaker::Kernel, core::str::from_utf8(text).unwrap_or(""))),
+    );
+    for (speaker, text) in rows.skip(skip) {
         let colour = match speaker {
             Speaker::Person => look.chat_person,
             Speaker::Kernel => look.chat_kernel,
@@ -260,8 +277,12 @@ fn chat_paint_typing() {
     // The text goes in the middle between the area's top and bottom.
     let letter_height = style.text_size.saturating_mul(LETTER_HEIGHT);
     let top = place.typing_top.saturating_add(area_height.saturating_sub(letter_height) / 2);
-    let text = if stars_wanted() { secret_row() } else { format!("> {}_", chat_line()) };
-    chat_write(&place, top, &text, look.chat_person);
+    if let Some(hint) = table_edit_hint() {
+        chat_write(&place, top, hint, look.chat_person);
+    } else {
+        let text = if stars_wanted() { secret_row() } else { format!("> {}_", chat_line()) };
+        chat_write(&place, top, &text, look.chat_person);
+    }
 }
 
 // What the row being typed shows while a secret is typed: a star for each
@@ -327,8 +348,8 @@ pub fn chat_paint() {
 // question for it (see `onboarding.rs`); and the last line that was sent
 // before the machine was switched off, if the notebook on the disk holds one.
 // Before that, it puts the look kept in the notebook in use, so that all of
-// it shows in that look. Last, it finds the apps kept on the disk, for the
-// panel that lists them (see `apps_kept.rs`). Call it once at startup, after
+// it shows in that look. Last, it finds the saved apps and documents for
+// the panels that list them. Call it once at startup, after
 // the notebook is opened. Nothing is painted here: the kernel's own lines
 // cover the screen while it starts, and when the start is over the whole
 // usual picture is painted in the look in use (see `lines.rs`).
@@ -356,6 +377,7 @@ pub fn chat_begin() {
         chat_add(Speaker::Kernel, row);
     }
     apps_kept_begin();
+    documents_begin();
 }
 
 // The row that says the last line that was sent before the machine was
@@ -410,7 +432,15 @@ fn model_ask(said: &str) -> String {
     if secret_length() == 0 {
         return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
     }
-    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record(), results: String::new() }) {
+    let errand = Errand::ChatLine {
+        line: String::from(said),
+        tools: chat_tools(),
+        record: conversation_record(),
+        table: table_context(),
+        diagram: diagram_context(),
+        results: String::new(),
+    };
+    match errand_ask(errand) {
         Ok(()) => {
             unsafe { ROUND = Some(Round { number: 1, previous: None }) };
             conversation_sent();
@@ -429,6 +459,24 @@ struct Round {
 static mut ROUND: Option<Round> = None;
 const LAST_ROUND: u8 = 3;
 
+// Preview only. The final answer is what goes into the conversation and
+// the serial output. The pending round gates updates after a setup.
+pub fn chat_progress(progress: ChatProgress) {
+    let Some(round) = (unsafe { &*(&raw const ROUND) }).as_ref() else { return };
+    let newest = progress.words.map(|words| format!("Model: {}", words));
+    let live = unsafe { &mut *(&raw mut STREAM_WORDS) };
+    if *live != newest {
+        *live = newest;
+        chat_paint_rows();
+    }
+    if round.number < LAST_ROUND {
+        match progress.table {
+            Some(text) => table_preview(&text),
+            None => table_preview_clear(),
+        }
+    }
+}
+
 fn take_round() -> Option<Round> {
     unsafe { (*(&raw mut ROUND)).take() }
 }
@@ -437,7 +485,7 @@ fn ask_again(mut round: Round) {
     let Some((line, record, results)) = conversation_follow_up() else { return };
     round.number += 1;
     let tools = if round.number < LAST_ROUND { chat_tools() } else { String::new() };
-    match errand_ask(Errand::ChatLine { line, tools, record, results }) {
+    match errand_ask(Errand::ChatLine { line, tools, record, table: table_context(), diagram: diagram_context(), results }) {
         Ok(()) => {
             serial_print(&format!("Model round: {} of {}.\r\n", round.number, LAST_ROUND));
             unsafe { ROUND = Some(round) };
@@ -473,13 +521,18 @@ pub fn chat_app_result(run: &AppRun, report: bool) {
 // good answer took follows the row about the answer.
 pub fn chat_answer(answer: Answer) {
     if let Errand::ChatLine { results, .. } = &answer.errand {
+        let had_preview = unsafe { (*(&raw mut STREAM_WORDS)).take().is_some() };
         let pending = take_round();
         if results.is_empty() {
             conversation_line(answer.sent.as_deref());
         } else if pending.is_none() {
+            if had_preview { chat_paint_rows(); }
             return;
         }
         let reply = answer.reply;
+        if had_preview && answer.sentence.is_empty() && reply.as_ref().and_then(|reply| reply.words.as_ref()).is_none() {
+            chat_paint_rows();
+        }
         if let Some(words) = reply.as_ref().and_then(|reply| reply.words.as_deref()) {
             model_say(words);
         }
@@ -562,6 +615,32 @@ fn kernel_rows(rows: &[String]) {
     chat_paint_typing();
 }
 
+// The table takes keys only while the normal chat is ready to type. Wait
+// for outstanding tool work so it cannot change the table during an edit.
+pub fn chat_input(key: Key) {
+    if !stars_wanted() && !onboarding_asking() && !onboarding_waiting() && !look_asking() &&
+        unsafe { (*(&raw const ROUND)).is_none() }
+    {
+        let hint = table_edit_hint();
+        match table_key(&key) {
+            Ok(false) => {}
+            Ok(true) => {
+                if table_edit_hint() != hint {
+                    chat_paint_typing();
+                }
+                return;
+            }
+            Err(reason) => {
+                kernel_rows(&[format!("Kernel: {}", reason)]);
+                return;
+            }
+        }
+    }
+    if let Key::Text(letter) = key {
+        chat_key(letter);
+    }
+}
+
 // Takes one typed key, given as its letter. A letter is added to the line
 // being typed, Backspace takes the last one away, and Enter sends the line:
 // it moves up into what was said, and goes to the model, unless it is one of
@@ -569,7 +648,7 @@ fn kernel_rows(rows: &[String]) {
 // While the kernel waits for the answer to its question (see
 // `onboarding.rs`), or for the number of a look (see `look.rs`), the line
 // that is sent is that answer.
-pub fn chat_key(letter: u8) {
+fn chat_key(letter: u8) {
     // While the kernel waits for a secret, a key or a password, the keys go
     // there and nowhere else.
     if stars_wanted() {
@@ -640,6 +719,7 @@ pub fn chat_key(letter: u8) {
                 // line is the answer. Another person may be at the machine
                 // now, so what was said before is forgotten.
                 take_round();
+                unsafe { STREAM_WORDS = None };
                 conversation_forget();
                 onboarding_again()
             } else {

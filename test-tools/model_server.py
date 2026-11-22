@@ -19,6 +19,7 @@ then answers the request for the app. Otherwise the line gets the next behaviour
 follow-up on the same line, a behaviour prefixed with "follow:" answers it. The default is "words=Done."
 without taking the next typed line's behaviour. With no behaviour left, a line gets "words=Hello." and anything else "wrongkey"."""
 import json
+import os
 import socket
 import ssl
 import sys
@@ -187,6 +188,66 @@ def an_app_kind(kind, bearer):
     return kind.startswith("app:") or kind == "slowapp" or app_cases.answer(kind, bearer) is not None
 
 
+def stream_events(*packets):
+    return b"".join(b"data: " + json.dumps(packet, separators=(",", ":")).encode() + b"\r\n\r\n" for packet in packets)
+
+
+def delta(content=None, **fields):
+    if content is not None:
+        fields["content"] = content
+    return {"choices": [{"index": 0, "delta": fields, "finish_reason": None}]}
+
+
+def tool_delta(arguments, name=None):
+    function = {"arguments": arguments}
+    if name:
+        function["name"] = name
+    return delta(tool_calls=[{"index": 0, "function": function}])
+
+
+def stream_end(reason):
+    return stream_events({"choices": [{"index": 0, "delta": {}, "finish_reason": reason}]},
+                         {"choices": [], "usage": chat_cases.USAGE}) + b"data: [DONE]\r\n\r\n"
+
+
+def stream_answer(kind, bearer):
+    head = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\n"
+    if kind == "stream-chat":
+        return [[head + b"\r\n", b": keep-alive\r\n\r\n" + stream_events(delta("The balance is ready. " + bearer[:5]))],
+                [stream_events(delta(bearer[5:] + " is private.")) + stream_end("stop")]], "hold"
+    if kind == "stream-table":
+        first = stream_events(tool_delta('{"table":"title Fruit\\nwidths 4 5\\nhead Item|Count\\nrow Pear|3\\nrow Pl', "draw_table"))
+        second = stream_events(tool_delta("um|4\\nrow "))
+        end = stream_events(tool_delta('Fig|2"}')) + stream_end("tool_calls")
+        def chunk(data):
+            return ("%x;test=1\r\n" % len(data)).encode() + data + b"\r\n"
+        # Split an event across HTTP chunks and split the chunk size across writes.
+        first_chunk = chunk(first[:17])
+        return [[head + b"Transfer-Encoding: chunked\r\n\r", b"\n" + first_chunk[:1], first_chunk[1:] + chunk(first[17:])],
+                [chunk(second)],
+                [chunk(end) + b"0\r\n\r\n"]], "goodbye"
+    if kind == "stream-flowchart":
+        drawing = json.dumps({"drawing": chat_cases.FLOWCHART})
+        split = len(drawing) // 2
+        first = stream_events(tool_delta(drawing[:split], "draw_diagram"))
+        rest = stream_events(tool_delta(drawing[split:])) + stream_end("tool_calls")
+        return [[head + b"\r\n" + first], [rest]], "hold"
+    if kind == "stream-chart":
+        arguments = stream_events(tool_delta('{"label_column":1,', "chart_table"), tool_delta('"value_column":2}'))
+        return head + b"\r\n" + arguments + stream_end("tool_calls"), "hold"
+    if kind == "stream-error":
+        first = stream_events(tool_delta('{"table":"head Item\\nrow Preview\\n', "draw_table"))
+        failure = stream_events({"error": {"message": "Upstream stopped"}}) + b"data: [DONE]\r\n\r\n"
+        return [[head + b"\r\n" + first], [failure]], "goodbye"
+    if kind == "stream-truncated":
+        # Even with arguments and a finish reason, the missing end marker
+        # makes this disk operation an incomplete call.
+        part = stream_events(tool_delta('{"name":"Budget","new_name":"Wrong"}', "rename_table"),
+                             {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+        return head + b"Content-Length: " + str(len(part)).encode() + b"\r\n\r\n" + part, "cut"
+    return None
+
+
 def choose(parsed, bearer, note):
     """Gives (bytes to send, how to end) for one request, and notes what it was for and which behaviour answered it."""
     messages = parsed.get("messages", []) if isinstance(parsed, dict) else []
@@ -204,9 +265,26 @@ def choose(parsed, bearer, note):
         return chat_cases.answer("makeline", the_line(parsed) or "", bearer)
     kind = behaviours.pop(0) if behaviours else ("words=Hello." if chat else "wrongkey")
     note["behaviour"] = kind
+    if kind == "edit-pear":
+        # Like a model receiving this turn alone, base the edit on the
+        # table in the current request. Without it, ask which table.
+        _, heading, snapshot = system.partition("\n\nThe table currently on screen is below.")
+        snapshot = snapshot.partition("\n")[2].partition("\n\n")[0]
+        if heading and "row Pear|3" in snapshot.splitlines():
+            edited = snapshot.replace("row Pear|3", "row Pear|7")
+            if snapshot.startswith("Saved document: "):
+                edited = edited.partition("\n")[2]
+                answer = "update_table=" + json.dumps({"table": edited})
+            else:
+                answer = "table=" + edited
+            return chat_cases.answer(answer, the_line(parsed) or "", bearer)
+        return chat_cases.answer("words=Which table?", the_line(parsed) or "", bearer)
     if kind.startswith("app:"):
         kind = kind[len("app:"):]
     if chat:
+        streamed = stream_answer(kind, bearer)
+        if streamed is not None:
+            return streamed
         found = chat_cases.answer(kind, the_line(parsed) or "", bearer)
         if found is not None:
             return found
@@ -282,9 +360,27 @@ with open(log_path, "a") as log:
                 note["key came as"] = bearer
                 bearer = bearer[len("Bearer "):] if bearer.startswith("Bearer ") else ""
                 answer, ending = choose(parsed, bearer, note)
-                if answer:
-                    link.sendall(answer)
-                note["sent"] = len(answer)
+                if isinstance(answer, list):
+                    sent = 0
+                    for number, stage in enumerate(answer):
+                        for piece in stage:
+                            link.sendall(piece)
+                            sent += len(piece)
+                        if number + 1 < len(answer):
+                            # Let the test compare the live picture before the
+                            # next part can arrive.
+                            gate = log_path + ".stream-next"
+                            deadline = time.monotonic() + 15
+                            while not os.path.exists(gate):
+                                if time.monotonic() >= deadline:
+                                    raise TimeoutError("the stream test did not release its next part")
+                                time.sleep(0.05)
+                            os.remove(gate)
+                    note["sent"] = sent
+                else:
+                    if answer:
+                        link.sendall(answer)
+                    note["sent"] = len(answer)
                 if ending == "goodbye":
                     try:
                         link.unwrap()

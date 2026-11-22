@@ -4,7 +4,7 @@ Code: `src/apps.rs`; the asking itself in `model_app` in `src/model.rs`; the err
 
 The idea of this kernel is that a model writes the apps. The person at the machine says in the chat box what app they want, and the model writes it as a script in the language Lua, which the interpreter runs inside the locked box (see [interpreter.md](interpreter.md) and [box.md](box.md)).
 
-**Today the script is asked for, checked, shown in the terminal and run once.** What the app shows appears in the box in the middle of the screen, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went. **An app that ran to its end is kept on the disk,** and the panel of apps near the top left of the screen lists it, also after the machine was switched off and on again. **A kept app runs again** when the person asks for it and the model picks it, without being written anew.
+**Today the script is asked for, checked, shown in the terminal and run once.** What the app shows appears in the box below the panel of apps, what it prints comes out in the terminal, and the chat box says in one plain sentence how the run went. **An app that ran to its end is kept on the disk,** and the panel of apps near the top left of the screen lists it, also after the machine was switched off and on again. **A kept app runs again** when the person asks for it and the model picks it, without being written anew.
 
 ## The words
 
@@ -17,7 +17,7 @@ The idea of this kernel is that a model writes the apps. The person at the machi
 
 - **The person asks for an app in their own words,** in any line: `I would like a dice to roll`. The line goes to the model like every line (see [tools.md](tools.md)), and the model asks for a new app with the tool `make_app` and a request, such as "a dice that rolls". The request comes from outside: it is cleaned byte by byte, spaces at either end go, and it is cut at 45 signs before it is shown, sent on or kept.
 - **The kernel then asks the model for the app itself** (`app_make`), with the request below, as an errand for the network's task (see "Errands" in [tasks.md](tasks.md)), and says so at once: `Kernel: I am asking the model to make "a dice that rolls".` That needs a kept key, as every line does; an empty request gets `Kernel: the model asked for an app, but did not say what it should do.`
-- **The answer comes later, as a row of its own,** and, when the model wrote a script that passes the checks below, the terminal shows the script under that row, line by line. Then the script runs (see "Running it" below): what it prints follows as `App:` lines, what it shows appears in the box in the middle of the screen, and a second row says how the run went:
+- **The answer comes later, as a row of its own,** and, when the model wrote a script that passes the checks below, the terminal shows the script under that row, line by line. Then the script runs (see "Running it" below): what it prints follows as `App:` lines, what it shows appears in the box below the panel of apps, and a second row says how the run went:
 
 ```text
 Kernel: the model wrote an app of 4 lines. It is shown in the terminal.
@@ -53,7 +53,7 @@ You write small apps for a home-made operating system. Each app is one script in
 The script runs once, from its first line to its last, and then ends. It runs in a locked box: it cannot read keys, files, the clock or the network, and it cannot wait. Lua's string, table and math libraries are there; io, os, require, debug, coroutine and utf8 are not. math.random works.
 
 Two functions put out what the app has to say:
-- show(text) puts one line of at most 40 characters in a box in the middle of the screen. This is what the person at the machine sees. Each show replaces the line shown before, and the last one stays on the screen after the script has ended. A longer text is cut at 40 characters, and a 21st show stops the script.
+- show(text) puts one line of at most 40 characters in a box on the screen. This is what the person at the machine sees. Each show replaces the line shown before, and the last one stays on the screen after the script has ended. A longer text is cut at 40 characters, and a 21st show stops the script.
 - print(...) writes one line to a log beside the screen. A line longer than 200 characters is cut, and a 101st print stops the script.
 
 Use only plain English letters, digits and the signs of a US keyboard; any other character comes out as a dot.
@@ -113,7 +113,7 @@ Right after the listing, `app_run` in `apps.rs` hands the script to the interpre
 - **Its limits are any script's:** one megabyte of memory, 100 million units of fuel, 100 printed lines, 20 showings. Fuel is the only thing that ends a script that does not end by itself; there is no limit by the clock.
 - **A new starting place for its random numbers at every run.** Before the script runs, the kernel takes a random number from the processor (`random_number`), halves it so that it stays a whole number above zero, and hands it to the interpreter's `seed`, which starts Lua's random numbers there (`math.randomseed`). Two runs of the same script then roll differently. A machine whose processor makes no random numbers would hand nothing over, and the numbers would repeat from run to run as before; but such a machine cannot make the encrypted link either (see [encryption.md](encryption.md)), so it never gets an app to run. The script written by hand that runs at startup gets no seed.
 - **A shown text longer than 40 signs is cut,** by the interpreter, at 40 bytes, as a printed line is cut at 200; the kernel's own rule, which stops a program that hands it a longer text, is never reached from a script. A cut may fall inside a letter of several bytes; the kernel shows such bytes as dots anyway.
-- **What it shows** appears in the box in the middle of the screen, the last showing over the ones before; it stays there after the run. **What it prints** comes out in the terminal as `App:` lines, below the listing.
+- **What it shows** appears in the box below the panel of apps, the last showing over the ones before; it stays there after the run. **What it prints** comes out in the terminal as `App:` lines, below the listing.
 
 The row after the run, behind `Kernel: `:
 
@@ -158,7 +158,7 @@ A request read from the disk comes from outside the kernel: at most 45 bytes of 
 
 ## The panel of apps
 
-A panel near the top left of the screen, under the sentence, lists the kept apps a page at a time. It is the kernel's own, drawn by `apps_kept.rs` with the pieces of `screen.rs`; it is not the box in the middle of the screen that shows an app's text.
+A panel near the top left of the screen, under the sentence, lists the kept apps a page at a time. It is the kernel's own, drawn by `apps_kept.rs` with the pieces of `screen.rs`; it is not the box below the panel of apps that shows an app's text.
 
 ```text
 Apps: page 1 of 2

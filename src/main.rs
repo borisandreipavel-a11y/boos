@@ -36,6 +36,9 @@ mod provider; // The adapter between the TLS library and the arithmetic.
 mod tls; // The encrypted link.
 mod app_box; // The locked box that apps run in.
 mod screen; // Drawing on the screen.
+mod drawing; // The table the model asks to draw.
+mod documents; // Tables saved in the notebook.
+mod light_values; // The relative light of each sRGB channel value.
 mod letters; // The shapes of the letters, drawn by hand.
 mod lines; // The kernel's own lines on the screen.
 mod look; // The look: the colours of everything on the screen, picked from a list.
@@ -68,12 +71,12 @@ use core::panic::PanicInfo;
 use core::sync::atomic::Ordering;
 
 use app_box::{ADDING_APP, GREETING_APP, SHOWING_APP, box_check, box_run};
-use chat::{chat_answer, chat_begin, chat_key, chat_setup};
+use chat::{chat_answer, chat_begin, chat_input, chat_progress, chat_setup};
 use clock::clock_read;
 use controller::controller_setup;
 use disk::{BLOCK_SIZE, disk_controller_find, disk_setup};
 use encryption::{encryption_check, trusted_roots};
-use errand::errand_answer_take;
+use errand::{errand_answer_take, errand_progress_take};
 use firmware::{SystemTable, print, screen_find, take_over};
 use frames::{FRAME_SIZE, FREE_FRAMES, frames_setup};
 use interpreter::{GREETING_SCRIPT, interpreter_check, script_run};
@@ -81,7 +84,7 @@ use json::json_check;
 use lock::lock_check;
 use intel_card::{intel_card_find, intel_card_setup};
 use interrupts::load_interrupt_table;
-use keyboard::{key_letter, keyboard_setup, next_key};
+use keyboard::{key_press, keyboard_setup, next_key};
 use lines::{lines_begin, lines_key, lines_paint_new, lines_start_over, lines_stop_screen, lines_stopping, lines_tasks_start};
 use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
@@ -472,22 +475,25 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
             write!(serial, "Click the QEMU window and type in its chat box. What is said there is repeated here:\r\n").ok();
         }
 
-        // Hand the keys that arrived in the meantime to the chat box. A key
-        // without a letter, or a key being let go, gives nothing. Every key
-        // goes to the kernel's lines first: a key brings the usual picture
-        // back while they cover it, and F1 brings them.
+        // Every key goes to the kernel's lines first: F1 shows them and
+        // another key brings the usual picture back. Then the chat or the
+        // focused table takes the key press.
         while let Some(key) = next_key() {
             lines_key(key);
-            if let Some(letter) = key_letter(key) {
-                chat_key(letter);
+            if let Some(press) = key_press(key) {
+                chat_input(press);
             }
         }
 
+        if let Some(progress) = errand_progress_take() {
+            chat_progress(progress);
+        }
         // If the network's task has left the answer to an errand, hand it to
         // the chat box, which says it, or hands the answer to the try of a
         // key to the onboarding.
         if let Some(answer) = errand_answer_take() {
             chat_answer(answer);
+            drawing::table_preview_clear();
         }
     }
 }

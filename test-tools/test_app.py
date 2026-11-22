@@ -386,11 +386,13 @@ def main():
     def judged(note, want, label, what):
         right = want is not None and note.get("body") == want
         whole_key = note.get("key came as") == "Bearer " + KEY
-        ok = right and note.get("length note right") and whole_key and note.get("first line") == "POST /v1/chat/completions HTTP/1.0"
+        version = "1.1" if want and want["stream"] else "1.0"
+        request_line = note.get("first line") == f"POST /v1/chat/completions HTTP/{version}"
+        ok = right and note.get("length note right") and whole_key and request_line
         if not ok:
             failures.append(label)
-        print("   %-17s %-24s | body as meant %s | %5s bytes | length note right %s | key came whole %s | name %s%s" % (
-            label, what[:24], right, note.get("body bytes"), note.get("length note right"), whole_key, note.get("name asked for"),
+        print("   %-17s %-24s | body as meant %s | %5s bytes | length note right %s | key came whole %s | request line right %s | name %s%s" % (
+            label, what[:24], right, note.get("body bytes"), note.get("length note right"), whole_key, request_line, note.get("name asked for"),
             " | problem: " + note["problem"] if "problem" in note else ""))
 
     for number, note in enumerate(apps_seen):
@@ -403,7 +405,7 @@ def main():
         line = sent[number] if number < len(sent) else None
         # Each line goes with the record of the lines before it and what they brought, which the chat model kept.
         record = chat.records[number] if number < len(chat.records) else None
-        want = body_meant(line, [], record=record, key=KEY) if line is not None and record is not None else None
+        want = body_meant(line, [], record=record, key=KEY, writable=False) if line is not None and record is not None else None
         judged(note, want, "line request %d" % (number + 1), line or "?")
     if len(apps_seen) != len(behaviours):
         failures.append("%d requests for an app reached the stand-in, meant %d" % (len(apps_seen), len(behaviours)))

@@ -298,6 +298,15 @@ const APPS_PANEL_STYLE: AppsPanelStyle = AppsPanelStyle {
     apps_on_a_page: 5,
 };
 
+// The whole place is reserved, even when there are fewer apps on this
+// page. The box for an app's text and the table use these edges too.
+pub fn apps_panel_bounds() -> (u32, u32, u32, u32) {
+    let style = APPS_PANEL_STYLE;
+    let row_height = style.text_size * LETTER_HEIGHT + style.row_gap;
+    let height = 2 * (style.frame + style.padding) + (style.apps_on_a_page + 1) * row_height;
+    (style.left, style.top, style.left + style.width, style.top + height)
+}
+
 // Paints the panel of apps as it is: the row that says which page is shown,
 // and the apps on that page, in the look in use. Paints nothing while no app
 // is listed, and nothing on a machine without a usable screen. The look calls
@@ -318,8 +327,8 @@ pub fn apps_panel_again() {
     // holds the row about the page and a full page of apps, whatever the
     // page shown holds, so that it always has the same size.
     let row_height = style.text_size.saturating_mul(LETTER_HEIGHT).saturating_add(style.row_gap);
-    let rows = style.apps_on_a_page.saturating_add(1);
-    let height = style.frame.saturating_mul(2).saturating_add(style.padding.saturating_mul(2)).saturating_add(rows.saturating_mul(row_height));
+    let (_, _, _, bottom) = apps_panel_bounds();
+    let height = bottom - style.top;
 
     // The frame: the whole panel in the frame's colour first, then the
     // inside painted over it, smaller by the frame's thickness on each side.

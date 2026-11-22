@@ -4,6 +4,7 @@
 //! cover the screen (`lines.rs`), this usual picture waits. Notes:
 //! `docs/screen.md`. (The chat box is drawn with these pieces by `chat.rs`.)
 
+use crate::apps_kept::apps_panel_bounds;
 use crate::firmware::{ColourOrder, Screen};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH, letter_shape};
 use crate::look::look;
@@ -193,6 +194,13 @@ const PANEL_STYLE: PanelStyle = PanelStyle {
     text_top: 21,
 };
 
+const APP_BOX_GAP: u32 = 20;
+
+pub fn app_box_bottom() -> u32 {
+    let (_, _, _, bottom) = apps_panel_bounds();
+    bottom + APP_BOX_GAP + PANEL_STYLE.height
+}
+
 // What the panel shows, so that it can be painted again in another look:
 // whether an app has shown a text since the start, and the signs it shows, as
 // many as fit on the panel's line. The room holds 160 bytes, enough for 40
@@ -205,7 +213,7 @@ static mut PANEL_TEXT_LENGTH: usize = 0;
 // Shows a text in the panel: paints the panel and writes the text in it, on
 // one line, and remembers what it wrote. Painting the whole panel each time
 // wipes out what it showed before. Where the panel sits is decided here as
-// well: in the middle of the screen. Give the caller the length painted,
+// well: below the panel of apps. Give the caller the length painted,
 // so the result of this run can give the model the same text.
 pub fn screen_panel(text: &str) -> Option<usize> {
     if (unsafe { SCREEN }).is_none() {
@@ -242,15 +250,13 @@ pub fn screen_panel_again() {
 // Paints the panel and the text in it, and gives back the part of the text
 // that was written: as many signs as fit.
 fn panel_paint(text: &str) -> &str {
-    let Some(screen) = (unsafe { SCREEN }) else {
+    if screen_size().is_none() {
         return "";
-    };
+    }
     let style = PANEL_STYLE;
     let look = look();
-
-    // Half the screen's width less half the panel's puts it in the middle.
-    let left = (screen.width / 2).saturating_sub(style.width / 2);
-    let top = (screen.height / 2).saturating_sub(style.height / 2);
+    let (left, _, _, _) = apps_panel_bounds();
+    let top = app_box_bottom() - style.height;
 
     // The frame: the whole panel in the frame's colour first, then the
     // inside painted over it, smaller by the frame's thickness on each side.

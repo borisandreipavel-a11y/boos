@@ -123,7 +123,7 @@ show(greeting)
 `efi_main` runs it right after the check, if the check passed:
 
 - in the terminal: `App: Hello from a Lua script!!!`
-- on the screen, in the box in the middle: `Hello from a Lua script!!!`, painted over the text the hand-made showing app put there a few seconds earlier
+- on the screen, in the box below the panel of apps, showing `Hello from a Lua script!!!`, painted over the text the hand-made showing app put there a few seconds earlier
 - when the run fails: `Interpreter: the script was stopped, because ...` with the reason.
 
 It is a demonstration, like the three small apps before it. Nothing depends on it. If the script is stopped before its last line, the box keeps the hand-made app's text.
