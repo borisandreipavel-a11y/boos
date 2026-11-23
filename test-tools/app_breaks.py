@@ -35,7 +35,7 @@ BREAKS = {
     "nolead": {"model.rs": swap("json_text(&format!(\"{}{}\", APP_LEAD, wanted)),", "json_text(wanted),")},
     # --- The run ---
     # The script is shown but not run: no run, no row about it, nothing kept.
-    "norun": {"chat.rs": swap("            let run = app_run(script);\n            chat_say(&run.sentence);\n",
+    "norun": {"chat.rs": swap("            let run = app_run(script, values);\n            chat_say(&run.sentence);\n",
                               "            let run = crate::apps::AppRun { sentence: String::new(), ran: false, told: Vec::new() };\n")},
     # No new seed: every run starts its random numbers from the same place.
     "noseed": {"apps.rs": swap("let seed = random_number().map(|number| (number >> 1) as i64);", "let seed: Option<i64> = None;")},

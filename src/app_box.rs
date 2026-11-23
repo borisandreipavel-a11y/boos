@@ -8,6 +8,7 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
+use alloc::vec::Vec;
 
 use wasmi::{Caller, Config, Engine, Error, Extern, Instance, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode};
 
@@ -49,6 +50,11 @@ const SCRIPT_FUEL: u64 = 100_000_000;
 // fit is turned away before anything is started. A script the model writes
 // is held to it as soon as it comes (see `apps.rs`).
 pub const SCRIPT_LIMIT: usize = 32 * 1024;
+
+// The longest piece of values the kernel hands over behind a script, in
+// bytes: the values of an app's inputs, at most 4 of them, take under 500
+// (see `app_inputs.rs`). A guard, like the script's limit.
+const VALUES_LIMIT: usize = 1024;
 
 // The longest text an app may hand to the kernel to print, in bytes, and the
 // most texts it may print in one run. Printing costs the kernel time, and an
@@ -421,12 +427,15 @@ fn script_stopped(error: Error) -> ScriptStop {
 // it carried out. Such a program, the interpreter, is not run once from a
 // `start`. It shows the outside three functions instead:
 //
-// - `room`, which takes the script's length in bytes and gives back where in
-//   the program's own memory the kernel should write the script;
+// - `room`, which takes a length in bytes and gives back where in the
+//   program's own memory the kernel should write that many: the script, and
+//   behind it the values of an app's inputs (`values`, made by
+//   `values_handed` in `app_inputs.rs`), if there are any;
 // - `seed`, which takes a number to start the script's random numbers from;
 //   it is called only when `seed` here holds one;
-// - `run`, which takes the length again, carries the script out, and gives
-//   back 0 if the script ran to its end.
+// - `run`, which takes the script's length alone, carries the script out,
+//   and gives back 0 if the script ran to its end. What stands behind the
+//   script in the room is the values.
 //
 // The program is got ready exactly as an app is, with the same check, the
 // same limits and the same system API. Nothing it says is taken on trust:
@@ -434,11 +443,17 @@ fn script_stopped(error: Error) -> ScriptStop {
 // refuses if any byte of it lies outside the program's memory. Gives back
 // what the script left behind (see `ScriptTexts`), or why it was stopped,
 // with what it left behind before that.
-pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<ScriptTexts, ScriptStop> {
+pub fn box_script(program: &[u8], script: &str, seed: Option<i64>, values: &[u8]) -> Result<ScriptTexts, ScriptStop> {
     if script.len() > SCRIPT_LIMIT {
         return Err(script_stop(String::from("the script is too long")));
     }
+    if values.len() > VALUES_LIMIT {
+        return Err(script_stop(String::from("the values of its inputs are too long")));
+    }
     let length = script.len() as i32;
+    let mut handed = Vec::with_capacity(script.len() + values.len());
+    handed.extend_from_slice(script.as_bytes());
+    handed.extend_from_slice(values);
 
     let (mut store, app) = box_start(program).map_err(script_stop)?;
     let room = app.get_typed_func::<i32, i32>(&store, "room").map_err(script_stopped)?;
@@ -447,9 +462,9 @@ pub fn box_script(program: &[u8], script: &str, seed: Option<i64>) -> Result<Scr
 
     // From here on the program's own code runs, on the budget for a script.
     store.set_fuel(SCRIPT_FUEL).map_err(script_stopped)?;
-    let place = room.call(&mut store, length).map_err(script_stopped)?;
+    let place = room.call(&mut store, handed.len() as i32).map_err(script_stopped)?;
     memory
-        .write(&mut store, place as u32 as usize, script.as_bytes())
+        .write(&mut store, place as u32 as usize, &handed)
         .map_err(|_| script_stop(String::from("it gave room for the script outside its own memory")))?;
     if let Some(value) = seed {
         let seed_function = app.get_typed_func::<i64, ()>(&store, "seed").map_err(script_stopped)?;

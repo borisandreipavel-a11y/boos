@@ -5,7 +5,8 @@ JSON), `finish_reason`, and `usage` with the counts the kernel reads. Shared by 
 and test_chat_tools.py, which judges what the kernel makes of them.
 
 A behaviour is a name, or a name, "=" and what it needs: "words=Hello there." answers in words, "make=a dice
-that rolls" asks for the tool make_app with that request, "run=1" for run_app with the app 1, "look=2" for
+that rolls" asks for the tool make_app with that request, "run=1" for run_app with the app 1, "makein=" and "runin="
+with a text of JSON behind them for make_app and run_app given exactly that (an app's inputs and values), "look=2" for
 pick_look, "turn=2" for turn_page (not "page", which is a kind of model_server.py's own); "fullrun=1" asks for run_app in the fuller shape a real answer may have
 (`full_body`); "forget" asks for the tool forget; "longall" brings the longest rows a line can bring; "table=fruit"
 asks for draw_table with a table of TABLES, "tablecut=long" with one that the limit of tokens cut off (CUT_LINES),
@@ -306,6 +307,10 @@ def answer(kind, line, bearer):
         return good(body(message(None, [call("make_app", {"request": request_of_line(line)})]), "tool_calls")), "goodbye"
     if name == "run":
         return good(body(message(None, [call("run_app", {"app": int(given)})]), "tool_calls")), "goodbye"
+    if name == "makein":
+        return good(body(message(None, [call("make_app", given)]), "tool_calls")), "goodbye"
+    if name == "runin":
+        return good(body(message(None, [call("run_app", given)]), "tool_calls")), "goodbye"
     if name == "fullrun":
         return good(full_body([call("run_app", {"app": int(given)})])), "goodbye"
     if name == "runtext":
@@ -335,7 +340,8 @@ def answer(kind, line, bearer):
         bare = {"id": "call_0", "type": "function", "function": {"name": "pick_look"}}
         return good(body(message(None, [bare]), "tool_calls")), "goodbye"
     if name == "biginputs":
-        return good(body(message(None, [call("make_app", {"request": "a dice", "notes": "n" * 2000})]), "tool_calls")), "goodbye"
+        # Longer than the 2,048 bytes the kernel takes of what the model gives a tool (docs/tools.md).
+        return good(body(message(None, [call("make_app", {"request": "a dice", "notes": "n" * 3000})]), "tool_calls")), "goodbye"
     if name == "keyrequest":
         return good(body(message(None, [call("make_app", {"request": "an app about " + bearer})]), "tool_calls")), "goodbye"
     if name == "longrequest":

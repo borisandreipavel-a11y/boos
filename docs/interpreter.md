@@ -11,7 +11,7 @@ Apps are written as text in the language Lua. The kernel does not understand Lua
 - A **script** is a program kept as text, as a person would write it: `count = count + 1`.
 - An **interpreter** is a program that reads such text and carries it out.
 - **Lua** is a small language made to be put inside other programs. Its makers are at PUC-Rio, a university in Rio de Janeiro; their own interpreter is written in C.
-- **WebAssembly** is the form of program the box runs; see [box.md](box.md). The interpreter is one such program, 765,037 bytes long.
+- **WebAssembly** is the form of program the box runs; see [box.md](box.md). The interpreter is one such program, 770,152 bytes long.
 
 So three things are stacked: the kernel runs the box, the box runs the interpreter, and the interpreter runs an app's script.
 
@@ -63,7 +63,7 @@ That makes `interpreter/target/wasm32-unknown-unknown/release/interpreter.wasm`.
 - **It is built small rather than fast** (`opt-level = "s"`, one unit, `lto`, no unwinding), because the box checks the whole file each time it gets the interpreter ready.
 - **No program made along the way is run**, and the linker for WebAssembly, `wasm-ld`, comes with Rust.
 - **The built file is not in the repository.** It is build output, like the kernel's own file. Two builds of the same source in two different folders gave the same bytes, and so did the source with the other kind of line end; the piece of Lua in the source is written line by line with its line ends spelt out for that reason.
-- **The built file holds folder paths of the computer it was built on:** 22 of them, the places of omnilua's source files in cargo's own folder, which the compiler puts into the messages for mistakes that end a program. So the file's bytes, and its length, can differ from one computer to the next, and the 765,037 in these notes is one computer's figure. It is one more reason to keep the built file out of the repository. The kernel's own file holds such paths in the same way.
+- **The built file holds folder paths of the computer it was built on:** 22 of them, the places of omnilua's source files in cargo's own folder, which the compiler puts into the messages for mistakes that end a program. So the file's bytes, and its length, can differ from one computer to the next, and the 770,152 in these notes is one computer's figure. It is one more reason to keep the built file out of the repository. The kernel's own file holds such paths in the same way.
 
 ## How the kernel carries it
 
@@ -76,7 +76,7 @@ That makes `interpreter/target/wasm32-unknown-unknown/release/interpreter.wasm`.
 
 `efi_main` calls `interpreter_check()` after the three small apps:
 
-- `Interpreter: a program of 765037 bytes that understands Lua is on board, and the box accepts it`
+- `Interpreter: a program of 770152 bytes that understands Lua is on board, and the box accepts it`
 - otherwise: `Interpreter: not usable, because ...` with the reason; no script is run then, and the kernel carries on.
 
 `interpreter_check` hands the program to `box_accepts` (see [box.md](box.md)), which gets it ready exactly as an app is got ready for a run, with the same check against WebAssembly's rules, the same limits and the same system API, and then looks for a memory called `memory` and for the functions `room`, `seed` and `run`. None of them is called.
@@ -85,7 +85,9 @@ What that check proves and what it does not: the file is a whole WebAssembly pro
 
 ## Running a script
 
-`script_run(script)` in `interpreter.rs` runs a script: it hands the interpreter's program and the script's text to `box_script` (see [box.md](box.md)), which gets the program ready in the box, asks it for room, writes the script there and tells it to run. Each run starts from nothing: the program is checked and translated again, and nothing of one script is left for the next. `script_run_seeded(script, seed)` does the same with a number for `seed` before the run, and gives back how many texts the script showed, or why it was stopped and what kind of stop it was; apps made on request are run with it (see [apps.md](apps.md)).
+`script_run(script)` in `interpreter.rs` runs a script: it hands the interpreter's program and the script's text to `box_script` (see [box.md](box.md)), which gets the program ready in the box, asks it for room, writes the script there and tells it to run. Each run starts from nothing: the program is checked and translated again, and nothing of one script is left for the next. `script_run_seeded(script, seed, values)` does the same with a number for `seed` before the run and the values of an app's inputs behind the script, and gives back how many texts the script showed, or why it was stopped and what kind of stop it was; apps made on request are run with it (see [apps.md](apps.md)).
+
+**The values of an app's inputs** (see "Inputs" in [apps.md](apps.md)) stand behind the script in the room the program gave; `run` is told the script's length, and what follows it is the values. For each: the letter of its kind (`n` for a number, `t` for a text, `y` for a yes/no), the length of its name in one byte and the name, the length of its value in one byte and the value, written as text. The program puts them in a table under their names before the script runs, with Lua's own functions, never by writing them into the script's text, and the script finds the table as `input`: a number written without a point as a whole number of Lua's (`math.type` says `integer`), one with a point as a number with a point (`float`); a text as a string; a yes/no as `true` or `false`. The kernel checked the values; the program checks their shape again, and anything else stops the script before it starts, with `Lua stopped: the values of the app's inputs are not in the shape the kernel hands them over in`. Without values, `input` is an empty table.
 
 What comes back:
 
@@ -104,6 +106,8 @@ What a script can count on:
 - **`say(text)`,** the function `print` is built on, which hands one text to the kernel.
 - **`show(value)`,** which puts one line of at most 40 bytes into the box on the screen; a longer text is cut at 40. Each showing wipes out the one before; the last one stays after the script has ended. Bytes are counted, not letters: twenty letters with an accent fill the 40, and each comes out as two dots. On a machine without a usable screen nothing is shown and the script carries on.
 - **`math.random`,** whose numbers start from the same place at every run, unless the kernel gave the run a seed: it does for apps made on request.
+- **`input`,** a table with the values of the app's inputs, empty when it has none (see above).
+- **Numbers with a point** as Lua 5.4 has them, checked on board with `test-tools/lua/numbers.lua`: `string.format("%.2f", 12 * 0.621371)` gives `7.46`, `12 * 0.621371` prints as `7.456452`, `2.5` is a `float` and `12` an `integer`, `10 / 2` prints as `5.0` and `7 // 2` as `3`, and a number with a point of 15 digits prints rounded to 14 (`-1e+14` for `-99999999999999.9`). The same script found the words Lua keeps for itself, which cannot be names: exactly its 22 (`and`, `break`, `do`, `else`, `elseif`, `end`, `false`, `for`, `function`, `goto`, `if`, `in`, `local`, `nil`, `not`, `or`, `repeat`, `return`, `then`, `true`, `until`, `while`).
 - **Both kinds of line end** in the script's text.
 - **A text with bytes that are no letters at all cannot be printed.** The piece between omnilua and this program wants proper text, and the script is stopped with `Lua stopped: string is not valid UTF-8`.
 
@@ -157,7 +161,7 @@ In QEMU. The times vary with how busy the test computer is, so the kernel from b
 - **Stack:** 16,744 bytes deep for the check and 17,384 while a script runs, at their place in the startup, of the 124 KB free on the firmware's stack; the second figure was the same for four scripts, among them calls without end and a flood of prints. Plain, the two figures were 44,920 and 54,824.
 - **Memory:** the first check takes 556 frames (2.2 MB) for the kernel's heap, a second and a third none. Twenty-eight well-behaved scripts in a row took 25 frames more. Fourteen that should be stopped took about 514, 513 of them at the script with calls without end, the only one that made the interpreter's memory grow far. The heap keeps them for later use and never hands frames back (see [memory.md](memory.md)).
 - **A script's own memory:** every small script ended with 384 KB of the app's 1 MB in use (measured in a trial's copy).
-- **Size:** the interpreter adds its own 0.76 MB to the kernel's file, which is 4.0 MB.
+- **Size:** the interpreter adds its own 0.77 MB to the kernel's file, which is 4.0 MB.
 - The kernel starts with 80 MB of memory and not with 64, where the firmware refuses to load a file of this size.
 
 ## What trials showed beyond that

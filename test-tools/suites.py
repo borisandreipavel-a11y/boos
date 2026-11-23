@@ -75,7 +75,7 @@ SUITES = [
     # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
          seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=130, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
-                      bound=125, rounds=120, table=110, tablesmall=40, stream=120)),
+                      bound=125, rounds=120, table=110, tablesmall=40, inputs=120, inputsodd=150, stream=120)),
     # Files fetched from the web and kept on the disk, in the stand-in copy, whose stand-in serves made-up files.
     dict(name="downloads", command=["test_downloads.py"], split=True, watches=STAND_IN + FILES,
          seconds=dict(fetch=110, refusals=330, remove=110, startlines=60, full=50)),
@@ -125,7 +125,7 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 45,
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
                 "intel": 10, "downloads": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -211,8 +211,8 @@ CAUGHT_BY = {
     'break model: no5xx': 'upstream',
     'break model: nostrict': 'nochoices',
     'break model: nothought': 'lengthempty',
-    'break kept: nowholecheck': 'kept-outside start',
-    'break kept: noorder': 'kept-outside start',
+    'break kept: nowholecheck': 'outside lines about apps',
+    'break kept: noorder': 'outside lines about apps',
     'break kept: nopiecelimits': 'kept-outside start',
     'break kept: nofullpieces': 'kept-outside start',
     'break kept: nothinglimit': 'kept-outside start',
@@ -291,6 +291,11 @@ CAUGHT_BY = {
     'break tools: nostarkept': 'rounds line request 15',
     'break tools: tablefaint': 'tools-table fruit',
     'break tools: tablewanted': "tools-table 'a broken one'",
+    'break tools: headnotchecked': 'inputsodd the bad head is left out',
+    'break tools: valueswanted': "tools-inputsodd 'run with a wrong name'",
+    'break tools: inputsnotkept': "tools-inputs 'convert 12 km'",
+    'break tools: missingtaken': "tools-inputs 'convert km to miles'",
+    'break tools: numbernotchecked': "tools-inputsodd 'make missing'",
     'break tools: nodone': "tools-stream 'think first'",
     'break tools: noholdback': 'tools-stream words',
     'break tools: nohidesofar': 'tools-stream keyed',

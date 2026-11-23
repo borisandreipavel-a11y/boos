@@ -4,7 +4,8 @@
 //! omnilua; this file is the small piece between that library and the
 //! kernel. A script can ask the kernel for two things so far: to print a
 //! line, and to show a text on the screen. The kernel can also hand it a
-//! number to start the script's random numbers from.
+//! number to start the script's random numbers from, and the values of an
+//! app's inputs, which the script finds in the table `input`.
 //! Notes: `docs/interpreter.md`.
 
 use omnilua::Lua;
@@ -57,11 +58,12 @@ pub extern "C" fn seed(value: i64) {
     unsafe { SEED = Some(value) };
 }
 
-// Where the kernel puts a script's text before it calls `run`.
+// Where the kernel puts a script's text before it calls `run`, and behind it
+// the values of the app's inputs, if it has any.
 static mut SCRIPT: Vec<u8> = Vec::new();
 
-// The kernel asks for room for a script of `length` bytes, and gets back
-// where in this program's memory to write it.
+// The kernel asks for room for `length` bytes, the script and the values
+// behind it, and gets back where in this program's memory to write them.
 #[unsafe(no_mangle)]
 pub extern "C" fn room(length: usize) -> *mut u8 {
     unsafe {
@@ -100,9 +102,47 @@ const SHOW_IN_LUA: &str = concat!(
     "end\n",
 );
 
-// Carries a script out. Whatever goes wrong, a mistake in how the script is
-// written or one that turns up while it runs, comes back in words.
-fn run_script(text: &str) -> Result<(), String> {
+// The values of the app's inputs, as the kernel hands them over behind the
+// script: for each, the letter of its kind (n for a number, t for a text, y
+// for a yes/no), the length of its name in one byte and the name, the length
+// of its value in one byte and the value, as text. They go into a table under
+// their names, which the script sees as `input`: a number as a Lua number,
+// whole when it is written without a point; a text as a string; a yes/no as
+// true or false. They are put there with Lua's own functions, never as part
+// of the script's text, so no value can be taken for Lua. The kernel checked
+// them; whatever does not have this shape stops the script before it starts.
+fn input_table(lua: &Lua, mut values: &[u8]) -> Result<omnilua::Table, String> {
+    let wrong = || String::from("the values of the app's inputs are not in the shape the kernel hands them over in");
+    let table = lua.create_table().map_err(|problem| problem.to_string())?;
+    while let Some((&kind, rest)) = values.split_first() {
+        let (name, rest) = value_piece(rest).ok_or_else(wrong)?;
+        let (value, rest) = value_piece(rest).ok_or_else(wrong)?;
+        let set = match kind {
+            b'n' if value.contains('.') => table.set(name, value.parse::<f64>().map_err(|_| wrong())?),
+            b'n' => table.set(name, value.parse::<i64>().map_err(|_| wrong())?),
+            b't' => table.set(name, value),
+            b'y' if value == "yes" || value == "no" => table.set(name, value == "yes"),
+            _ => return Err(wrong()),
+        };
+        set.map_err(|problem| problem.to_string())?;
+        values = rest;
+    }
+    Ok(table)
+}
+
+// A piece of the values: its length in one byte, then that many bytes of
+// text.
+fn value_piece(bytes: &[u8]) -> Option<(&str, &[u8])> {
+    let (&length, rest) = bytes.split_first()?;
+    let (piece, rest) = rest.split_at_checked(length as usize)?;
+    Some((core::str::from_utf8(piece).ok()?, rest))
+}
+
+// Carries a script out, with the values of the app's inputs in the table
+// `input` (empty when the app has none). Whatever goes wrong, a mistake in
+// how the script is written or one that turns up while it runs, comes back
+// in words.
+fn run_script(text: &str, values: &[u8]) -> Result<(), String> {
     let lua = Lua::new();
     let say_function = lua
         .create_function(|_, text: String| {
@@ -130,6 +170,8 @@ fn run_script(text: &str) -> Result<(), String> {
     if let Some(value) = unsafe { SEED } {
         lua.load(format!("math.randomseed({})", value)).exec().map_err(|problem| problem.to_string())?;
     }
+    let input = input_table(&lua, values)?;
+    lua.globals().set("input", input).map_err(|problem| problem.to_string())?;
     lua.load(text).set_name("app").exec().map_err(|problem| problem.to_string())
 }
 
@@ -139,13 +181,14 @@ const RAN_TO_ITS_END: i32 = 0;
 const STOPPED: i32 = 1;
 
 // The kernel calls this after writing a script of `length` bytes into the
-// room. A script that cannot be carried out to its end is reported as a
-// printed line, and the kernel is told through the number given back. Either
-// way this program itself ends in the ordinary way.
+// room, and the values of the app's inputs behind it. A script that cannot be
+// carried out to its end is reported as a printed line, and the kernel is
+// told through the number given back. Either way this program itself ends
+// in the ordinary way.
 #[unsafe(no_mangle)]
 pub extern "C" fn run(length: usize) -> i32 {
-    let script = unsafe { &*(&raw const SCRIPT) };
-    let Some(bytes) = script.get(..length) else {
+    let handed = unsafe { &*(&raw const SCRIPT) };
+    let Some((bytes, values)) = handed.split_at_checked(length) else {
         say("Lua: the script is longer than the room asked for");
         return STOPPED;
     };
@@ -153,7 +196,7 @@ pub extern "C" fn run(length: usize) -> i32 {
         say("Lua: the script is not text");
         return STOPPED;
     };
-    match run_script(text) {
+    match run_script(text, values) {
         Ok(()) => RAN_TO_ITS_END,
         Err(problem) => {
             say(&format!("Lua stopped: {}", problem));

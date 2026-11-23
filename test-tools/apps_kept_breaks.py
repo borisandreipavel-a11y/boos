@@ -33,7 +33,7 @@ BREAKS = {
     "nopieceadvance": {"notebook.rs": swap("            unsafe { NEXT_BLOCK = number + 1 };\n", "")},
     # --- Keeping apps ---
     # An app is not kept.
-    "nokeep": {"chat.rs": swap("                if let Some(trouble) = app_keep(request, script) {\n                    chat_say(&trouble);\n                }\n", "")},
+    "nokeep": {"chat.rs": swap("                if let Some(trouble) = app_keep(request, inputs, script) {\n                    chat_say(&trouble);\n                }\n", "")},
     # An app that was stopped is kept too.
     "keepstopped": {"chat.rs": swap("            if run.ran {\n", "            if true {\n")},
     # The same request again gets a number of its own.
