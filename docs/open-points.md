@@ -25,7 +25,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Files from the web
 
-- **An address must be typed,** or known to the model: there is no search, and no page is read for its links. A line holds 50 signs, so only a short address fits in one; a longer line is a part of its own, still to come.
+- **An address must be typed,** or known to the model: there is no search, and no page is read for its links. A line holds 200 signs, so an address longer than that, with the words around it, does not fit in one.
 - **The link is slow:** about 50 KB a second (see "Network" below), so the largest file, 4 MB, takes some 80 seconds, and the chat turns every other line away meanwhile. A hop may take three minutes.
 - **What the link cannot fetch:** a site that sends files only packed or only in pieces with their lengths; a site that speaks only TLS 1.2, insists on a curve other than P-256, or has only addresses of the newer kind (IPv6); a site that refuses a request without a `User-Agent`; a port other than 443; a machine's number in place of a site's name. None of this was tried against a real site.
 - **A file is held in memory whole** before it is written, up to 4 MB; the heap keeps its frames afterwards, for the next file.
@@ -212,7 +212,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - Caps Lock and layouts other than US are left out. Ctrl is not understood either: a key gives its usual sign while it is held. Alt was not tried.
 - **Shift can stick.** Whether a Shift key is down is worked out from the key numbers as the main loop takes them. If the waiting line is full when Shift is let go, that number is dropped, and every key gives its second sign until the same Shift key is pressed and let go again.
 - **Shift numbers behind the mark are passed over,** which is right for Print Screen as QEMU plays it. What real keyboards send around the arrow keys and the number pad was not looked at.
-- **Any other number behind the mark is looked up like an ordinary key's.** A key that sends the mark and then a number from a row of signs would type that sign. The up arrow, Delete and Print Screen do not; no other such key was looked for.
+- **Any other number behind the mark is looked up like an ordinary key's.** A key that sends the mark and then a number from a row of signs would type that sign. The arrows, Home, End, Delete and Print Screen do not; no other such key was looked for.
 - The waiting line holds 16 key numbers, two for each key pressed and let go. Keys that arrive faster than the main loop takes them out are dropped, and the main loop paints after every key, about 8 thousandths of a second each time. Keys 10 thousandths of a second apart all arrived; keys 5 apart did not.
 
 ## The disk
@@ -276,10 +276,13 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **A secret is typed blind.** The stars and the count are all the person sees; a wrong sign cannot be found except by typing the whole again. There is no way to leave the asking but Enter on nothing.
 - **A secret's signs pass through places that are not wiped:** the processor's registers and the stack of the main loop while a key is handled, a byte at a time. The dump of a test machine's memory held a typed secret exactly once and no further run of six of its signs, which is as far as that was looked into; where in memory the one copy lay was not looked at, and it is the breaks made on purpose that tie the count to the two rooms made for it.
 - **Anything in the kernel can read the secret's room.** The kernel has one memory for all its code; only apps in the box are shut out of it. The compiler lets one file borrow the secret through `secret_lend`; that is a rule for code that keeps to Rust's rules, not a wall.
-- **Six rows of what was said are shown,** and there is no scrolling back. Of what was said before a switch-off, only the last line that was sent is said again at the next start.
+- **Six rows of what was said are shown,** fewer while a long line is typed, and there is no scrolling back. Of what was said before a switch-off, only the last line that was sent is said again at the next start.
 - **A long text is cut into rows where the row ends,** in the middle of a word if need be.
-- **A line is at most 50 signs,** and there is no way to move inside it; only its last sign can be taken away.
+- **A long line and a long answer do not fit together.** On a screen 1280 dots wide a line of 200 signs takes 3 rows and the model's longest words 4, so with the row that says the model is asked the first rows of the line go out of view. They are still in the terminal, under F1, and in what the model remembers.
+- **A line is at most 200 signs.** Up brings back only the last line sent, not older ones, and a line brought back with Up and then changed is gone with Down.
+- **While a long line is typed on a small screen or with large letters,** where it needs more rows than half the chat box, only the rows around the place where the next sign goes show; nothing on the screen says that more of the line is hidden above or below, but that the first row shown does not begin with `> `, or the last does not end the line.
 - **The mark for the next sign does not blink.** A key held down repeats as fast as the keyboard sends it; the kernel sets no pace of its own.
+- **The keys of the number pad do not edit the line,** not even the ones printed with arrows; only the arrows, Home, End and Delete that send the mark first (see [interrupts.md](interrupts.md)) do. Up and Down bring lines back; they do not move between the rows of a long line.
 - **Sending a line paints the rows again from nothing,** about a twentieth of a second in this kind of build. For that moment the rows are blank. In a QEMU window that showed no flicker; on a slower machine or with more rows it might. Painting a row in one go (see "The screen") would shorten it.
 - **The chat box's sizes are fixed when the kernel is built,** as a set of values in `chat.rs`; only its colours follow the look in use. The box that shows an app's text has its own set of sizes in `screen.rs`; the two are not one.
 - **On a machine without a screen the typing is blind:** nothing shows until Enter, when the line appears in the terminal.

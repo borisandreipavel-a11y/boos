@@ -202,6 +202,8 @@ class KeyedChat(Chat):
         # A row about a kept look that cannot be used (look_row, from look_model.py), then the row of the last line:
         # in front of the questions while the kernel waits for an answer, behind the greeting otherwise.
         recall_row = recall(clean_line(last_line)) if last_line is not None else None
+        if last_line is not None:
+            self.last_sent = clean_line(last_line)  # what Up brings back
         more = [row for row in (look_row, recall_row) if row]
         if self.waiting or self.look_asking:
             start = more + start
@@ -420,10 +422,13 @@ class KeyedChat(Chat):
         self.add("kernel", row)
 
     def line_room(self):
-        limit = NAME_LIMIT if self.waiting == "name" else CHAT_LINE_LIMIT
-        if self.room is None:
-            return limit
-        return min(limit, max(self.room - 3, 0))
+        return NAME_LIMIT if self.waiting == "name" else CHAT_LINE_LIMIT
+
+    def kernel_question(self):
+        return self.waiting == "name" or self.look_asking
+
+    def stars_now(self):
+        return self.secret_asked or self.waiting in STAR_STEPS
 
     def typing_text(self):
         if self.waiting in STAR_STEPS and not self.secret_asked:
@@ -437,6 +442,8 @@ class KeyedChat(Chat):
         if self.secret_asked:
             return super().key(sign)
         if self.waiting in STAR_STEPS:
+            if sign not in ("\b", "\n") and not " " <= sign <= "~":
+                return  # the keys that are no signs do nothing while stars are typed
             if self.waiting == "trying" and sign != "\n":
                 self.dropped = True    # nothing typed is taken while a key is tried
                 return
@@ -472,6 +479,7 @@ class KeyedChat(Chat):
             line = self.line
             if line == "setup":
                 mine = "%s: setup" % self.person()
+                self.last_sent = line
                 self.memory.forget()    # what was said is forgotten (conversation_model.py)
                 self.setting_up = True
                 self.waiting = "name"

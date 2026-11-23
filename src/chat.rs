@@ -19,7 +19,7 @@ use crate::conversation::{
 };
 use crate::errand::{Answer, Errand, errand_ask, errand_grown};
 use crate::files::{download_answer, files_answer, files_asking, files_setup};
-use crate::keyboard::BACKSPACE;
+use crate::keyboard::{BACKSPACE, DELETE_KEY, DOWN_KEY, END_KEY, HOME_KEY, LEFT_KEY, RIGHT_KEY, UP_KEY};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
@@ -36,9 +36,11 @@ use crate::timer::TICKS;
 use crate::tools::{ToolDone, chat_tools, tool_do, tool_wanted};
 use core::sync::atomic::Ordering;
 
-// The longest line that can be typed, in signs. A key pressed after that is
-// ignored, until a sign is taken away again or the line is sent with Enter.
-const CHAT_LINE_LIMIT: usize = 50;
+// The longest line that can be typed, in signs, on every screen. A key
+// pressed after that is ignored, until a sign is taken away again or the line
+// is sent with Enter. A line that does not fit on one row takes more rows
+// while it is typed (see `typing_shape`).
+const CHAT_LINE_LIMIT: usize = 200;
 
 // How many times the model may be asked about one line, the first ask
 // included, and not counting the requests that write an app. The last ask
@@ -139,6 +141,60 @@ fn chat_rows() -> &'static mut Vec<(Speaker, String)> {
 
 fn chat_line() -> &'static mut String {
     unsafe { &mut *(&raw mut CHAT_LINE) }
+}
+
+// Where the next sign goes in the line being typed: how many signs of the
+// line stand before that place. It is behind the last sign, unless Left,
+// Home or a sign taken away moved it. The line holds plain signs only, one
+// byte each, so this is also where that place is in the line's bytes. Only
+// the main loop may touch it.
+static mut CHAT_AT: usize = 0;
+
+fn chat_at() -> usize {
+    unsafe { CHAT_AT }
+}
+
+fn chat_at_put(at: usize) {
+    unsafe { CHAT_AT = at };
+}
+
+// The last line that was sent, which Up brings back into the row being
+// typed: every line sent with Enter but the answers to the kernel's own
+// questions, as it is kept as the last line on the disk, and at a start the
+// line kept there before the switch-off. And what was typed before Up, with
+// the place in it, which Down brings back. Only the main loop may touch
+// them; they are read and put back by value.
+static mut LAST_SENT: String = String::new();
+static mut SET_ASIDE: Option<(String, usize)> = None;
+
+fn last_sent() -> String {
+    unsafe { (*(&raw const LAST_SENT)).clone() }
+}
+
+fn last_sent_put(line: String) {
+    unsafe { LAST_SENT = line };
+}
+
+fn set_aside_take() -> Option<(String, usize)> {
+    unsafe { (*(&raw mut SET_ASIDE)).take() }
+}
+
+fn set_aside_holds() -> bool {
+    unsafe { (*(&raw const SET_ASIDE)).is_some() }
+}
+
+// The line being typed was taken, by Enter: the next one begins at its start,
+// and what Up set aside is let go.
+fn line_taken() {
+    chat_at_put(0);
+    unsafe { SET_ASIDE = None };
+}
+
+// Whether the kernel waits for the answer to a question of its own: a name,
+// the number of a look, or yes or no about a file. Up and Down do nothing
+// then.
+fn kernel_question() -> bool {
+    onboarding_asking() || look_asking() || files_asking()
 }
 
 // The model's answer to a line while it comes in, piece by piece (see
@@ -254,17 +310,54 @@ pub fn chat_box_place() -> Option<(u32, u32, u32, u32)> {
     chat_place().map(|place| (place.left, place.top, place.width, place.height))
 }
 
-// How many signs the line being typed may have on this machine: the limit,
-// or less if the screen is so narrow that fewer fit on the row. Three places
-// of the row are taken: two by the "> " in front and one by the "_" behind.
-// On a machine without a screen it is the limit itself. While the kernel
-// waits for a name, the limit is the longest name.
+// How many signs the line being typed may have: the limit, or the longest
+// name while the kernel waits for a name. It is the same on every screen,
+// and without one: a line that does not fit on one row takes more rows (see
+// `typing_shape`).
 fn chat_line_room() -> usize {
-    let limit = if onboarding_asking() { NAME_LIMIT } else { CHAT_LINE_LIMIT };
-    match chat_place() {
-        Some(place) => limit.min(place.room.saturating_sub(3) as usize),
-        None => limit,
+    if onboarding_asking() { NAME_LIMIT } else { CHAT_LINE_LIMIT }
+}
+
+// The most rows of the chat box that the row being typed may take: half of
+// its rows, the rows of what was said and the row being typed together, so
+// that at least as many are left for what was said. 3 of 7 today.
+fn typing_rows_most() -> u32 {
+    (CHAT_STYLE.rows.saturating_add(1) / 2).max(1)
+}
+
+// The shape of the row being typed: how many rows of the chat box it takes
+// now, and which row of its text is the first one shown.
+#[derive(Clone, Copy, PartialEq)]
+struct TypingShape {
+    shown: u32,
+    first: usize,
+}
+
+// Works out the shape of the row being typed on this screen. Its text is
+// "> ", the line, and a place for the "_" behind the last sign: as many signs
+// as the line has, and 3 more, cut into rows of as many signs as fit (`room`).
+// It takes as many rows as that needs, at most `typing_rows_most`. When it
+// needs more, the rows shown end with its last row, unless the place where
+// the next sign goes lies above them; then they begin with the row that
+// holds that place. While stars are typed it is one row: their row is short.
+// It reads the line, so it must not be called while a fetched line is still
+// in use (see `chat_line`).
+fn typing_shape(place: &ChatPlace) -> TypingShape {
+    if place.room == 0 || stars_wanted() {
+        return TypingShape { shown: 1, first: 0 };
     }
+    let room = place.room as usize;
+    let needed = chat_line().len().saturating_add(3).div_ceil(room).max(1);
+    let shown = needed.min(typing_rows_most() as usize);
+    let at_row = chat_at().saturating_add(2) / room;
+    let first = (needed - shown).min(at_row);
+    TypingShape { shown: shown as u32, first }
+}
+
+// Where the row being typed begins on the screen when it takes `shown` rows:
+// higher than where one row begins by a row for each row more.
+fn typing_top(place: &ChatPlace, shown: u32) -> u32 {
+    place.typing_top.saturating_sub(shown.saturating_sub(1).saturating_mul(place.row_height))
 }
 
 // Writes one row of text into the chat box, with its top at `top`. Nothing
@@ -282,13 +375,16 @@ fn chat_write(place: &ChatPlace, top: u32, text: &str, colour: Colour) {
 }
 
 // Paints the rows of what was said: first their whole area in the inside
-// colour, which wipes out what stood there, then each row's text.
+// colour, which wipes out what stood there, then each row's text. While the
+// row being typed takes more than one row, the area is smaller by as many
+// rows, and as many fewer rows of what was said show: the oldest.
 fn chat_paint_rows() {
     let Some(place) = chat_place() else {
         return;
     };
     let style = CHAT_STYLE;
     let look = look();
+    let typing = typing_shape(&place);
 
     // The area reaches from just inside the frame down to the row being
     // typed, and from just inside the frame on the left to just inside it
@@ -296,7 +392,8 @@ fn chat_paint_rows() {
     let inside_left = place.left.saturating_add(style.frame);
     let inside_top = place.top.saturating_add(style.frame);
     let inside_width = place.width.saturating_sub(style.frame.saturating_mul(2));
-    screen_rectangle(inside_left, inside_top, inside_width, place.typing_top.saturating_sub(inside_top), look.chat_inside);
+    let area_bottom = typing_top(&place, typing.shown);
+    screen_rectangle(inside_left, inside_top, inside_width, area_bottom.saturating_sub(inside_top), look.chat_inside);
 
     // The rows of an answer that comes in go under the rows of what was said,
     // and the newest rows that fit are shown. While the model thinks before
@@ -308,7 +405,8 @@ fn chat_paint_rows() {
     let last = rows.len().saturating_sub(1);
     let shown: Vec<(Speaker, &str)> =
         rows.iter().map(|(speaker, text)| (*speaker, text.as_str())).chain(growing.iter().map(|text| (Speaker::Kernel, text.as_str()))).collect();
-    let skipped = shown.len().saturating_sub(style.rows as usize);
+    let fit = (style.rows as usize).saturating_sub(typing.shown.saturating_sub(1) as usize);
+    let skipped = shown.len().saturating_sub(fit);
     let mut top = inside_top.saturating_add(style.padding);
     for (number, (speaker, text)) in shown.into_iter().enumerate().skip(skipped) {
         let colour = match speaker {
@@ -325,28 +423,108 @@ fn chat_paint_rows() {
     }
 }
 
-// Paints the row being typed: its area in its own colour, then "> ", the
-// line typed so far, and a "_" that marks where the next sign will go.
+// Paints the row being typed: its area in its own colour, then each of its
+// rows (`typing_row_paint`). The area reaches from the end of the rows of
+// what was said down to the frame at the bottom.
 fn chat_paint_typing() {
     let Some(place) = chat_place() else {
         return;
     };
     let style = CHAT_STYLE;
-    let look = look();
-
-    // The area reaches from the end of the rows above down to the frame at
-    // the bottom.
+    let shape = typing_shape(&place);
+    let area_top = typing_top(&place, shape.shown);
     let inside_left = place.left.saturating_add(style.frame);
     let inside_width = place.width.saturating_sub(style.frame.saturating_mul(2));
     let inside_bottom = place.top.saturating_add(place.height).saturating_sub(style.frame);
-    let area_height = inside_bottom.saturating_sub(place.typing_top);
-    screen_rectangle(inside_left, place.typing_top, inside_width, area_height, look.chat_typing);
+    screen_rectangle(inside_left, area_top, inside_width, inside_bottom.saturating_sub(area_top), look().chat_typing);
+    for row in 0..shape.shown {
+        typing_row_paint(&place, shape, row, false);
+    }
+}
 
-    // The text goes in the middle between the area's top and bottom.
+// Paints the rows of the row being typed again from the row `from` on,
+// counted from the first shown, after a key that changed nothing before it
+// and left the shape as it was: each row's band of letters in the row's
+// colour, then its text. The gaps between the bands keep their colour. On a
+// long line this paints far less than the whole area at every key.
+fn chat_paint_typing_from(from: u32) {
+    let Some(place) = chat_place() else {
+        return;
+    };
+    let shape = typing_shape(&place);
+    for row in from..shape.shown {
+        typing_row_paint(&place, shape, row, true);
+    }
+}
+
+// Paints one row of the row being typed, `row` counted from the first shown:
+// with `band`, first the band its letters take, in the row's colour; then the
+// signs of the text that fall on it. The text is "> ", the line, and the "_"
+// when the place where the next sign goes is behind the last sign; when that
+// place lies inside the line, the sign that stands there is painted in
+// swapped colours, its cell in the colour of the letters and the sign in the
+// colour of the row. A "_" painted over it would not do: a typed "_" has the
+// same dots. While stars are typed, the text is their row. The last row's
+// letters stand where those of the one row always stood, in the middle
+// between the area's top and bottom when it is one row, and each row above
+// it one row higher.
+fn typing_row_paint(place: &ChatPlace, shape: TypingShape, row: u32, band: bool) {
+    let style = CHAT_STYLE;
+    let look = look();
     let letter_height = style.text_size.saturating_mul(LETTER_HEIGHT);
-    let top = place.typing_top.saturating_add(area_height.saturating_sub(letter_height) / 2);
-    let text = if stars_wanted() { secret_row() } else { format!("> {}_", chat_line()) };
-    chat_write(&place, top, &text, look.chat_person);
+    let inside_left = place.left.saturating_add(style.frame);
+    let inside_width = place.width.saturating_sub(style.frame.saturating_mul(2));
+    let inside_bottom = place.top.saturating_add(place.height).saturating_sub(style.frame);
+    let last_top = place.typing_top.saturating_add(inside_bottom.saturating_sub(place.typing_top).saturating_sub(letter_height) / 2);
+    let top = last_top.saturating_sub(shape.shown.saturating_sub(1).saturating_sub(row).saturating_mul(place.row_height));
+    if band {
+        screen_rectangle(inside_left, top, inside_width, letter_height, look.chat_typing);
+    }
+    let room = place.room as usize;
+    if room == 0 {
+        return;
+    }
+    let stars = stars_wanted();
+    let at = chat_at();
+    let (text, marked) = if stars {
+        (secret_row(), None)
+    } else {
+        let line = chat_line();
+        if at < line.len() { (format!("> {}", line), Some(at + 2)) } else { (format!("> {}_", line), None) }
+    };
+    let piece = shape.first.saturating_add(row as usize);
+    let start = piece.saturating_mul(room).min(text.len());
+    let end = start.saturating_add(room).min(text.len());
+    chat_write(place, top, &text[start..end], look.chat_person);
+    if let Some(cell) = marked {
+        if cell / room == piece {
+            let sign_width = style.text_size.saturating_mul(LETTER_WIDTH + 1);
+            let left = inside_left.saturating_add(style.padding).saturating_add(((cell % room) as u32).saturating_mul(sign_width));
+            screen_rectangle(left, top, sign_width, letter_height, look.chat_person);
+            screen_text(left, top, &text[cell..cell + 1], style.text_size, look.chat_typing);
+        }
+    }
+}
+
+// Paints the row being typed again after a key that changed the line or the
+// place where the next sign goes, given its shape before the key and the
+// first sign of the line that may have changed: nothing before it did. When
+// the row being typed takes another number of rows now, or shows other rows
+// of its text, the rows of what was said are painted again with it;
+// otherwise only its rows from the one that holds that sign.
+fn typing_changed(before: Option<TypingShape>, from: usize) {
+    let Some(place) = chat_place() else {
+        return;
+    };
+    let after = typing_shape(&place);
+    let room = place.room as usize;
+    if before == Some(after) && room > 0 {
+        let piece = from.saturating_add(2) / room;
+        chat_paint_typing_from(piece.saturating_sub(after.first) as u32);
+    } else {
+        chat_paint_rows();
+        chat_paint_typing();
+    }
 }
 
 // What the row being typed shows while a secret is typed: a star for each
@@ -444,7 +622,8 @@ pub fn chat_begin() {
 }
 
 // The row that says the last line that was sent before the machine was
-// switched off, or nothing if the notebook holds none.
+// switched off, or nothing if the notebook holds none. The line is also what
+// Up brings back, until another is sent.
 fn recall_row() -> Option<String> {
     match notebook_find(LAST_LINE) {
         Ok(Some(kept)) => {
@@ -452,7 +631,9 @@ fn recall_row() -> Option<String> {
             // most as many signs as a line may have are taken, and every
             // byte that is not a plain sign becomes a dot.
             let said: String = kept.iter().take(CHAT_LINE_LIMIT).map(|byte| if (b' '..=b'~').contains(byte) { *byte as char } else { '.' }).collect();
-            Some(format!("Kernel: last time you said \"{}\"", said))
+            let row = format!("Kernel: last time you said \"{}\"", said);
+            last_sent_put(said);
+            Some(row)
         }
         // Nothing was kept yet: there is nothing to say.
         Ok(None) => None,
@@ -719,13 +900,16 @@ fn kernel_rows(rows: &[String]) {
     chat_paint_typing();
 }
 
-// Takes one typed key, given as its letter. A letter is added to the line
-// being typed, Backspace takes the last one away, and Enter sends the line:
-// it moves up into what was said, and goes to the model, unless it is one of
-// the two lines the kernel keeps for itself.
+// Takes one typed key, given as its letter. A sign goes into the line being
+// typed at the place where the next sign goes; Backspace takes away the sign
+// before that place and Delete the sign at it; Left, Right, Home and End move
+// the place; Up brings back the last line sent and Down what was typed before
+// Up (see `LAST_SENT`); and Enter sends the line: it moves up into what was
+// said, and goes to the model, unless it is one of the two lines the kernel
+// keeps for itself.
 // While the kernel waits for the answer to its question (see
-// `onboarding.rs`), or for the number of a look (see `look.rs`), the line
-// that is sent is that answer.
+// `onboarding.rs`), for the number of a look (see `look.rs`), or for yes or
+// no about a file (see `files.rs`), the line that is sent is that answer.
 pub fn chat_key(letter: u8) {
     // While the kernel waits for a secret, a key or a password, the keys go
     // there and nowhere else.
@@ -733,21 +917,95 @@ pub fn chat_key(letter: u8) {
         secret_key(letter);
         return;
     }
-    let line = chat_line();
+    // The shape of the row being typed before the key, so that only what the
+    // key changed is painted again (see `typing_changed`). Each arm fetches
+    // the line where it needs it, and uses it no more once it has called
+    // another function of this file.
+    let before = chat_place().map(|place| typing_shape(&place));
+    let at = chat_at();
     match letter {
         BACKSPACE => {
-            // With nothing typed there is nothing to take away.
-            if line.pop().is_none() {
+            // Nothing stands before the place at the start of the line.
+            if at == 0 {
                 return;
             }
-            chat_paint_typing();
+            chat_line().remove(at - 1);
+            chat_at_put(at - 1);
+            typing_changed(before, at - 1);
+        }
+        DELETE_KEY => {
+            // Nothing stands at the place behind the last sign.
+            if at >= chat_line().len() {
+                return;
+            }
+            chat_line().remove(at);
+            typing_changed(before, at);
+        }
+        LEFT_KEY => {
+            if at == 0 {
+                return;
+            }
+            chat_at_put(at - 1);
+            typing_changed(before, at - 1);
+        }
+        RIGHT_KEY => {
+            if at >= chat_line().len() {
+                return;
+            }
+            chat_at_put(at + 1);
+            typing_changed(before, at);
+        }
+        HOME_KEY => {
+            if at == 0 {
+                return;
+            }
+            chat_at_put(0);
+            typing_changed(before, 0);
+        }
+        END_KEY => {
+            let length = chat_line().len();
+            if at >= length {
+                return;
+            }
+            chat_at_put(length);
+            typing_changed(before, at);
+        }
+        UP_KEY => {
+            // The last line sent, in place of what is typed, which is set
+            // aside for Down. Not while the kernel waits for the answer to a
+            // question of its own, nor again before Down or Enter.
+            if kernel_question() || set_aside_holds() {
+                return;
+            }
+            let last = last_sent();
+            if last.is_empty() {
+                return;
+            }
+            let length = last.len();
+            let typed = core::mem::replace(chat_line(), last);
+            unsafe { SET_ASIDE = Some((typed, at)) };
+            chat_at_put(length);
+            typing_changed(before, 0);
+        }
+        DOWN_KEY => {
+            // What was typed before Up, with its place.
+            if kernel_question() {
+                return;
+            }
+            let Some((typed, typed_at)) = set_aside_take() else {
+                return;
+            };
+            *chat_line() = typed;
+            chat_at_put(typed_at);
+            typing_changed(before, 0);
         }
         b'\n' if files_asking() => {
             // The answer to a question about a fetch or a kept file (see
             // `files.rs`): "yes", or anything else for no. It is shown, but
             // not remembered, not kept as the last line, and not sent to the
             // model; what comes of it is said, and the line goes on or ends.
-            let said = core::mem::take(line);
+            let said = core::mem::take(chat_line());
+            line_taken();
             let mine = format!("{}: {}", person_name(), said);
             serial_print(&format!("{}\r\n", mine));
             chat_add(Speaker::Person, &mine);
@@ -761,7 +1019,8 @@ pub fn chat_key(letter: u8) {
             // name or the look as it is. It is not given back, and it is not
             // kept as the last line; the onboarding or the look keeps what it
             // needs, and says what comes next.
-            let said = core::mem::take(line);
+            let said = core::mem::take(chat_line());
+            line_taken();
             let mut rows = Vec::new();
             if !said.is_empty() {
                 rows.push((Speaker::Person, format!("{}: {}", person_name(), said)));
@@ -791,11 +1050,14 @@ pub fn chat_key(letter: u8) {
         }
         b'\n' => {
             // An empty line is not sent.
-            if line.is_empty() {
+            if chat_line().is_empty() {
                 return;
             }
-            // Take the typed line out, which leaves an empty one behind.
-            let said = core::mem::take(line);
+            // Take the typed line out, which leaves an empty one behind. It
+            // is the line that Up brings back from now on.
+            let said = core::mem::take(chat_line());
+            line_taken();
+            last_sent_put(said.clone());
             let mine = format!("{}: {}", person_name(), said);
 
             // Two lines stay with the kernel and never go to the model. The
@@ -842,14 +1104,17 @@ pub fn chat_key(letter: u8) {
             chat_paint_rows();
             chat_paint_typing();
         }
-        _ => {
+        b' '..=b'~' => {
             // A full line takes no more signs.
+            let line = chat_line();
             if line.len() >= chat_line_room() {
                 return;
             }
-            line.push(letter as char);
-            chat_paint_typing();
+            line.insert(at, letter as char);
+            chat_at_put(at + 1);
+            typing_changed(before, at);
         }
+        _ => {}
     }
 }
 
@@ -861,6 +1126,12 @@ pub fn chat_key(letter: u8) {
 // in memory, and a key or a password goes to the onboarding. Enter with
 // nothing typed takes no secret and leaves the one kept before as it was.
 fn secret_key(letter: u8) {
+    // Only signs, Backspace and Enter count here. The arrows, Home, End,
+    // Delete, Up and Down do nothing: a secret is typed and taken away at its
+    // end only, so that every sign taken away is wiped at once.
+    if !matches!(letter, BACKSPACE | b'\n' | b' '..=b'~') {
+        return;
+    }
     // While the onboarding tries a key with the provider, nothing typed is
     // taken: it would stand ready as the answer to a question that is not
     // asked yet, and could go to the provider as a key. Enter says why, and

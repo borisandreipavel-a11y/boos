@@ -119,7 +119,7 @@ Apps the model made are kept under the names `app 1`, `app 2` and so on, by `app
 - If the line was kept, nothing is said about it.
 - If it could not be kept, the kernel says so in a row and in the terminal, `Kernel: I could not keep that line, because ...`, and the chat goes on as before.
 - On a machine with no disk, no part of the kernel's own, or a notebook that cannot be added to, the chat box says nothing about keeping; the lines at startup have said it.
-- The kept line comes from the disk, so it is treated as text from outside: at most 50 signs of it are shown, and every byte that is not a plain sign becomes a dot.
+- The kept line comes from the disk, so it is treated as text from outside: at most 200 signs of it are shown, as many as a line may have, and every byte that is not a plain sign becomes a dot. The same signs are what Up brings back into the row being typed (see [chat.md](chat.md)). A line of 200 signs fits in one entry.
 
 ## What a boot prints
 
