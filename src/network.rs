@@ -2,6 +2,7 @@
 //! stack that does everything else. Notes: `docs/network.md`.
 
 use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
@@ -13,6 +14,7 @@ use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
+use crate::download::download_hop;
 use crate::errand::{Answer, Errand, errand_answer, errand_network_ready, errand_take};
 use crate::model::{KeyVerdict, model_app, model_chat, model_tell};
 use crate::page::page_fetch;
@@ -265,6 +267,7 @@ fn network_task() {
         // the answer for the main loop to pick up. While an errand runs, this
         // task does nothing else.
         if let Some(errand) = errand_take() {
+            let mut fetched = None;
             let (sentence, key, script, reply, tokens, sent) = match &errand {
                 // The try of a key asks the fixed question, with the key
                 // being tried instead of the one kept.
@@ -282,9 +285,15 @@ fn network_task() {
                     let (sentence, script, tokens) = model_app(&mut interface, &mut card, &mut sockets, name_server, wanted);
                     (sentence, KeyVerdict::NotTold, script, None, tokens, None)
                 }
+                // One hop of a file the person wants: what it brought goes
+                // back as it is, and the main loop says what comes of it.
+                Errand::Download(address) if has_address => {
+                    fetched = Some(download_hop(&mut interface, &mut card, &mut sockets, name_server, address));
+                    (String::new(), KeyVerdict::NotTold, None, None, None, None)
+                }
                 _ => ("no answer came, because this machine has lost its address on the network".into(), KeyVerdict::NotTold, None, None, None, None),
             };
-            errand_answer(Answer { errand, sentence, key, script, reply, tokens, sent });
+            errand_answer(Answer { errand, sentence, key, script, reply, tokens, sent, fetched });
         }
 
         // The card sends no signals, so the only way to notice a packet is to

@@ -6,6 +6,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cell::Cell;
 use core::sync::atomic::Ordering;
 
 use smoltcp::iface::{Interface, SocketHandle, SocketSet};
@@ -18,7 +19,7 @@ use crate::processor::time_stamp;
 use crate::serial::serial_print;
 use crate::tasks::task_wait;
 use crate::timer::{TICKS, TICKS_PER_SECOND};
-use crate::tls::{Wire, secure_exchange, secure_ready};
+use crate::tls::{LinkEnd, Wire, secure_exchange, secure_ready};
 
 // The site whose page is fetched. Its owners keep it for examples like this.
 pub const SITE: &str = "example.com";
@@ -58,10 +59,11 @@ fn page_get(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet,
     // The piece of code between the bars (a closure) is what takes each piece
     // of the answer as it comes in.
     let mut answer = Answer::new();
-    let site_finished = site_exchange(interface, card, sockets, name_server, SITE, request.as_bytes(), ANSWER_WAIT, &mut |bytes| {
+    let site_finished = site_exchange(interface, card, sockets, name_server, SITE, request.as_bytes(), Waits::one(ANSWER_WAIT), &mut |bytes| {
         for byte in bytes {
             answer.take(*byte);
         }
+        true
     })?;
     // The page counts as whole only if the site said, through the encrypted
     // link itself, that it had sent everything.
@@ -73,13 +75,32 @@ fn page_get(interface: &mut Interface, card: &mut Card, sockets: &mut SocketSet,
     Ok(answer)
 }
 
+// How long an exchange may take, in seconds, counted from the moment the site
+// agreed to the connection: `first` for the greeting and the first piece of
+// the answer, and `rest` for the whole answer, or, when `restarts` is set,
+// for each next piece after the one before it.
+#[derive(Clone, Copy)]
+pub struct Waits {
+    pub first: u64,
+    pub rest: u64,
+    pub restarts: bool,
+}
+
+impl Waits {
+    // One wait for the greeting and the whole answer together.
+    pub const fn one(seconds: u64) -> Waits {
+        Waits { first: seconds, rest: seconds, restarts: false }
+    }
+}
+
 // One exchange with a site over an encrypted link: looks the site's name up,
 // connects, lets the site prove who it is, sends `request`, and hands every
-// piece of the answer to `taker`. `wait` is how many seconds the greeting and
-// the answer together may take. Answers "true" if the site said through the
-// link itself that it had sent everything. Whatever goes wrong comes back as
-// a reason in words. On the way it prints which address the name belongs to.
-// Only the network's task may call this.
+// piece of the answer to `taker`, which says whether it wants more: when it
+// says no, this side says goodbye through the link and the exchange ends
+// there. `waits` says how long the exchange may take. Answers "true" if the
+// site said through the link itself that it had sent everything. Whatever goes
+// wrong comes back as a reason in words. On the way it prints which address
+// the name belongs to. Only the network's task may call this.
 pub fn site_exchange(
     interface: &mut Interface,
     card: &mut Card,
@@ -87,8 +108,8 @@ pub fn site_exchange(
     name_server: Option<Ipv4Address>,
     site: &str,
     request: &[u8],
-    wait: u64,
-    taker: &mut dyn FnMut(&[u8]),
+    waits: Waits,
+    taker: &mut dyn FnMut(&[u8]) -> bool,
 ) -> Result<bool, String> {
     let Some(name_server) = name_server else {
         return Err("the network named no name server".into());
@@ -111,13 +132,14 @@ pub fn site_exchange(
         tcp::SocketBuffer::new(vec![0; ARRIVAL_ROOM]),
         tcp::SocketBuffer::new(vec![0; SENDING_ROOM]),
     ));
-    let result = conversation(interface, card, sockets, connection, address, site, request, wait, taker);
+    let result = conversation(interface, card, sockets, connection, address, site, request, waits, taker);
 
-    // Say goodbye. If the site finished properly, finish properly too.
-    // Otherwise tell the site that this side has dropped the connection.
+    // Say goodbye. If the site finished properly, or this side had what it
+    // wanted and said so through the link, finish properly too. Otherwise
+    // tell the site that this side has dropped the connection.
     let socket = sockets.get_mut::<tcp::Socket>(connection);
     match &result {
-        Ok(true) => socket.close(),
+        Ok(LinkEnd::Goodbye | LinkEnd::Stopped) => socket.close(),
         _ => socket.abort(),
     }
     let end = wait_end(GOODBYE_WAIT);
@@ -128,7 +150,7 @@ pub fn site_exchange(
         }
     }
     sockets.remove(connection);
-    result
+    result.map(|end| end == LinkEnd::Goodbye)
 }
 
 // Fetches the site's page and prints how it begins. Called once by the
@@ -234,9 +256,9 @@ fn conversation(
     address: IpAddress,
     site: &str,
     request: &[u8],
-    wait: u64,
-    taker: &mut dyn FnMut(&[u8]),
-) -> Result<bool, String> {
+    waits: Waits,
+    taker: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<LinkEnd, String> {
     // This side needs a port number too. Any number from the range kept for
     // this use will do. The processor's count of its own steps picks one, so
     // that it differs from one start of the kernel to the next.
@@ -264,23 +286,52 @@ fn conversation(
 
     // From here on nothing travels in the open. The encrypted link greets the
     // site, checks its certificate, sends the request scrambled, and hands
-    // over the answer unscrambled, piece by piece.
-    let mut wire = ConnectionWire { interface, card, sockets, connection, end: wait_end(wait) };
-    secure_exchange(site, request, &mut wire, taker)
+    // over the answer unscrambled, piece by piece. The first piece of the
+    // answer is noted, because from then on the second wait counts.
+    let begun = Cell::new(false);
+    let mut wire = ConnectionWire {
+        interface,
+        card,
+        sockets,
+        connection,
+        first_end: wait_end(waits.first),
+        rest_end: wait_end(waits.rest),
+        waits,
+        begun: &begun,
+    };
+    let mut noting = |bytes: &[u8]| {
+        begun.set(true);
+        taker(bytes)
+    };
+    secure_exchange(site, request, &mut wire, &mut noting)
 }
 
 // The connection, in the form the encrypted link wants it: something that
-// sends bytes and receives bytes, waiting where it has to. The `'a` and `'b`
-// are lifetimes: labels for how long the borrowed things stay valid.
-struct ConnectionWire<'a, 'b> {
+// sends bytes and receives bytes, waiting where it has to. The `'a`, `'b` and
+// `'c` are lifetimes: labels for how long the borrowed things stay valid.
+struct ConnectionWire<'a, 'b, 'c> {
     interface: &'a mut Interface,
     card: &'a mut Card,
     sockets: &'a mut SocketSet<'b>,
     connection: SocketHandle,
-    end: u64, // The tick at which the whole exchange gives up.
+    // The tick by which the greeting and the first piece of the answer must
+    // have come, and the one by which the rest must; with `waits.restarts`
+    // the second moves on whenever bytes arrive after the answer has begun.
+    first_end: u64,
+    rest_end: u64,
+    waits: Waits,
+    // Whether a piece of the answer has come.
+    begun: &'c Cell<bool>,
 }
 
-impl Wire for ConnectionWire<'_, '_> {
+impl ConnectionWire<'_, '_, '_> {
+    // The tick at which the exchange gives up now.
+    fn end(&self) -> u64 {
+        if self.begun.get() { self.rest_end } else { self.first_end }
+    }
+}
+
+impl Wire for ConnectionWire<'_, '_, '_> {
     fn send(&mut self, mut bytes: &[u8]) -> Result<(), &'static str> {
         // The connection takes as many bytes as it has room for. The rest
         // waits for the next turn.
@@ -292,7 +343,7 @@ impl Wire for ConnectionWire<'_, '_> {
             let taken = socket.send_slice(bytes).map_err(|_| "the connection broke")?;
             bytes = &bytes[taken..];
             stack_turn(self.interface, self.card, self.sockets);
-            if wait_is_over(self.end) {
+            if wait_is_over(self.end()) {
                 return Err("the site took too long");
             }
         }
@@ -303,13 +354,17 @@ impl Wire for ConnectionWire<'_, '_> {
         loop {
             let socket = self.sockets.get_mut::<tcp::Socket>(self.connection);
             if socket.can_recv() {
-                return socket.recv_slice(room).map_err(|_| "the connection broke");
+                let count = socket.recv_slice(room).map_err(|_| "the connection broke")?;
+                if self.waits.restarts && self.begun.get() {
+                    self.rest_end = wait_end(self.waits.rest);
+                }
+                return Ok(count);
             }
             if !socket.may_recv() {
                 // Nothing more will come.
                 return Ok(0);
             }
-            if wait_is_over(self.end) {
+            if wait_is_over(self.end()) {
                 return Err("the site took too long");
             }
             stack_turn(self.interface, self.card, self.sockets);
@@ -416,6 +471,207 @@ impl Answer {
             self.row_end();
         }
     }
+}
+
+// ---------- Reading the head of an answer, as it arrives ----------
+
+// The most bytes the first line and the lines of notes of an answer may take
+// together. A site that sends more is not read further.
+const HEAD_MOST: usize = 16 * 1024;
+// The most signs kept of the words behind the number and of the kind of what
+// is sent, and the longest address a site may send one on to.
+const WORDS_KEPT: usize = 40;
+const KIND_KEPT: usize = 100;
+const LOCATION_MOST: usize = 2048;
+
+// How long the answer's body is, as its notes say.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Length {
+    // No note says it.
+    Unsaid,
+    // So many bytes.
+    Said(u64),
+    // A note says it in a way that cannot be read, or two notes differ.
+    Unreadable,
+}
+
+// What the head of an answer says, as far as the kernel looks at it: the
+// number in the first line (200 means: here it is) and the words behind it,
+// and five notes: what kind of thing is sent (Content-Type, in small
+// letters), how long it is (Content-Length), whether it is sent in pieces
+// with their lengths in between (Transfer-Encoding), whether it is packed
+// (Content-Encoding), and where the site sends one on to (Location). All of
+// it comes from outside: the texts are cleaned to plain signs and cut, and an
+// address that holds anything but plain signs, or is longer than
+// `LOCATION_MOST`, is kept as an empty text, which no address reads as.
+pub struct Head {
+    pub number: u16,
+    pub words: String,
+    pub content_type: Option<String>,
+    pub length: Length,
+    pub transfer_coding: Option<String>,
+    pub content_coding: Option<String>,
+    pub location: Option<String>,
+}
+
+impl Head {
+    fn empty() -> Head {
+        Head {
+            number: 0,
+            words: String::new(),
+            content_type: None,
+            length: Length::Unsaid,
+            transfer_coding: None,
+            content_coding: None,
+            location: None,
+        }
+    }
+}
+
+// What a piece of the answer brought to the reader of its head.
+pub enum HeadRead {
+    // The head is not over yet.
+    More,
+    // The head is over: what it says, and the place in this piece where the
+    // body begins.
+    Done(Head, usize),
+    // The answer is not one the reader can go on with, and why.
+    Wrong(&'static str),
+}
+
+// Reads the head of an answer from its pieces as they arrive, however they
+// are cut: the first line, then the lines of notes up to the empty line. A
+// line ends in byte 10, with or without byte 13 before it.
+pub struct HeadReader {
+    line: Vec<u8>,
+    taken: usize,
+    first: bool,
+    head: Head,
+}
+
+impl HeadReader {
+    pub fn new() -> HeadReader {
+        HeadReader { line: Vec::new(), taken: 0, first: true, head: Head::empty() }
+    }
+
+    // Takes the next piece of the answer. Once the head is over, the rest of
+    // the piece is the body's, from the place given back.
+    pub fn take(&mut self, piece: &[u8]) -> HeadRead {
+        for (place, byte) in piece.iter().enumerate() {
+            self.taken += 1;
+            if self.taken > HEAD_MOST {
+                return HeadRead::Wrong("its notes are longer than I read");
+            }
+            if *byte != b'\n' {
+                self.line.push(*byte);
+                continue;
+            }
+            if self.line.last() == Some(&b'\r') {
+                self.line.pop();
+            }
+            let line = core::mem::take(&mut self.line);
+            if self.first {
+                self.first = false;
+                if !self.first_line(&line) {
+                    return HeadRead::Wrong("its answer does not begin the way an answer on the web does");
+                }
+            } else if line.is_empty() {
+                return HeadRead::Done(core::mem::replace(&mut self.head, Head::empty()), place + 1);
+            } else {
+                self.note(&line);
+            }
+        }
+        HeadRead::More
+    }
+
+    // The first line reads like "HTTP/1.1 200 OK": the number is the three
+    // digits behind the first space, and the words follow behind another.
+    fn first_line(&mut self, line: &[u8]) -> bool {
+        if !line.starts_with(b"HTTP/") {
+            return false;
+        }
+        let Some(space) = line.iter().position(|byte| *byte == b' ') else {
+            return false;
+        };
+        let Some(digits) = line.get(space + 1..space + 4) else {
+            return false;
+        };
+        if !digits.iter().all(|digit| digit.is_ascii_digit()) {
+            return false;
+        }
+        self.head.number = digits.iter().fold(0, |number, digit| number * 10 + (*digit - b'0') as u16);
+        if let Some(words) = line.get(space + 5..) {
+            self.head.words = plain_bytes(words, WORDS_KEPT);
+        }
+        true
+    }
+
+    // A line of notes: a name, a colon, and what it says. Names are told
+    // apart without regard to capital letters. A note the reader does not
+    // look at is passed over, and so is a line without a colon or one that
+    // begins with a space (a note that goes on from the line before, which
+    // the web no longer allows).
+    fn note(&mut self, line: &[u8]) {
+        if line.first().is_some_and(|byte| *byte == b' ' || *byte == b'\t') {
+            return;
+        }
+        let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+            return;
+        };
+        let name = &line[..colon];
+        let value = trimmed(&line[colon + 1..]);
+        if name.eq_ignore_ascii_case(b"content-type") {
+            if self.head.content_type.is_none() {
+                self.head.content_type = Some(plain_bytes(value, KIND_KEPT).to_ascii_lowercase());
+            }
+        } else if name.eq_ignore_ascii_case(b"content-length") {
+            let said = digits_read(value);
+            self.head.length = match (self.head.length, said) {
+                (Length::Unsaid, Some(length)) => Length::Said(length),
+                (Length::Said(before), Some(length)) if before == length => Length::Said(length),
+                _ => Length::Unreadable,
+            };
+        } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
+            joined(&mut self.head.transfer_coding, value);
+        } else if name.eq_ignore_ascii_case(b"content-encoding") {
+            joined(&mut self.head.content_coding, value);
+        } else if name.eq_ignore_ascii_case(b"location") && self.head.location.is_none() {
+            let usable = value.len() <= LOCATION_MOST && value.iter().all(|byte| (b'!'..=b'~').contains(byte));
+            self.head.location = Some(if usable { value.iter().map(|byte| *byte as char).collect() } else { String::new() });
+        }
+    }
+}
+
+// A note's value without the spaces and tabs at either end.
+fn trimmed(value: &[u8]) -> &[u8] {
+    let blank = |byte: &u8| *byte == b' ' || *byte == b'\t';
+    let start = value.iter().position(|byte| !blank(byte)).unwrap_or(value.len());
+    let end = value.iter().rposition(|byte| !blank(byte)).map_or(start, |end| end + 1);
+    &value[start..end]
+}
+
+// A number written as digits alone, if it fits; nothing for anything else.
+fn digits_read(value: &[u8]) -> Option<u64> {
+    if value.is_empty() || !value.iter().all(|digit| digit.is_ascii_digit()) {
+        return None;
+    }
+    value.iter().try_fold(0u64, |number, digit| number.checked_mul(10)?.checked_add((*digit - b'0') as u64))
+}
+
+// Adds a note's value to what notes of the same name said before, parted by
+// a comma, as the web reads several such notes; cleaned and cut.
+fn joined(kept: &mut Option<String>, value: &[u8]) {
+    let value = plain_bytes(value, WORDS_KEPT);
+    let whole = match kept.take() {
+        Some(before) if !before.is_empty() => format!("{}, {}", before, value),
+        _ => value,
+    };
+    *kept = Some(whole.chars().take(WORDS_KEPT).collect());
+}
+
+// Cleans bytes from outside as `plain_text` cleans a text.
+fn plain_bytes(bytes: &[u8], longest: usize) -> String {
+    bytes.iter().copied().filter_map(plain_sign).take(longest).collect()
 }
 
 // Cleans a whole text from outside in the same way as the function below

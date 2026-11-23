@@ -18,6 +18,7 @@ use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps
 use crate::chat::{chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::drawing::{drawing_room, drawing_table, drawing_wanted};
+use crate::files::{download_start, files_listed, files_usable, remove_ask};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
 use crate::model::ToolCall;
@@ -159,6 +160,39 @@ const TABLE_EXAMPLE: &str = concat!(
     "row Banana | yellow"
 );
 
+// The tool that fetches a file from the web and keeps it on the disk (see
+// `files.rs` and `download.rs`). It is offered while files can be kept.
+const DOWNLOAD_FILE: &str = concat!(
+    "{\"type\":\"function\",\"function\":{\"name\":\"download_file\",",
+    "\"description\":\"Fetches a file from the internet over an encrypted link and keeps it on the disk: ",
+    "a PDF, a Word or Excel file (.docx, .xlsx), plain text or CSV, of at most 4 MB. ",
+    "Use it when the person wants a file fetched or downloaded from an address, and give the address exactly as the person gave it. ",
+    "The person is asked before a site is contacted for the first time.\",",
+    "\"parameters\":{\"type\":\"object\",\"properties\":{\"address\":{\"type\":\"string\",",
+    "\"description\":\"The file's address, beginning with https://\"}},\"required\":[\"address\"]}}}"
+);
+
+// The tool that removes a kept file, with the kept files by number, name,
+// kind and size, the one kept last first. The person is asked first.
+fn remove_file_tool(files: &[(u32, String)]) -> String {
+    let mut told = String::from("Removes one of the kept files from the disk for good, once the person says yes. The kept files, by number: ");
+    let mut numbers = String::new();
+    for (place, (number, file)) in files.iter().enumerate() {
+        if place > 0 {
+            told.push_str("; ");
+            numbers.push(',');
+        }
+        told.push_str(&format!("{}: {}", number, file));
+        numbers.push_str(&format!("{}", number));
+    }
+    told.push('.');
+    format!(
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"remove_file\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"file\":{{\"type\":\"integer\",\"enum\":[{}],\"description\":\"The number of the kept file\"}}}},\"required\":[\"file\"]}}}}}}",
+        json_text(&told),
+        numbers
+    )
+}
+
 // The tool that turns the page of the panel of apps.
 fn turn_page_tool(pages: usize, shown: usize) -> String {
     format!(
@@ -173,8 +207,10 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `draw_table` while
-// the screen has room for a table; `turn_page` while the panel of apps has
-// more than one page; `forget` while anything that was said is remembered.
+// the screen has room for a table; `download_file` while files can be kept,
+// and `remove_file` while any file is kept; `turn_page` while the panel of
+// apps has more than one page; `forget` while anything that was said is
+// remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
     tools.push_str(MAKE_APP);
@@ -188,6 +224,15 @@ pub fn chat_tools() -> String {
     if let Some((rows, columns, signs)) = drawing_room() {
         tools.push(',');
         tools.push_str(&draw_table_tool(rows, columns, signs));
+    }
+    if files_usable() {
+        tools.push(',');
+        tools.push_str(DOWNLOAD_FILE);
+        let files = files_listed();
+        if !files.is_empty() {
+            tools.push(',');
+            tools.push_str(&remove_file_tool(&files));
+        }
     }
     let (pages, shown) = apps_pages();
     if pages > 1 {
@@ -210,10 +255,12 @@ pub enum ToolDone {
     // Done, and nothing in what came of it needs the model: the line ends.
     Ended,
     // What came of it goes back to the model: the kernel turned the request
-    // down, a kept app was stopped, or a table was not drawn whole.
+    // down, a kept app was stopped, a table was not drawn whole, or a file
+    // was not fetched or kept.
     Back,
-    // A new app is being written: what comes of it is known when the model's
-    // app has come, and goes back then (see `chat_answer` in `chat.rs`).
+    // A new app is being written, a file is being fetched, or the person is
+    // asked first: what comes of it is known later, and the line waits for it
+    // (see `chat_answer` and `chat_key` in `chat.rs`).
     Awaited,
 }
 
@@ -288,6 +335,17 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             }
             Err(said) => said,
         },
+        // A file from the web: `files.rs` says how it goes, and whether the
+        // line waits for the fetch or for the person's answer.
+        "download_file" => match input_text(&call.inputs, "address") {
+            Some(address) => return download_start(&address),
+            None => String::from("the model asked me to fetch a file, but I could not read its address."),
+        },
+        // A kept file removed, once the person says yes.
+        "remove_file" => match input_number(&call.inputs, "file") {
+            Some(number) => return remove_ask(number),
+            None => String::from("the model asked to remove a kept file, but I could not read which one."),
+        },
         // Everything said is forgotten first, the line that asked for it
         // too, so the row that says so is not remembered either, and nothing
         // of the line is left to go back.
@@ -314,6 +372,8 @@ pub fn tool_wanted(call: &ToolCall) -> String {
         "pick_look" => input_number(&call.inputs, "look").map(|number| format!("{}", number)),
         "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
         "draw_table" => drawing_wanted(&call.inputs, call.cut_off),
+        "download_file" => input_text(&call.inputs, "address").map(|address| String::from(address.trim())),
+        "remove_file" => input_number(&call.inputs, "file").map(|number| format!("{}", number)),
         _ => None,
     };
     match given {

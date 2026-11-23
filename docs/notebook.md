@@ -21,10 +21,13 @@ Blocks are counted from the beginning of the kernel's part, as `part_read` and `
 | Blocks | What is there |
 | --- | --- |
 | 0 | The notebook's head |
-| 1 to the last but one | The entries, one entry in one block, entry number 1 in block 1, number 2 in block 2, and so on |
+| 1 to the one before the middle | The entries, one entry in one block, entry number 1 in block 1, number 2 in block 2, and so on |
+| the middle (`blocks / 2`) to the last but one | The room for files: its head, then the files (see "The room for files" in [disk.md](disk.md)) |
 | the last | The count of starts, which is not part of the notebook (see [disk.md](disk.md)) |
 
 Room that was never written is zeros. The script that divides a disk file leaves the part as zeros.
+
+The room for files is there only on a part of 4096 blocks or more, and only while the notebook ends more than eight blocks in front of the middle, or once the room's head stands there. Otherwise the entries may use the blocks from 1 to the last but one, as before there were files: on a smaller part, on a part whose middle block holds something else, and when the notebook reaches into the room. On the usual disk file the notebook has room for 15,342 entries, where it had 30,685.
 
 ### The head
 
@@ -66,12 +69,13 @@ All numbers have their lowest byte first. A name is made of plain signs only (th
 
 `notebook_open` runs once at startup, after the kernel's own part is found. It goes through these steps, and writes nothing unless a step says so.
 
+0. **The room for files** is looked at first, by `files.rs`: whether the part is large enough for one, and whether its head stands in the middle block. The notebook is then told where the room begins and whether its head is there (see "The room for files" in [disk.md](disk.md)).
 1. **Read block 0.**
    - All zeros: no notebook was ever begun here. The kernel then looks at the eight blocks behind it. If they are zeros too, it writes a head, reads it back, and has a new, empty notebook. If any of them holds something, the part is not empty and the kernel refuses: `my part holds something, but no notebook begins it`. A head that went missing in front of entries must not be answered by starting a new notebook over them.
    - The letters and a fitting check value, version 1: go on.
    - The letters and a fitting check value, another version: refuse with `the notebook is of a version this kernel does not know`. An older kernel must leave a newer layout alone.
    - Anything else: refuse with `the first block of my part holds something I do not know`.
-2. **Walk the entries** from block 1. A block counts as the next entry only if all of this is true: the 8 letters are there, its number is the number of the block, both lengths are within their limits, the name is plain signs, and the check value fits. The first block that is not the next entry is the notebook's end. For every whole thing the kernel remembers the name, the block it begins in and how many entries it takes, the newer thing for a name taking the place of the older, so `notebook_find` needs no search on the disk. Pieces are put together as they come, and a thing in pieces is remembered only once its last piece is there and its check value fits (see "A thing in pieces"): opening reads every piece and checks every thing in pieces whole.
+2. **Walk the entries** from block 1, up to the block before the room for files when its head is there, so that no block of a file is ever read as an entry, or else up to the last but one. When the room for files has no head yet, it is left to the files after the walk only if the notebook ended more than eight blocks in front of it; then the notebook's room ends in front of it. A block counts as the next entry only if all of this is true: the 8 letters are there, its number is the number of the block, both lengths are within their limits, the name is plain signs, and the check value fits. The first block that is not the next entry is the notebook's end. For every whole thing the kernel remembers the name, the block it begins in and how many entries it takes, the newer thing for a name taking the place of the older, so `notebook_find` needs no search on the disk. Pieces are put together as they come, and a thing in pieces is remembered only once its last piece is there and its check value fits (see "A thing in pieces"): opening reads every piece and checks every thing in pieces whole.
 3. **Look behind the end.** The block at the end itself may hold anything: zeros, or an entry that a power cut spoiled, and the next entry will be written over it. But the eight blocks behind that one must be zeros. If one of them holds something, then entries lie behind a block that cannot be read, and writing at the end would write over them. Such a notebook is called damaged: it is read as far as it goes, and nothing is added to it.
 
 Entries are found only by walking from block 1, one block after the other. The kernel never searches the part for something that looks like an entry, so data that happens to look like one, inside a thing that was kept, is never taken for one.
@@ -108,6 +112,8 @@ The model's key is kept under the name `locked key`, by `onboarding.rs`, and onl
 
 The look picked by the model with the tool `pick_look`, or by the person at the onboarding's question, is kept under the name `look`, by `look.rs`, as the look's name (`Night`), not locked: a new entry each time a look is kept, and none while looks are only tried. An entry under `look` that holds no signs means that the question was answered without a pick; the line `setup` keeps one too, at once, when the notebook holds another look, so that the next start shows the first look. At startup the newest entry under `look` decides which look the screen shows, and whether the question is asked: with no entry, or with a name the kernel does not know (which leaves the first look), it is asked; an entry that holds no signs leaves the first look and asks nothing. See "Picking a look" in [chat.md](chat.md).
 
+Files fetched from the web are kept in the room for files, and noted under the names `file 1`, `file 2` and so on, by `files.rs`, once each file is on the disk and read back: where it lies, how long it is, its check value, its kind, its name, when it came and where from. A removed file's note is replaced by one that holds nothing. The sites the person allowed a fetch from are kept under `site 1`, `site 2` and so on, each holding the site's name. See "The room for files" in [disk.md](disk.md) and "download_file" in [tools.md](tools.md).
+
 Apps the model made are kept under the names `app 1`, `app 2` and so on, by `apps_kept.rs`, once they have run to their end: `app 1 script` holds the script, exactly as it ran, and `app 1` a note with the request it was made for. A script longer than 448 bytes is kept in pieces. See "Keeping an app" in [apps.md](apps.md).
 
 - If the line was kept, nothing is said about it.
@@ -117,12 +123,12 @@ Apps the model made are kept under the names `app 1`, `app 2` and so on, by `app
 
 ## What a boot prints
 
-One line, after the line about the kernel's own part and before the count of starts:
+One line, after the line about the kernel's own part and before the room for files' line and the count of starts:
 
 | Line | When |
 | --- | --- |
-| `Disk: a new notebook was begun, with room for 30685 entries` | The part held nothing |
-| `Disk: the notebook holds 2 entries and has room for 30683 more` | A notebook was there |
+| `Disk: a new notebook was begun, with room for 15342 entries` | The part held nothing |
+| `Disk: the notebook holds 2 entries and has room for 15340 more` | A notebook was there |
 | `Disk: the notebook holds 2 entries and is damaged behind that; nothing is added to it` | Something lies behind the notebook's end |
 | `Disk: nothing is kept on it, because ...` | The part holds something the kernel does not know. No count of starts follows |
 
@@ -134,7 +140,7 @@ Opening reads every entry, one block per command, so a start takes longer the mo
 
 ## Limits
 
-- **Nothing tidies the notebook.** Entries that a newer one has replaced stay, and a full notebook stays full: keeping is refused until tidying exists. The disk file in QEMU has room for 30,685 entries.
+- **Nothing tidies the notebook.** Entries that a newer one has replaced stay, and a full notebook stays full: keeping is refused until tidying exists. The disk file in QEMU has room for 15,342 entries in front of the room for files (30,685 before there were files); every line sent takes one.
 - **A thing is at most 32 KB**, kept in at most 74 entries, and a name is at most 32 bytes.
 - **A thing in pieces that never got finished takes room for good,** like every entry a newer one replaced.
 - **A damaged notebook is not repaired.** It is read up to the damage and nothing is added.

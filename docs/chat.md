@@ -147,6 +147,17 @@ Code: `src/look.rs`. The person at the machine picks the colours of everything o
 - **If that entry cannot be written,** look 1 lasts until the machine is switched off, and when the questions of `setup` are over two rows say so: `Kernel: I could not keep look 1, Blue, on the disk, because the notebook cannot be added to.` and `Kernel: so the next start shows look 2, Night, again.` They come before the question for a look when it is asked. On a notebook that cannot be added to, where it is not asked, they are the last rows, and the second ends with ` Type a line and press Enter.`
 - **`setup` is taken only while no question waits** (see "The name" above). At a start where a key is locked on the disk, the question for the password comes first, in the look kept, and `setup` typed there is taken as a password: Enter alone there, and then `setup`.
 
+## Questions about files
+
+Code: `files_asking` and `files_answer` in `src/files.rs`, called from `chat_key`.
+
+Before a fetch contacts a site for the first time, and before a kept file is removed, the kernel asks the person in the chat box (see "download_file" and "remove_file" in [tools.md](tools.md)). While it waits for the answer:
+
+- **The next line sent is the answer,** whatever it says: `yes`, in any capitals and with spaces around it, says yes; anything else says no, `key` and `setup` too.
+- **The answer is shown** as the person's row and repeated in the terminal. It is not sent to the model, not remembered with the line, and not kept as the last line.
+- **What comes of it** is said in the kernel's rows, which are remembered with the line, as every row of the kernel's.
+- The line that asked for the fetch or the removal waits for the answer, with no request of it in hand; the model is asked about it again only if a fetch then fails.
+
 ## Nothing lands outside the chat box
 
 - Every row is written by `chat_write`, which writes only as many signs as fit whole on a row, whatever it is handed. `screen_text` itself stops only at the screen's edges.

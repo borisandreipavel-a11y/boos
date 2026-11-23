@@ -82,11 +82,24 @@ pub fn secure_ready() -> Result<(), &'static str> {
     Ok(())
 }
 
+// How an exchange over the link ended, when it did not go wrong.
+#[derive(Clone, Copy, PartialEq)]
+pub enum LinkEnd {
+    // The site said through the link itself that it had sent everything.
+    Goodbye,
+    // The one taking the answer had what it wanted, and this side said
+    // goodbye through the link before the site had sent everything.
+    Stopped,
+    // The connection simply ended, or the wait ran out after the answer had
+    // begun.
+    Ended,
+}
+
 // One exchange over an encrypted link with the site called `name`: greet it,
 // check its certificate, send `request`, and hand every piece of the answer
-// to `taker`, unscrambled. Answers "true" if the site said through the link
-// itself that it had sent everything, and "false" if the link simply ended.
-pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &mut dyn FnMut(&[u8])) -> Result<bool, String> {
+// to `taker`, unscrambled. When `taker` says it wants no more, this side says
+// goodbye through the link and stops reading. Says how the exchange ended.
+pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &mut dyn FnMut(&[u8]) -> bool) -> Result<LinkEnd, String> {
     secure_ready()?;
     let (settings, root_count) = link_settings()?;
     let site = ServerName::try_from(String::from(name)).map_err(|_| String::from("the site's name is not a usable name"))?;
@@ -101,6 +114,7 @@ pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &
     let mut request_sent = false;
     let mut answer_begun = false;
     let mut site_finished = false;
+    let mut stopped = false; // The taker wants no more of the answer.
 
     loop {
         // The library works through what has arrived and says what it needs
@@ -140,8 +154,9 @@ pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &
             // The greeting is over, and data may be sent.
             ConnectionState::WriteTraffic(mut writing) => {
                 greeted = true;
-                if site_finished {
-                    // The site has said goodbye. Say it too, and stop.
+                if site_finished || stopped {
+                    // The site has said goodbye, or the taker has what it
+                    // wants. Say goodbye, and stop.
                     if let Ok(written) = writing.queue_close_notify(&mut outgoing) {
                         wire.send(&outgoing[..written]).ok();
                     }
@@ -179,7 +194,10 @@ pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &
                     let AppDataRecord { discard: used, payload } = record.map_err(why)?;
                     discard += used;
                     answer_begun = true;
-                    taker(payload);
+                    // Once the taker wants no more, the rest is passed over.
+                    if !stopped && !taker(payload) {
+                        stopped = true;
+                    }
                 }
             }
             // The site has said, through the link, that it has sent everything.
@@ -211,7 +229,13 @@ pub fn secure_exchange(name: &str, request: &[u8], wire: &mut dyn Wire, taker: &
             break;
         }
     }
-    Ok(site_finished)
+    Ok(if site_finished {
+        LinkEnd::Goodbye
+    } else if stopped {
+        LinkEnd::Stopped
+    } else {
+        LinkEnd::Ended
+    })
 }
 
 // Turns the TLS library's word for what went wrong into plain words. Where

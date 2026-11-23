@@ -34,6 +34,7 @@ MODEL_KINDS = ("wrongkey,credit,echo,echopart,echoescaped,echocut,good,goodlong,
 STAND_IN = ["src/model.rs", "src/page.rs", "src/errand.rs"]  # asking the provider (the stand-in in tests)
 APPS = ["src/apps.rs"]
 SECRET = ["src/secret.rs"]  # a key or a password typed and kept
+FILES = ["src/files.rs", "src/download.rs", "src/notebook.rs", "src/parts.rs", "src/disk.rs", "src/tls.rs"]  # files from the web, kept
 
 SUITES = [
     dict(name="app", command=["test_app.py", APP_KINDS, "dump"], watches=STAND_IN + APPS + SECRET, seconds=420),
@@ -70,6 +71,9 @@ SUITES = [
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
          seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=130, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
                       bound=125, rounds=120, table=110, tablesmall=40)),
+    # Files fetched from the web and kept on the disk, in the stand-in copy, whose stand-in serves made-up files.
+    dict(name="downloads", command=["test_downloads.py"], split=True, watches=STAND_IN + FILES,
+         seconds=dict(fetch=110, refusals=330, remove=110, startlines=60, full=50)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -117,7 +121,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 37,
-                "intel": 10}
+                "intel": 10, "downloads": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -282,6 +286,16 @@ CAUGHT_BY = {
     'break tools: nostarkept': 'rounds line request 15',
     'break tools: tablefaint': 'tools-table fruit',
     'break tools: tablewanted': "tools-table 'a broken one'",
+    'break downloads: noidentity': 'dl-fetch GET /go/a.pdf',
+    'break downloads: nolengthcap': "dl-refusals 'You: fetch /big.pdf'",
+    'break downloads: chunkedtaken': "dl-refusals 'You: fetch /chunked.pdf'",
+    'break downloads: packedtaken': "dl-refusals 'You: fetch /gz.pdf'",
+    'break downloads: noyes': "dl-fetch 'You: get https://files.example.org/go/a.pdf'",
+    'break downloads: sixhops': "dl-refusals 'You: fetch /hops/1'",
+    'break downloads: sitenotkept': 'fetch sites kept',
+    'break downloads: removenotkept': 'remove file 1 removed',
+    'break downloads: notebookwhole': "fetch the notebook's room",
+    'break downloads: noloopcheck': "dl-refusals 'You: fetch /loop/1'",
     'break intel: receiving never switched on': 'start: the network lines are not as meant',
     'break intel: the card may not reach memory': 'start: the network lines are not as meant',
     'break intel: a used card not started over': 'again: the second setup did not start the card over, once',

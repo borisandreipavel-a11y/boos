@@ -23,13 +23,25 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - Mark code pages read-only and data pages non-executable. Today every page is writable and nothing is protected.
 - `map_page` cannot be used inside the range covered by 2 MB pages. Mapping something small there would need the 2 MB page split up first.
 
+## Files from the web
+
+- **An address must be typed,** or known to the model: there is no search, and no page is read for its links. A line holds 50 signs, so only a short address fits in one; a longer line is a part of its own, still to come.
+- **The link is slow:** about 50 KB a second (see "Network" below), so the largest file, 4 MB, takes some 80 seconds, and the chat turns every other line away meanwhile. A hop may take three minutes.
+- **What the link cannot fetch:** a site that sends files only packed or only in pieces with their lengths; a site that speaks only TLS 1.2, insists on a curve other than P-256, or has only addresses of the newer kind (IPv6); a site that refuses a request without a `User-Agent`; a port other than 443; a machine's number in place of a site's name. None of this was tried against a real site.
+- **A file is held in memory whole** before it is written, up to 4 MB; the heap keeps its frames afterwards, for the next file.
+- **The room for files is about 7.5 MB** on the usual disks, and only a larger part makes it larger. A file takes one run of neighbouring blocks: after removals, a file may find no run long enough while enough room is free in pieces. Removed files' blocks are not wiped.
+- **The notebook has half the room it had,** about 15,300 entries, and every line sent takes one; nothing tidies it yet.
+- **An older kernel** sees the whole part as its notebook's: on a disk with files, its notebook would write over them only once it reached the middle of the part.
+- **A site's yes cannot be taken back,** and `setup` does not forget the sites allowed or the files kept.
+- **What a file holds is not looked at** beyond its first bytes; a reader that turns a file into a document is still to come. A kept file's check value is not checked again after it was written.
+
 ## Network
 
 - The page fetch is a demonstration: one fixed site, once per start, inside the stack's own task. It goes over an encrypted link; the limits of that link are under "Encryption" below.
 - Every start of the kernel reaches the internet: one name question and one encrypted exchange with the site. A machine with no way out prints a "no page fetched" line instead.
 - While a page is fetched, the stack's task does nothing else. News about the address waits until the fetch is over, which is about 26 seconds at worst.
 - Only the first address of a name is tried: smoltcp is set to keep one. Only the 4-byte sort of address is asked for.
-- The site's answer is taken as it comes. A redirect is not followed. The length the site states is not compared with what arrived; "the whole page" means that the site said through the encrypted link that it had sent everything. The greeting and the answer together get 15 seconds. A site that is still sending then is cut off, and what came is shown as not whole; so is a page too big to arrive in that time.
+- The example page's answer is taken as it comes: a redirect is not followed, and the length the site states is not compared with what arrived (a fetched file's is; see "Fetching a file" in [network.md](network.md)); "the whole page" means that the site said through the encrypted link that it had sent everything. The greeting and the answer together get 15 seconds. A site that is still sending then is cut off, and what came is shown as not whole; so is a page too big to arrive in that time.
 - A page arrives at about 50 KB a second through the encrypted link. The card's adapter tells smoltcp "one packet at a time", so the other side sends one packet and waits, and the stack is looked at once per tick. The card could take 16 packets between two looks; saying so, and more room for arrived bytes, would speed this up.
 - After asking for one machine's hardware address, smoltcp asks for no other for a second. At each start that delays the page by a second, because the name server's address is asked for just before the gateway's. The by-hand gateway answer is not handed to the stack.
 - The by-hand gateway question is still asked at startup, with an assumed address (`10.0.2.15`) and gateway (`10.0.2.2`). The stack does not need it. It could go.

@@ -221,7 +221,7 @@ def main():
             press(machine, chat, "make " + request + ENTER)
             sent.append("make " + request)
             asked.append(request)
-            line_bodies.append(body_meant("make " + request, [], record=chat.records[-1], key=KEY))
+            line_bodies.append(body_meant("make " + request, [], record=chat.records[-1], key=KEY, files=None))
             line_labels.append("make " + request)
             # The line's answer is the tool make_app: the kernel says so, and asks for the app.
             end = time.time() + 40
@@ -332,7 +332,7 @@ def main():
                 if mistake_line is not None:
                     chat.remember(hide(terminal_says(mistake_line), KEY))
                 chat.again()
-                line_bodies.append(body_again("make " + request, [], chat.agains[-1], key=KEY))
+                line_bodies.append(body_again("make " + request, [], chat.agains[-1], key=KEY, files=None))
                 line_labels.append("make " + request + ", again")
                 chat.memory.answered(again_words)
             if behaviour == "runrandom":
@@ -364,7 +364,7 @@ def main():
         words_before = sum(1 for line in terminal_lines(machine) if line.startswith("Model: "))
         press(machine, chat, LINE + ENTER)
         sent.append(LINE)
-        line_bodies.append(body_meant(LINE, [], record=chat.records[-1], key=KEY))
+        line_bodies.append(body_meant(LINE, [], record=chat.records[-1], key=KEY, files=None))
         line_labels.append(LINE)
         end = time.time() + 40
         while time.time() < end and sum(1 for line in terminal_lines(machine) if line.startswith("Model: ")) <= words_before:

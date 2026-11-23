@@ -215,8 +215,15 @@ def apps_lines(lines):
     return [l for l in lines[:hint] if l.startswith("Apps:")]
 
 
-def count_line(entries, last=LAST):
-    room = (last - FIRST + 1) - 2 + 1 - (entries + 1)
+def count_line(entries, last=LAST, files=True):
+    """The notebook's line at a start. Entries may use the blocks from 1 to the last but one of the part; on a part of
+    4096 blocks or more, a notebook that ends more than eight blocks in front of the middle leaves the back half to the
+    room for files, and ends in front of it (docs/notebook.md). `files`: False for a kernel from before that room."""
+    blocks = last - FIRST + 1
+    end = blocks - 2
+    if files and blocks >= 4096 and (entries + 1) + 8 < blocks // 2:
+        end = blocks // 2 - 1
+    room = end + 1 - (entries + 1)
     return "Disk: the notebook holds %d %s and has room for %d more" % (entries, "entry" if entries == 1 else "entries", room)
 
 
@@ -755,7 +762,7 @@ def scenario_older():
     said = run.wait_line('Kernel: you said "hello from before"', timeout=20)
     lines = run.end()
     report("older line answered", said is not None)
-    want = count_line(before["end"] - 1)
+    want = count_line(before["end"] - 1, files=False)
     report("older count of entries", want in lines, None if want in lines else "%r" % [l for l in lines if l.startswith("Disk: the notebook")])
     report("older says nothing about apps", not [l for l in lines if l.startswith("Apps:")])
     after = check_notebook("older", disk, before, ["last line"])
