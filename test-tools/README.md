@@ -26,8 +26,9 @@ computer, so that N computers together run each job once; the boot tests on GitH
 It builds the interpreter and the kernel once, then runs the jobs longest first: each suite once (the long ones
 split into their scenarios), and each break on purpose alone in a copy of the project. It opens no window and asks
 nothing. It prints a line for each job as it ends and a table at the end, keeps every job's output in
-`run-tests\<date-time>\` under the work folder, and ends with 0 only when every suite passed and every break was
-caught (the misses that `docs/testing.md` names excepted).
+`run-tests\<date-time>\` under the work folder, with a copy beside it of the notes each stand-in wrote during the job
+(`<job>.<name>-server.log`), and ends with 0 only when every suite passed and every break was caught (the misses that
+`docs/testing.md` names excepted).
 
 - **What a change needs.** A test script or helper that changed runs every suite that uses it (read from the
   scripts' imports). A kernel file runs the suites whose entry in `suites.py` watches it; any other kernel file

@@ -445,6 +445,24 @@ def sweep(folder):
     return ended
 
 
+def notes_kept(runs, since, stem):
+    """Copies the notes of every stand-in (`*server.log` in `runs`, see model_server.py) written since `since` to
+    `stem` and a dot and the notes' own name, beside a job's output: a later job on the same test machine may write
+    notes of the same name, which would leave nothing to read of this job's requests and answers. A copy that fails
+    is passed over."""
+    try:
+        names = os.listdir(runs)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(runs, name)
+        try:
+            if name.endswith("server.log") and os.path.getmtime(path) >= since:
+                shutil.copyfile(path, stem + "." + name)
+        except OSError:
+            pass
+
+
 class Worker:
     def __init__(self, number, run_folder):
         self.number = number
@@ -514,6 +532,7 @@ class Worker:
             seconds = time.time() - started
             timed_out = out_of_time.is_set()
             log.write("# ended after %.1f s%s\n" % (seconds, ", stopped at the first failure" if stopped else (", TIMED OUT" if timed_out else "")))
+        notes_kept(os.path.join(self.work, "runs"), started, log_path[:-len(".txt")])
         if stopped or timed_out or process.returncode not in (0, None):
             ended = sweep(self.work)
             if ended:
