@@ -70,8 +70,8 @@ def _build(port, roots, more, redirect):
         page = swap(page, "    let address = name_lookup(interface, card, sockets, name_server, site)?;\n",
                     "    let _ = name_server;\n    let address = IpAddress::v4(10, 0, 2, 2); // TEST: the test server, no name question\n")
     page = swap(page, "    let mut answer = Answer::new();\n", "    let mut answer = Answer::new();\n    let mut test_digest = <sha2::Sha256 as sha2::Digest>::new(); // TEST\n    let mut test_count = 0usize;\n")
-    page = swap(page, "        for byte in bytes {\n            answer.take(*byte);\n        }\n    })?;\n",
-                "        sha2::Digest::update(&mut test_digest, bytes);\n        test_count += bytes.len();\n        for byte in bytes {\n            answer.take(*byte);\n        }\n    })?;\n"
+    page = swap(page, "        for byte in bytes {\n            answer.take(*byte);\n        }\n        true\n    })?;\n",
+                "        sha2::Digest::update(&mut test_digest, bytes);\n        test_count += bytes.len();\n        for byte in bytes {\n            answer.take(*byte);\n        }\n        true\n    })?;\n"
                 "    {\n        let done = sha2::Digest::finalize(test_digest);\n        let mut hex = alloc::string::String::new();\n        for byte in done.iter() {\n            hex.push_str(&format!(\"{:02x}\", byte));\n        }\n"
                 "        serial_print(&format!(\"TEST digest {} of {} bytes\\r\\n\", hex, test_count));\n    }\n")
     if more and "page" in more:

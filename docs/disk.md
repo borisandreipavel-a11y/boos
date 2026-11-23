@@ -77,15 +77,23 @@ What is not recognised:
 
 ## Writing a block
 
-Code: `disk_write` in `src/disk.rs`, `part_write` and `WriteTicket` in `src/parts.rs`. Two things write: the count of starts in `src/starts.rs`, and the notebook in `src/notebook.rs`; see [notebook.md](notebook.md).
+Code: `disk_write` in `src/disk.rs`, `part_write` and `WriteTicket` in `src/parts.rs`. Three things write: the count of starts in `src/starts.rs`, the notebook in `src/notebook.rs` (see [notebook.md](notebook.md)), and files fetched from the web in `src/files.rs` (see "The room for files" below).
 
 - **The kernel writes only inside its own part.** `part_write(block, from)` writes one block of the kernel's own part, numbered from 0 at the part's beginning, and refuses a number at or past the part's length, exactly as `part_read` does for reading. It is the only place in the kernel that writes to a disk.
-- **That is enforced when the kernel is built, not by habit.** `disk_write`, which writes a block of the disk by its own number, asks for a ticket, a `WriteTicket`. What a ticket holds is private to `parts.rs`, so only code in that file can make one, and `part_write` is the one place that does. Code anywhere else that tries to call `disk_write`, with a ticket it makes itself or with none, does not build.
+- **That is enforced when the kernel is built, not by habit.** `disk_write`, which writes a block of the disk by its own number, asks for a ticket, a `WriteTicket`. What a ticket holds is private to `parts.rs`, so only code in that file can make one, and `part_write` is the one place that does, with `part_write_run` below. Code anywhere else that tries to call `disk_write`, with a ticket it makes itself or with none, does not build.
 - `disk_write` also keeps its own bound: a block the disk does not have is refused, as for reading.
 - **The command is number `0x35`,** the write command for disks that count their blocks in 48 bits. The block to be written is put into the data frame first. The entry in the list of commands gets one more mark, bit 6, which says that the command's data goes to the disk.
 - The data frame is wiped before a command that reads, and must not be before one that writes: it holds the block on its way out.
 - **Then the disk is told to put it down for good,** command `0xEA`. A disk may keep written blocks in a store of its own for a while, where a power cut would lose them; this command empties that store onto the disk itself. It is a command without data: its entry names no place for data, and the check for a whole block does not apply to it.
 - A write that fails, because the disk reports a failure or does not answer, comes back as a reason in words, and the socket is got going again as after a failed read.
+
+### A run of blocks
+
+A file takes many neighbouring blocks, and one command per block, each followed by "put it down for good", would make a file of 4 MB take over half a minute: keeping a thing in the notebook took 0.32 seconds for 74 blocks (see [testing.md](testing.md)).
+
+- **One command moves up to eight blocks,** as many as the data frame of 4 KB holds (`BLOCKS_AT_ONCE`): the same read and write commands, with the count of blocks in the packet where one stood before, room for that many bytes in the place for data, and the check that the controller passed on all of them. `disk_read_blocks` and `disk_write_blocks` do that; `disk_read` and `disk_write` are as before.
+- `disk_write_blocks` does not tell the disk to put the blocks down for good. `disk_put_down` does that, once, for all that was written before it. It asks for the same ticket.
+- **`part_write_run(block, bytes)`** in `parts.rs` writes all of the bytes from that block of the kernel's own part on, the last block filled up with zeros, eight blocks to a command, and then has the disk put them down for good once. A run that would reach past the part's end is refused before anything is written, so it keeps to the part as `part_write` does. `part_read_run` reads such a run back.
 
 ### The count of starts
 
@@ -220,15 +228,29 @@ powershell -NoProfile -File make-boot-disk.ps1 boot.img target\x86_64-unknown-ue
 - **The firmware's own lines.** QEMU's firmware prints two lines on the serial port before the kernel's first, as it does when it starts the kernel from the folder. They name the disk it started from: `BdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00005 " from PciRoot(0x0)/Pci(0x4,0x0)/Sata(0x0,0xFFFF,0x0)`, the SATA disk on the AHCI controller, where a start from the folder names `PciRoot(0x0)/Pci(0x1,0x1)/Ata(Primary,Master,0x0)`, the folder's disk on the IDE controller. Counted from the kernel's first line, a start from the disk shows as many lines up to the prompt as one from the folder.
 - **The file is not in the repository:** `.gitignore` names `boot.img`, and `boot.vdi` for a copy in VirtualBox's own format. Like `disk.img` it holds what the kernel keeps. Nothing of this reads or changes `disk.img`.
 
+## The room for files
+
+Code: `src/files.rs`. Files fetched from the web (see "download_file" in [tools.md](tools.md)) are kept in a room of their own in the back half of the kernel's part. The kernel still writes only inside its own part.
+
+- **Where:** on a part of 4096 blocks (2 MB) or more, the room begins in the part's middle block, `blocks / 2`, which holds the room's **head**: the 16 letters `boos files      ` (six spaces at the end), the version of the layout, 1, in 4 bytes, and a check value of those 20 bytes in 4 more, all lowest byte first, as the notebook's head. Files lie behind it, up to the last but one block of the part; the last holds the count of starts. On a part of 30,687 blocks, as on the usual disk file and the boot disk, the head is in block 15,343 and files may take 15,342 blocks, about 7.5 MB. A smaller part has no room for files.
+- **The notebook ends in front of it.** Its entries may then use the blocks from 1 to the one before the head, so it has room for about half as many entries as before (see [notebook.md](notebook.md)). The room is checked at startup, before the notebook is opened (`files_look`): a head there means the room is in use, and the notebook's entries end in front of it, so that no block of a file is ever read as an entry; zeros there mean that no file was kept yet, and the room is left to the files only if the notebook ends more than eight blocks in front of it, so that the eight blocks the notebook looks at behind its end lie in front of the room too. A notebook that reaches further keeps all of its room, and there is no room for files. So does a part whose middle block holds anything else.
+- **The head is written when the first file is kept,** and read back. A start writes nothing for the room.
+- **A file** lies in one run of neighbouring blocks: the first run of free blocks it fits in, counted from the head. It is written with `part_write_run` and read back, a frame's worth at a time, and only if every byte is as written does its note go into the notebook, under `file 1`, `file 2` and so on. Until then the blocks count as free: a power cut while a file is written leaves nothing half kept.
+- **The note** is text, one line each: `blocks <first> <how many>`, `bytes <length>`, `check <CRC-32 of the file, 8 hex digits>`, `kind pdf` (or `docx`, `xlsx`, `txt`, `csv`), `name <name>`, `date <the clock chip's date and time, or unknown>`, `from <the address it came from>`. A note comes from the disk, from outside the kernel: it counts only if every line is as written and the file lies wholly inside the room. A note that holds nothing is a file that was removed (see [notebook.md](notebook.md): a name can only be replaced).
+- **The free room** is what no note names. A file that fits in no run is refused, with the largest run that is free.
+- **Removing a file** replaces its note with one that holds nothing; its blocks are free again for the next file. Nothing on them is wiped.
+- **Sites the person allowed** are kept in the notebook too, under `site 1`, `site 2` and so on, each holding a site's name; at startup only the names that read as a site's name count.
+
 ## What a boot prints
 
-Five lines, after the lines of the apps and before the network card's, and then the chat box's rows from the notebook:
+Six lines, after the lines of the apps and before the network card's, and then the chat box's rows from the notebook:
 
 ```
 Disk controller: found, device 4 on bus 0 of the PCI list
 Disk: ready, "QEMU HARDDISK", 16 MB, in socket 0 of its controller
 Disk: my own part is 14 MB, from block 2048 to block 32734
-Disk: the notebook holds 3 entries and has room for 30682 more
+Disk: the notebook holds 3 entries and has room for 15339 more
+Disk: the room for files holds 2 files and has room for 7650 KB more
 Disk: this is start number 3
 Kernel: last time you said "hello"
 Kernel: welcome back, Ada.
@@ -236,10 +258,11 @@ Kernel: type your password and press Enter to unlock the key. Enter alone goes o
 ```
 
 - The fourth line is the notebook's, and the lines that begin with `Kernel:` come from the chat box: the line kept last, the greeting by the name kept in the notebook, and the question for the password that unlocks the key locked there, or else the question for the key or for a name; [notebook.md](notebook.md) and [chat.md](chat.md) list their other forms. If the notebook cannot be opened the fourth line reads `Disk: nothing is kept on it, because ...`, nothing is written to the part, and no line about the count follows.
-- The fifth line counts the kernel's starts with this disk. The number is one higher at every start, because the kernel keeps it on the disk. A new disk file begins at 1.
+- The fifth line is the room for files': how many files it holds, and how much room is free in it, in KB rounded down. `..., no more are kept, since the notebook cannot be added to` when the notebook is damaged. When there is no room for files: `Disk: no room for files, because ...`, with `my part is too small for it`, `the notebook reaches into it`, or `the block where it begins holds something I do not know`.
+- The sixth line counts the kernel's starts with this disk. The number is one higher at every start, because the kernel keeps it on the disk. A new disk file begins at 1.
 - If the block for the count holds something the kernel does not know, the line reads `Disk: the count of starts could not be read and begins again; this is start number 1`.
 - If the count cannot be written, or the disk does not hold what was written when it is read back, the line reads `Disk: this start could not be counted, because ...` with the reason, and the kernel carries on.
-- A disk with no part of the kernel's own gives no fourth and no fifth line, and nothing is written to it.
+- A disk with no part of the kernel's own gives no fourth, fifth or sixth line, and nothing is written to it.
 
 - The third line says where the kernel's own part lies on the disk, with its first and its last block, and its size in MB, rounded down.
 - If the kernel finds no part of its own, the third line reads `Disk: nothing on it is mine, because ...` with one of the reasons listed under "What `part_find` checks", or with the reason of a block that could not be read. A disk file that was never divided gives `it has no list of parts`.
@@ -261,4 +284,4 @@ All waiting for the controller is done by looking again and again, up to 3 milli
 
 ## Limits
 
-See [open-points.md](open-points.md). In short: the kernel reads and writes one block at a time; only an AHCI controller and the first disk on it are used; only startup code and the main loop use the disk; every list of parts it has read was made by this project's own script or tests; and several of the steps were never seen to matter in QEMU.
+See [open-points.md](open-points.md). In short: the kernel reads and writes one block at a time, but for files, eight; the room for files is about 7.5 MB on the usual disks, and nothing makes it larger but a larger part; only an AHCI controller and the first disk on it are used; only startup code and the main loop use the disk; every list of parts it has read was made by this project's own script or tests; and several of the steps were never seen to matter in QEMU.

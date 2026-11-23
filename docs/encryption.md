@@ -171,4 +171,4 @@ How it goes in QEMU:
 - **The date is the clock chip's.** A clock that is wrong by years refuses every site; a clock set to local time is hours off, which matters only on a certificate's first or last day.
 - **Nothing is kept between links.** Every link makes the full greeting.
 - **The roots are fixed when the kernel is built.**
-- **Two things use the link,** the page fetch and the question to the model (see [model.md](model.md)), both inside the network stack's own task.
+- **Three things use the link,** the page fetch, the question to the model (see [model.md](model.md)) and the fetch of a file (see "Fetching a file" in [network.md](network.md)), all inside the network stack's own task. A site that speaks only TLS 1.2, or insists on a curve other than P-256, cannot be fetched from.

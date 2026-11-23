@@ -18,6 +18,7 @@ use crate::conversation::{
     conversation_again, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent, conversation_split,
 };
 use crate::errand::{Answer, Errand, errand_ask};
+use crate::files::{download_answer, files_answer, files_asking, files_setup};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
@@ -501,6 +502,20 @@ fn ask_again(mut asks: Asks) {
     }
 }
 
+// What comes of a tool done for a line, for the line's asks: a line that
+// waits keeps them, one whose tool goes back asks the model again, and one
+// that ends lets them go. Nothing is asked again once `setup` ended the asks.
+fn asks_after(outcome: ToolDone) {
+    let Some(asks) = asks_take() else {
+        return;
+    };
+    match outcome {
+        ToolDone::Awaited => asks_put(asks),
+        ToolDone::Back => ask_again(asks),
+        ToolDone::Ended => {}
+    }
+}
+
 // Says the answer to an errand, which the main loop picks up from the
 // network's task. The answer to the try of a key goes to the onboarding,
 // which says what comes of it. For a line, the line as it was sent is
@@ -584,6 +599,12 @@ pub fn chat_answer(answer: Answer) {
         }
         return;
     }
+    // A hop of a file the person wants (see `files.rs`).
+    if let Errand::Download(_) = &answer.errand {
+        let outcome = download_answer(answer.fetched, &answer.sentence);
+        asks_after(outcome);
+        return;
+    }
     if let Errand::AppRequest { request, inputs, values } = &answer.errand {
         let asks = asks_take();
         chat_say(&answer.sentence);
@@ -665,6 +686,19 @@ pub fn chat_key(letter: u8) {
             }
             chat_paint_typing();
         }
+        b'\n' if files_asking() => {
+            // The answer to a question about a fetch or a kept file (see
+            // `files.rs`): "yes", or anything else for no. It is shown, but
+            // not remembered, not kept as the last line, and not sent to the
+            // model; what comes of it is said, and the line goes on or ends.
+            let said = core::mem::take(line);
+            let mine = format!("{}: {}", person_name(), said);
+            serial_print(&format!("{}\r\n", mine));
+            chat_add(Speaker::Person, &mine);
+            chat_paint_rows();
+            chat_paint_typing();
+            asks_after(files_answer(&said));
+        }
         b'\n' if onboarding_asking() || look_asking() => {
             // The answer to a question: the name the onboarding asks for, or
             // the number of a look. It may be empty: Enter alone leaves the
@@ -721,6 +755,7 @@ pub fn chat_key(letter: u8) {
                 // now, so what was said before is forgotten, and the model is
                 // not asked again about a line whose asks are under way.
                 asks_take();
+                files_setup();
                 conversation_forget();
                 onboarding_again()
             } else {

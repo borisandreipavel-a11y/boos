@@ -60,6 +60,8 @@ mod tools; // The tools: what the kernel can do when the model asks for it.
 mod conversation; // The conversation: the last lines sent to the model, which go with the next.
 mod drawing; // A table the model describes, drawn by the kernel in a frame.
 mod drawing_values; // The values the drawing's check of letters is worked out with.
+mod download; // Fetching a file from the web, one hop at a time.
+mod files; // Files kept on the disk, and the questions before a fetch or a removal.
 
 use alloc::format;
 use alloc::string::String;
@@ -88,6 +90,7 @@ use keyboard::{key_letter, keyboard_setup, next_key};
 use lines::{lines_begin, lines_key, lines_paint_new, lines_start_over, lines_stop_screen, lines_stopping, lines_tasks_start};
 use network::{gateway_ask, network_start};
 use network_card::{network_card_find, network_card_setup};
+use files::{files_begin, files_look};
 use notebook::notebook_open;
 use page_tables::{GIGABYTE, page_tables_setup};
 use parts::part_find;
@@ -333,8 +336,11 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
 
                         // Open the notebook that the kernel keeps things in,
                         // in that part. If the part holds something else,
-                        // the kernel writes nothing to it at all.
-                        match notebook_open() {
+                        // the kernel writes nothing to it at all. The back
+                        // half of a part that is large enough is the room
+                        // for files, and the notebook ends in front of it.
+                        let (files_from, files_begun) = files_look();
+                        match notebook_open(files_from, files_begun) {
                             Ok(notebook) => {
                                 let entries = if notebook.entries == 1 { "entry" } else { "entries" };
                                 if notebook.damaged {
@@ -344,6 +350,7 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
                                 } else {
                                     write!(serial, "Disk: the notebook holds {} {} and has room for {} more\r\n", notebook.entries, entries, notebook.room).ok();
                                 }
+                                files_begin(notebook.files_room);
 
                                 // Count this start, in the last block of the
                                 // part.

@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::app_inputs::{Input, Value};
+use crate::download::Fetched;
 use crate::model::{ChatReply, KeyVerdict};
 use crate::processor::{signals_back, signals_off};
 
@@ -34,6 +35,9 @@ pub enum Errand {
     // writes it is told; and the values its first run is given, which stay
     // in the kernel until the app has come (see `app_inputs.rs`).
     AppRequest { request: String, inputs: Vec<Input>, values: Vec<Value> },
+    // Fetch one hop of a file from the web: the address, as `files.rs` read
+    // and checked it (see `download.rs`).
+    Download(String),
 }
 
 // The answer to an errand: which errand it answers; what the kernel has to
@@ -43,7 +47,7 @@ pub enum Errand {
 // model answered; for a line or an app the provider answered, the terminal's
 // line about how many tokens that took; and for a line, the line as it was
 // sent to the model, with the key starred, or nothing when no request was
-// put together for it.
+// put together for it; for a hop of a fetch, what it brought.
 pub struct Answer {
     pub errand: Errand,
     pub sentence: String,
@@ -52,6 +56,7 @@ pub struct Answer {
     pub reply: Option<ChatReply>,
     pub tokens: Option<String>,
     pub sent: Option<String>,
+    pub fetched: Option<Fetched>,
 }
 
 // How far the one errand has got. There is room for one at a time.

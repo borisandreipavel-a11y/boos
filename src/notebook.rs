@@ -104,6 +104,9 @@ pub struct NotebookFacts {
     // Whether something lies behind the notebook's end that the kernel
     // cannot read. Such a notebook is read and not added to.
     pub damaged: bool,
+    // Whether the back of the part is left to the room for files (see
+    // `files.rs`): the notebook's own room then ends in front of it.
+    pub files_room: bool,
 }
 
 // Reads a number of `length` bytes out of a block, lowest byte first.
@@ -220,7 +223,15 @@ fn remember(names: &mut Vec<Kept>, name: &str, block: u64, pieces: u64) {
 // that holds nothing, and goes through the entries from the first to the
 // last. If the part holds something the kernel does not know, the reason
 // comes back in words, and nothing at all is written to the part.
-pub fn notebook_open() -> Result<NotebookFacts, &'static str> {
+//
+// `files_from` is the block where the room for files begins, on a part large
+// enough for one, and `files_begun` says whether a head of that room stands
+// there already (see `files.rs`). Then the notebook's entries end in front
+// of it, and the files' blocks are never read as entries. A room for files
+// that is not begun yet is left to the files only if the notebook ends well
+// in front of it; a notebook that reaches into it keeps its room, as before
+// there were files.
+pub fn notebook_open(files_from: Option<u64>, files_begun: bool) -> Result<NotebookFacts, &'static str> {
     let size = part_size();
     if size == 0 {
         return Err("the kernel has no part of its own on the disk");
@@ -228,8 +239,12 @@ pub fn notebook_open() -> Result<NotebookFacts, &'static str> {
     if size < 4 {
         return Err("my part is too small for a notebook");
     }
-    // Entries may use the blocks from 1 to the last but one.
-    let last_block = size - 2;
+    // Entries may use the blocks from 1 to the last but one, or, behind a
+    // room for files that is begun, to the block in front of it.
+    let mut last_block = size - 2;
+    if let (Some(from), true) = (files_from, files_begun) {
+        last_block = from - 1;
+    }
     let mut block = [0u8; BLOCK_SIZE as usize];
 
     part_read(0, &mut block)?;
@@ -320,6 +335,17 @@ pub fn notebook_open() -> Result<NotebookFacts, &'static str> {
         next_block += 1;
     }
 
+    // A room for files that is not begun yet is left to the files when the
+    // notebook ends well in front of it, with the blocks it looks at behind
+    // its end in front of it too.
+    let mut files_room = files_begun && files_from.is_some();
+    if let (Some(from), false) = (files_from, files_begun) {
+        if next_block + LOOK_AHEAD < from {
+            last_block = from - 1;
+            files_room = true;
+        }
+    }
+
     // Behind the end there must be nothing. The block at the end itself may
     // be zeros, or an entry that a power cut spoiled while it was written;
     // the next entry goes over it. But if a block behind it holds anything,
@@ -339,7 +365,7 @@ pub fn notebook_open() -> Result<NotebookFacts, &'static str> {
         LAST_BLOCK = last_block;
         CAN_KEEP = !damaged;
     }
-    Ok(NotebookFacts { entries, room: if damaged { 0 } else { last_block + 1 - next_block }, new, damaged })
+    Ok(NotebookFacts { entries, room: if damaged { 0 } else { last_block + 1 - next_block }, new, damaged, files_room })
 }
 
 // Says whether things can be kept in the notebook right now.
