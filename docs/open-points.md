@@ -318,7 +318,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 ## The screen
 
 - **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures. An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).
-- **A table is the only thing the model can have drawn,** in one frame beside the panel of apps (see "The table" in [screen.md](screen.md)). It is kept in memory only: a new table takes the place of the one before, and it is gone when the machine is switched off. The model does not see what a table holds after the line that drew it, so a wish to change the table on the screen cannot be met yet: the model would have to write it again from what it remembers of the lines. At most 6 columns and the rows that fit (the head and 14 on a screen of 1280 by 800) are drawn, cells are cut to their columns, and only plain signs show; a letter with an accent shows as a dot.
+- **A table is the only thing the model can have drawn,** in one frame beside the panel of apps (see "The table" in [screen.md](screen.md)). Where a notebook can be added to, it is kept as a document and can be opened and changed again (see "Documents" below); elsewhere it is kept in memory only, a new table takes the place of the one before, it is gone when the machine is switched off, and the model does not see what it holds after the line that drew it. At most 6 columns and the rows that fit (the head and 14 on a screen of 1280 by 800) are drawn, cells are cut to their columns, and only plain signs show; a letter with an accent shows as a dot.
 - **On a screen narrower than 1000 dots there is no table,** and the tool is not offered. What room a real PC's screen or VirtualBox's gives is not known; a screen of 1024 by 768 dots was worked out (a frame of 324 by 448, the head and 13 rows, 19 signs across with 6 columns) and not tried.
 - **Only a table's letters are checked against their background.** The lines and the backgrounds the model picks may be any colour, also one hard to tell from the frame or the screen.
 - **Whether the real provider ever sends a tool call cut off at the limit of tokens,** in the shape the kernel reads then, is not known; only the stand-in has shown it. Nor is it known how the real model writes a table, whether it keeps to the room it is told, or picks colours that fit the wish.
@@ -343,6 +343,17 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **Painting the whole screen again for a look is slow,** about a quarter of a second, for the same reason as filling it: a dot at a time. The same painting ends every start, when the usual picture takes the place of the kernel's lines. Keys typed meanwhile wait in the keyboard's line of 16 key numbers; those that do not fit are lost.
 - **A kept look is found by its name, letter for letter.** A look renamed in a later kernel would not be found, and the first look would show.
 - **The box that shows an app's text remembers 160 bytes of it,** enough for the 40 signs that fit today. A box made wide enough for more would have its text cut when it is painted again in another look.
+
+## Documents
+
+- **A table is the only kind of document.** A chart or a page of several pieces would be a kind of its own (the note has a byte for the kind). See "Documents" in [screen.md](screen.md).
+- **A change is the whole table written again by the model.** The answer shares its 4,000 tokens with the model's thinking, so the longer a table, the likelier a change is cut off; a change cut off leaves the document as it was, so a long table may not be changeable by a wish at all. How much the real model thinks before a change is not known. Changes by keys, without the model, are still to come.
+- **The open document's lines go to the provider with every line,** and are paid for each time, up to 4 KB of them; and opening a document asks the model once more. Nothing closes the frame but `setup`; the open document stays open until another table is drawn or opened, or the machine is switched off.
+- **Only the newest version of a document counts.** The older stay on the disk, out of reach: nothing goes back to one yet. Nothing removes a document either, and nothing caps how many are kept: every document makes every request longer by its number and name, some 20 to 60 bytes.
+- **A document is at most 4,096 bytes,** the bound on what the model gives `draw_table`. A document made from a kept file would need more, and would send the file's contents to the provider while it is open.
+- **The panel of documents shows the five used last,** and has no pages; the others are known by the model only. It is left out on a screen under 736 dots high, worked out and not tried.
+- **What the real model does with documents is not known:** whether it begins a table with the right `document` line, writes the whole table again without dropping rows, keeps the title, and opens a document when asked. A table without the line is kept as a new document, so a change made without it leaves a second document beside the first.
+- **Every version adds entries to the notebook,** one to ten and one for the note, and nothing tidies the notebook; a start reads them all.
 
 ## Virtual machines
 

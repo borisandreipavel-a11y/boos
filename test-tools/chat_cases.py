@@ -382,4 +382,6 @@ def answer(kind, line, bearer):
         data = stream_body(stream_pieces(json.loads(body(message("Hello."))), ()))
         chunked = b"%x\r\n" % len(data) + data + b"\r\n0\r\n\r\n"
         return STREAM_HEAD.replace(b"Connection: close", b"Transfer-Encoding: chunked\r\nConnection: close") + chunked, "goodbye"
-    return None
+    # The behaviours for documents are document_cases.py's.
+    import document_cases
+    return document_cases.answer(kind, line, bearer)

@@ -116,6 +116,8 @@ Files fetched from the web are kept in the room for files, and noted under the n
 
 Apps the model made are kept under the names `app 1`, `app 2` and so on, by `apps_kept.rs`, once they have run to their end: `app 1 script` holds the script, exactly as it ran, and `app 1` a note with the request it was made for. A script longer than 448 bytes is kept in pieces. See "Keeping an app" in [apps.md](apps.md).
 
+Tables the model described are kept as documents by `documents.rs`, where documents can be kept (see "Documents" in [screen.md](screen.md)). Each version of a document is a thing of its own: `document 1 v2` holds the lines of the second version of document 1, up to 4,096 bytes, in pieces when they are longer than 448 bytes (at most 10 entries). `document 1` is a note that names the newest version, kept again with every version: its first byte, 1, says what form the rest has; in form 1 a byte for the kind of document (1, a table), the newest version's number in four bytes, lowest first, and the document's name, at most 45 bytes. A version's lines are kept first and read back, byte for byte, and only then the note, so a power cut between the two leaves the version before counting. Older versions stay as things of their own, out of reach until going back to one exists. The longest names, `document 999999999` and `document 999999999 v999999999`, are 18 and 29 bytes.
+
 - If the line was kept, nothing is said about it.
 - If it could not be kept, the kernel says so in a row and in the terminal, `Kernel: I could not keep that line, because ...`, and the chat goes on as before.
 - On a machine with no disk, no part of the kernel's own, or a notebook that cannot be added to, the chat box says nothing about keeping; the lines at startup have said it.

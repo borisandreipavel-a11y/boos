@@ -5,6 +5,7 @@ kernel says at once and when the answer comes, and the chat box where every line
 model. Nothing runs when this file is imported."""
 import re
 
+import documents_model
 import table_model
 from app_cases import clean, hide
 from conversation_model import FORGOT  # noqa: F401 (the row the tool `forget` gets, for the tests)
@@ -126,18 +127,30 @@ FORGET = {"type": "function", "function": {"name": "forget",
                                            "parameters": {"type": "object", "properties": {}}}}
 
 
-def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=()):
+def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), documents=()):
     """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
     `draw_table` if the screen (width, height), or None for none, has room for a table, `download_file` unless `files`
     is None (no room for files, as on a disk that is not divided), `remove_file` for the kept files in `files`
-    ((number, words), the one kept last first), and `forget` if anything said is remembered."""
+    ((number, words), the one kept last first), and `forget` if anything said is remembered. `documents`: the kept
+    documents as `open_document` lists them ((number, name), the one used last first), or None where documents cannot
+    be kept, where draw_table is offered as before documents; when not given, None along with `files`, since in these
+    tests a disk without room for files is one without a notebook."""
+    if files is None and documents == ():
+        documents = None
     tools = [MAKE_APP]
     if apps:
         tools.append(run_app_tool(apps))
     tools.append(pick_look_tool())
-    table = table_model.tool_meant(*screen) if screen else None
+    if not screen:
+        table = None
+    elif documents is None:
+        table = table_model.tool_meant(*screen)
+    else:
+        table = documents_model.draw_table_tool(*screen)
     if table:
         tools.append(table)
+        if documents:
+            tools.append(documents_model.open_document_tool(documents))
     if files is not None:
         tools.append(DOWNLOAD_FILE)
         if files:
@@ -150,19 +163,21 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=()):
     return tools
 
 
-def instructions_meant(record="", key=""):
-    """The system message: the instruction text, and the record of what was said before the line behind it, if
+def instructions_meant(record="", key="", document=None):
+    """The system message: the instruction text, what the model is told about the open document (`document`, a dict of
+    documents_model.py) behind it while one is open, and the record of what was said before the line behind that, if
     anything was, with every piece of the key starred."""
-    return CHAT_INSTRUCTIONS + (RECORD_LEAD + hide(record, key) if record else "")
+    return (CHAT_INSTRUCTIONS + (hide(documents_model.told(document), key) if document else "")
+            + (RECORD_LEAD + hide(record, key) if record else ""))
 
 
-def body_meant(line, apps, shown=1, record="", key="", screen=(1280, 800), files=()):
+def body_meant(line, apps, shown=1, record="", key="", screen=(1280, 800), files=(), documents=(), document=None):
     """The whole request for a line, as Python's JSON reader reads it: `record` is what was said before it (a picture.Chat
     keeps the record each line went with in `records`); every piece of `key` in the line and the record is starred;
-    `screen` is the screen's (width, height), or None."""
-    return {"model": MODEL, "messages": [{"role": "system", "content": instructions_meant(record, key)},
+    `screen` is the screen's (width, height), or None; `documents` as for tools_meant, and `document` the open one."""
+    return {"model": MODEL, "messages": [{"role": "system", "content": instructions_meant(record, key, document)},
                                          {"role": "user", "content": hide(line, key)}],
-            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen, files=files), "max_tokens": LIMIT, "stream": True,
+            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen, files=files, documents=documents), "max_tokens": LIMIT, "stream": True,
             "stream_options": {"include_usage": True}}
 
 
@@ -181,16 +196,17 @@ AGAIN_LEAD = ("\n\nWhat came of the newest line so far, oldest first. "
 LAST_ASK = "\n\nYou are asked about this line for the last time, and no tools are offered now: answer in plain words."
 
 
-def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800), files=()):
+def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800), files=(), documents=(), document=None):
     """The whole request when the model is asked about `line` again: `split` is what it goes with (a picture.Chat keeps
     it in `agains`): the record of the lines before it and the rows the line brought so far. The list of tools is the
-    one for the disk as it is then, with `forget`, since the line is remembered; the last ask has none."""
+    one for the disk as it is then, with `forget`, since the line is remembered; the last ask has none. `documents` and
+    `document` as for body_meant, as they are when the ask goes."""
     record, done = split
-    told = instructions_meant(record, key) + AGAIN_LEAD + hide(done, key) + (LAST_ASK if last else "")
+    told = instructions_meant(record, key, document) + AGAIN_LEAD + hide(done, key) + (LAST_ASK if last else "")
     body = {"model": MODEL, "messages": [{"role": "system", "content": told}, {"role": "user", "content": hide(line, key)}],
             "max_tokens": LIMIT, "stream": True, "stream_options": {"include_usage": True}}
     if not last:
-        body["tools"] = tools_meant(apps, shown, remembered=True, screen=screen, files=files)
+        body["tools"] = tools_meant(apps, shown, remembered=True, screen=screen, files=files, documents=documents)
     return body
 
 

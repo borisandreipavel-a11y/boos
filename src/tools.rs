@@ -19,6 +19,7 @@ use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
 use crate::chat::{chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
+use crate::documents::{document_draw, document_open, documents_listed, documents_usable, documents_wanted};
 use crate::drawing::{drawing_room, drawing_table, drawing_wanted};
 use crate::files::{download_start, files_listed, files_usable, remove_ask};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
@@ -159,9 +160,11 @@ fn pick_look_tool() -> String {
 
 // The tool that draws a table in the frame beside the panel of apps (see
 // `drawing.rs`): how a table is written, with the room this screen has for
-// one, and an example.
-fn draw_table_tool(rows: usize, columns: usize, signs: u32) -> String {
-    let told = format!(
+// one, and an example. Where documents can be kept (see `documents.rs`), it
+// also says that every table is kept as a document, and how a table says
+// which document it changes, and the example begins with that line.
+fn draw_table_tool(rows: usize, columns: usize, signs: u32, documents: bool) -> String {
+    let mut told = format!(
         concat!(
             "Draws a table in a frame on the screen, beside the panel of apps, in place of the table shown before. ",
             "Use it when the person wants something shown as a table. ",
@@ -176,16 +179,33 @@ fn draw_table_tool(rows: usize, columns: usize, signs: u32) -> String {
         ),
         rows, columns, signs
     );
+    let example = if documents {
+        told.push_str(DOCUMENTS_TOLD);
+        format!("{}document 0\n{}", TABLE_EXAMPLE_LEAD, TABLE_EXAMPLE)
+    } else {
+        format!("{}{}", TABLE_EXAMPLE_LEAD, TABLE_EXAMPLE)
+    };
     format!(
         "{{\"type\":\"function\",\"function\":{{\"name\":\"draw_table\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"table\":{{\"type\":\"string\",\"description\":{}}}}},\"required\":[\"table\"]}}}}}}",
         json_text(&told),
-        json_text(TABLE_EXAMPLE)
+        json_text(&example)
     )
 }
 
-// The example of a table that the tool `draw_table` gives the model.
+// What the tool `draw_table` says where documents can be kept: that every
+// table is kept as a document, named by its title, and which first line a
+// new table and a changed one begin with.
+const DOCUMENTS_TOLD: &str = concat!(
+    " Every table is kept on the disk as a document, named by its title. ",
+    "Begin a new table with the line document 0; to change a kept document, write its whole table again, ",
+    "beginning with document and its number."
+);
+
+// The example of a table that the tool `draw_table` gives the model, after
+// its first words; where documents can be kept, the line `document 0` comes
+// in front of it.
+const TABLE_EXAMPLE_LEAD: &str = "The table, as lines, such as:\n";
 const TABLE_EXAMPLE: &str = concat!(
-    "The table, as lines, such as:\n",
     "title Fruit\n",
     "colours head #2e7d32 head-letters #ffffff\n",
     "widths 10 12\n",
@@ -193,6 +213,31 @@ const TABLE_EXAMPLE: &str = concat!(
     "row Apple | red\n",
     "row Banana | yellow"
 );
+
+// The tool that opens a kept document in the frame (see `documents.rs`), with
+// the kept documents by number and name, the one used last first. It is
+// offered while any document is kept where documents can be kept.
+fn open_document_tool(documents: &[(u32, String)]) -> String {
+    let mut told = String::from(concat!(
+        "Opens one of the kept documents in the frame on the screen, in place of what it shows; ",
+        "its lines then go with every line, so that it can be changed. The kept documents, by number: "
+    ));
+    let mut numbers = String::new();
+    for (place, (number, name)) in documents.iter().enumerate() {
+        if place > 0 {
+            told.push_str("; ");
+            numbers.push(',');
+        }
+        told.push_str(&format!("{}: {}", number, name));
+        numbers.push_str(&format!("{}", number));
+    }
+    told.push('.');
+    format!(
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"open_document\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"document\":{{\"type\":\"integer\",\"enum\":[{}],\"description\":\"The number of the kept document\"}}}},\"required\":[\"document\"]}}}}}}",
+        json_text(&told),
+        numbers
+    )
+}
 
 // The tool that fetches a file from the web and keeps it on the disk (see
 // `files.rs` and `download.rs`). It is offered while files can be kept.
@@ -241,10 +286,10 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `draw_table` while
-// the screen has room for a table; `download_file` while files can be kept,
-// and `remove_file` while any file is kept; `turn_page` while the panel of
-// apps has more than one page; `forget` while anything that was said is
-// remembered.
+// the screen has room for a table, and `open_document` while any document is
+// kept; `download_file` while files can be kept, and `remove_file` while any
+// file is kept; `turn_page` while the panel of apps has more than one page;
+// `forget` while anything that was said is remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
     tools.push_str(MAKE_APP);
@@ -257,7 +302,12 @@ pub fn chat_tools() -> String {
     tools.push_str(&pick_look_tool());
     if let Some((rows, columns, signs)) = drawing_room() {
         tools.push(',');
-        tools.push_str(&draw_table_tool(rows, columns, signs));
+        tools.push_str(&draw_table_tool(rows, columns, signs, documents_usable()));
+        let documents = documents_listed();
+        if !documents.is_empty() {
+            tools.push(',');
+            tools.push_str(&open_document_tool(&documents));
+        }
     }
     if files_usable() {
         tools.push(',');
@@ -370,13 +420,28 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
         },
         // A table drawn whole ends the line. One that was not, because rows
         // or columns did not fit or it was cut off, goes back, so that the
-        // model can say so or draw a smaller one.
-        "draw_table" => match drawing_table(&call.inputs, call.cut_off) {
+        // model can say so or draw a smaller one. Where documents can be
+        // kept, the table is kept as one, or changes the open one (see
+        // `documents.rs`).
+        "draw_table" => match if documents_usable() { document_draw(&call.inputs, call.cut_off) } else { drawing_table(&call.inputs, call.cut_off) } {
             Ok((said, whole)) => {
                 chat_say(&said);
                 return if whole { ToolDone::Ended } else { ToolDone::Back };
             }
             Err(said) => said,
+        },
+        // A kept document opened goes back, so that the model, which sees its
+        // lines with the next ask, can change it in the same line, or say
+        // what it opened.
+        "open_document" => match input_number(&call.inputs, "document") {
+            Some(number) => match document_open(number) {
+                Ok(said) => {
+                    chat_say(&said);
+                    return ToolDone::Back;
+                }
+                Err(said) => said,
+            },
+            None => String::from("the model asked to open a kept document, but I could not read which one."),
         },
         // A file from the web: `files.rs` says how it goes, and whether the
         // line waits for the fetch or for the person's answer.
@@ -417,10 +482,14 @@ pub fn tool_wanted(call: &ToolCall) -> String {
         "pick_look" => input_number(&call.inputs, "look").map(|number| format!("{}", number)),
         "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
         "draw_table" => drawing_wanted(&call.inputs, call.cut_off),
+        "open_document" => input_number(&call.inputs, "document").map(|number| format!("{}", number)),
         "download_file" => input_text(&call.inputs, "address").map(|address| String::from(address.trim())),
         "remove_file" => input_number(&call.inputs, "file").map(|number| format!("{}", number)),
         _ => None,
     };
+    // A change of a kept document counts as the same thing again only while
+    // the same document is open (see `documents.rs`).
+    let given = if call.name == "draw_table" { given.map(documents_wanted) } else { given };
     match given {
         Some(given) => format!("{}: {}", call.name, given),
         None => call.name.clone(),
