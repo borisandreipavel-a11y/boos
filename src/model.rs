@@ -23,7 +23,7 @@ use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_number, json_find_text, json_text};
 use crate::tools::{AGAIN_LEAD, CHAT_INSTRUCTIONS, LAST_ASK, RECORD_LEAD};
 use crate::network::Card;
-use crate::page::{plain_text, site_exchange};
+use crate::page::{Waits, plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
 
 // The provider's site, and the place on it where questions go.
@@ -394,12 +394,13 @@ fn provider_exchange(
     // The answer is collected whole, up to the room there is for it.
     let mut answer: Vec<u8> = Vec::new();
     let mut too_long = false;
-    let result = site_exchange(interface, card, sockets, name_server, MODEL_SITE, &request, MODEL_WAIT, &mut |bytes| {
+    let result = site_exchange(interface, card, sockets, name_server, MODEL_SITE, &request, Waits::one(MODEL_WAIT), &mut |bytes| {
         if answer.len() + bytes.len() <= ANSWER_ROOM {
             answer.extend_from_slice(bytes);
         } else {
             too_long = true;
         }
+        true
     });
     wipe(&mut request);
 

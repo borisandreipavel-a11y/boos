@@ -4,11 +4,12 @@
 
 use alloc::vec::Vec;
 
-use crate::disk::{BLOCK_SIZE, disk_read, disk_write};
+use crate::disk::{BLOCK_SIZE, BLOCKS_AT_ONCE, disk_put_down, disk_read, disk_read_blocks, disk_write, disk_write_blocks};
 
 // The ticket that `disk_write` asks for. What it holds is private to this
 // file, so only code in this file can make one, and so only code in this
-// file can write to the disk. The one place that does is `part_write`.
+// file can write to the disk. The two places that do are `part_write` and
+// `part_write_run`.
 pub struct WriteTicket(());
 
 // A PC's disk is divided into parts (the usual word is "partitions"), and a
@@ -282,6 +283,68 @@ pub fn part_write(block: u64, from: &[u8; BLOCK_SIZE as usize]) -> Result<(), &'
     }
     disk_write(&WriteTicket(()), first + block, from)
 }
+
+// The checks that a run of `count` blocks from `block` on lies wholly inside
+// the kernel's own part. Gives back where the part begins on the disk.
+fn run_inside(block: u64, count: u64) -> Result<u64, &'static str> {
+    let (first, blocks) = unsafe { (PART_FIRST, PART_BLOCKS) };
+    if blocks == 0 {
+        return Err("the kernel has no part of its own on the disk");
+    }
+    if count == 0 || block >= blocks || count > blocks - block {
+        return Err("my part has no block with that number");
+    }
+    Ok(first)
+}
+
+// Writes a run of neighbouring blocks of the kernel's own part, from `block`
+// on: all of `from`, the last block filled up with zeros. Up to eight blocks
+// go to the disk in one command, and the disk is told to put them down for
+// good once, at the end, not after every block. A run that would reach past
+// the part's end is refused before anything is written, so this keeps to the
+// part as `part_write` does.
+pub fn part_write_run(block: u64, from: &[u8]) -> Result<(), &'static str> {
+    let size = BLOCK_SIZE as usize;
+    let first = run_inside(block, from.len().div_ceil(size) as u64)?;
+    let ticket = WriteTicket(());
+    let most = BLOCKS_AT_ONCE * size;
+    for (index, piece) in from.chunks(most).enumerate() {
+        let at = first + block + (index * BLOCKS_AT_ONCE) as u64;
+        if piece.len() % size == 0 {
+            disk_write_blocks(&ticket, at, piece)?;
+        } else {
+            // The last piece, filled up to whole blocks.
+            let mut whole = [0u8; FRAME_BYTES];
+            whole[..piece.len()].copy_from_slice(piece);
+            disk_write_blocks(&ticket, at, &whole[..piece.len().div_ceil(size) * size])?;
+        }
+    }
+    disk_put_down(&ticket)
+}
+
+// Reads a run of neighbouring blocks of the kernel's own part, from `block` on,
+// into `into`: as many bytes as it is long, the last block cut where `into`
+// ends. Up to eight blocks come in one command.
+pub fn part_read_run(block: u64, into: &mut [u8]) -> Result<(), &'static str> {
+    let size = BLOCK_SIZE as usize;
+    let first = run_inside(block, into.len().div_ceil(size) as u64)?;
+    let most = BLOCKS_AT_ONCE * size;
+    for (index, piece) in into.chunks_mut(most).enumerate() {
+        let at = first + block + (index * BLOCKS_AT_ONCE) as u64;
+        if piece.len() % size == 0 {
+            disk_read_blocks(at, piece)?;
+        } else {
+            let mut whole = [0u8; FRAME_BYTES];
+            let length = piece.len();
+            disk_read_blocks(at, &mut whole[..length.div_ceil(size) * size])?;
+            piece.copy_from_slice(&whole[..length]);
+        }
+    }
+    Ok(())
+}
+
+// As many bytes as one command moves at most.
+const FRAME_BYTES: usize = BLOCKS_AT_ONCE * BLOCK_SIZE as usize;
 
 // Says how many blocks the kernel's own part is long, or 0 if it has none.
 pub fn part_size() -> u64 {

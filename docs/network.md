@@ -243,11 +243,99 @@ Every start of the kernel fetches the page, so every start sends one name questi
 
 ### One exchange with any site
 
-Steps 1 to 3 and the encrypted exchange are one function, `site_exchange`. It is given the site's name, the request as bytes, how many seconds the greeting and the answer together may take, and a piece of code that takes each piece of the answer. It answers whether the site said through the link that it had sent everything. `page_get` calls it with the example site, a `GET` request and 15 seconds, and reads the answer with `Answer`. The question to the model calls it with the provider's site, a `POST` request and 60 seconds, and reads the answer in its own way; see [model.md](model.md). Only the network's task may call it.
+Steps 1 to 3 and the encrypted exchange are one function, `site_exchange`. It is given the site's name, the request as bytes, how long the exchange may take (`Waits`), and a piece of code that takes each piece of the answer and says whether it wants more. It answers whether the site said through the link that it had sent everything. Only the network's task may call it.
+
+- **How long it may take** is counted from the moment the site agreed to the connection: `first` for the greeting and the first piece of the answer, and `rest` for the whole answer, or, when `restarts` is set, for each next piece after the one before it. `Waits::one(15)` is one wait of 15 seconds for all of it, as the page has always had.
+- **Saying stop.** When the piece-taker wants no more, the encrypted link says goodbye from this side (its closure alert), reads nothing more and hands nothing more on, and the connection underneath is closed properly, as after the site's own goodbye. The answer is then not counted as whole by the site's word; whoever stopped it knows why it did.
+- `page_get` calls it with the example site, a `GET` request and `Waits::one(15)`, takes every piece, and reads the answer with `Answer`. The question to the model calls it with the provider's site, a `POST` request and `Waits::one(60)`, takes every piece, and reads the answer in its own way; see [model.md](model.md). A file is fetched through it too, with two waits and a stop; see "Fetching a file" below.
 
 ### Fetching it again
 
 The page is fetched once, at startup. The line `fetch`, which once fetched it again from the chat box, is an ordinary line now, and goes to the model like any other (see [tools.md](tools.md)). Every exchange with the provider goes through the same `site_exchange`; the sockets an exchange uses are taken out of the stack's set when it ends, so exchanges can follow each other without end: twelve fetches in a row took no frame, when they could still be asked for.
+
+## Fetching a file
+
+Code: `src/download.rs`, and `HeadReader` in `src/page.rs`. What the main loop does with what comes back, the questions to the person and keeping the file, is in `src/files.rs`; see "download_file" in [tools.md](tools.md) and "The room for files" in [disk.md](disk.md).
+
+A file is fetched in **hops**: one request and its answer each, one errand of the network's task each (`Errand::Download`, with the address). A hop brings the file, or an address the site sends one on to, or why there is no file (`Fetched`). The main loop decides whether the next hop goes, because only it may ask the person, and a site not contacted before is asked about first.
+
+What the web's rules say, as read for this (RFC 9112 for the messages of HTTP/1.1, RFC 9110 for what they mean, RFC 3986 for addresses), is named where it is used.
+
+### The address
+
+`address_read` reads an address that came from outside, from the model or from a site that sends one on, and checks it before anything is sent. What is wrong comes back in words, which the chat box says.
+
+| Taken only if | Otherwise |
+| --- | --- |
+| at most 1000 signs, all plain (bytes 33 to 126) | `it is longer than 1000 signs`, `it holds signs an address may not have` |
+| it begins with `https://` (in any capitals) | `it is not an encrypted address (https)` for `http://`, `it is no address that begins with https://` for anything else |
+| no name and password before the site (an `@`): the web's rules say a recipient should treat one from an untrusted source as an error (RFC 9110, 4.2.4) | `it holds a name and a password` |
+| no port but 443, the web's encrypted port, which is also the one taken when none is named (RFC 9110, 4.2.2) | `it names a port other than 443` |
+| the site is a name: parts of small letters, digits and hyphens between dots, at least two parts, none empty or beginning or ending with a hyphen, at most 253 signs, and the last part not digits alone, so that a machine's number is never taken; capitals become small letters | `its site's name is not one I can look up` |
+
+What follows a `#` stays on this side and is not kept. In the path, steps of `.` and `..` are worked out as RFC 3986 says (5.2.4). An address without a path asks for `/`.
+
+### The request
+
+Word for word, each line ending in bytes 13 and 10, with an empty line behind the last:
+
+```text
+GET /a.pdf HTTP/1.0
+Host: files.example.org
+Accept-Encoding: identity
+Connection: close
+```
+
+Nothing else is sent: no line names the kernel, the machine or the person. That includes no `User-Agent`: the web's rules say a client should send one "unless specifically configured not to do so" (RFC 9110, 10.1.5), and this kernel sends none, as for the page and the question to the model.
+
+- **HTTP/1.0.** A server must not send an answer in pieces with their lengths in between ("chunked", the note Transfer-Encoding) unless the request says HTTP/1.1 (RFC 9112, 6.1). Without "keep-alive", the connection is closed after the answer (RFC 9112, 9.3). A server answers with the highest version it knows whose first number is not higher than the request's (RFC 9110, 6.2), so the first line of the answer usually says `HTTP/1.1`.
+- **Accept-Encoding: identity** asks for the file as it is, not packed: a request without that note counts as taking any packing (RFC 9110, 12.5.3), and the requests for the page and to the model, which do not send it, are answered unpacked only because those sites choose to. A server only should keep to it, so the answer is checked as well.
+
+### The answer's head
+
+`HeadReader` reads the first line and the lines of notes up to the empty line as the pieces arrive, however they are cut, even in the middle of a line. A line ends in byte 10, with or without byte 13 before it. The head may take 16 KB at most; a longer one stops the hop with `its notes are longer than I read`, and an answer that does not begin with `HTTP/` with `its answer does not begin the way an answer on the web does`.
+
+It keeps the three digits of the first line and up to 40 signs of the words behind them, and five notes, whose names are told apart without regard to capitals:
+
+| Note | What the reader keeps |
+| --- | --- |
+| Content-Type | what kind of thing is sent, in small letters, up to 100 signs |
+| Content-Length | how long the body is, if written as digits alone; two that differ, or one that is not digits, count as unreadable (RFC 9110, 8.6, lets a recipient reject them) |
+| Transfer-Encoding | that it is there |
+| Content-Encoding | how the body is packed |
+| Location | where the site sends one on to, as written, if it is plain signs and at most 2048 of them; otherwise as unusable |
+
+Every text is cleaned like all text from outside (see "Fetching a page"). A line that begins with a space (a note going on from the line before, which the web no longer allows) and a line without a colon are passed over. The streaming of the model's answers is meant to use the same reader.
+
+### What the head decides
+
+| First line | What happens |
+| --- | --- |
+| 200, with Transfer-Encoding | no file: `it sent the file in pieces with their lengths in between ("chunked"), which it should not for this kind of request` |
+| 200, with Content-Encoding other than `identity` | no file: `it sent the file packed ("gzip"), which I do not take` |
+| 200, with an unreadable length | no file: `it gave a length I cannot read`; an invalid length in an answer means the answer is to be thrown away (RFC 9112, 6.3) |
+| 200, with a length over 4 MB | no file, before any of it comes: `the file is 4.8 MB, more than the 4 MB I take` |
+| 200 otherwise | the file comes |
+| 301, 302, 303, 307 or 308 | the site sends one on: the Location goes back to the main loop, as written; without one, `it sends me on, but does not say where` |
+| anything else | no file: `it answered 404 Not Found`, with the number and its words. A server must not send a 1xx answer to an HTTP/1.0 client (RFC 9110, 15.2), so one is taken as any other number |
+
+When the head decides against the file, the hop says stop at once.
+
+### The file
+
+The bytes behind the head are kept in memory, at most 4 MB (`FILE_MOST`); with a length, the room is taken in one go. More than 4 MB stops the hop as soon as the bytes pass it: `it is larger than the 4 MB I take`.
+
+- **With a length,** the file is whole when that many bytes have come, and the hop says stop then; a client should take an answer as complete once it has as many bytes as its length says (RFC 9112, 9.8). If the connection ends first, or the wait runs out: `the file did not come whole: 5000 of 20000 bytes came` (RFC 9112, 6.3: the message is incomplete). More bytes than the length: `it sent more than the length it gave`.
+- **Without a length,** the file is what came before the site closed the connection (RFC 9112, 6.3), and it counts as whole only if the site said goodbye through the encrypted link: such an answer "is complete only if a valid closure alert has been received" (RFC 9112, 9.8). Otherwise: `the file did not come whole: the connection ended without the site's goodbye`.
+- **No answer:** `no answer came:` and the reason of the exchange, such as `the site took too long`; a head that never ended: `its answer ended before its notes were over`; nothing at all: `it sent nothing`.
+
+**The waits** of a hop: the greeting and the first piece of the answer within 15 seconds, the whole hop within 3 minutes. At the link's speed, some 50 KB a second (see "How it goes in QEMU" above), the largest file takes about 80 seconds.
+
+**The terminal** has one line for each hop, after it: `Download: https://files.example.org/a.pdf: the file, 12016 bytes, whole`, `Download: https://files.example.org/go/a.pdf: sent on to ../a.pdf`, or `Download: ...: no file, because ...`, the addresses cut at 120 signs.
+
+### An address a site sends one on to
+
+`address_join` reads the Location against the address that was asked for, as RFC 3986 says (5.2) and RFC 9110 asks of a Location (10.2.2): a whole address stands by itself; one that begins with `//` names another site; one that begins with `/` is on the same site; an empty one, or one of a query alone, keeps the path; any other is read from the folder of the address asked for (`../a.pdf` from `/go/a.pdf` is `/a.pdf`). The result is read and checked as every address is, so a site cannot send the kernel to `http://`, to another port or to a machine's number.
 
 ## QEMU's built-in network
 

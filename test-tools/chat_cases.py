@@ -242,6 +242,10 @@ def answer(kind, line, bearer):
         return good(body(message(None, [call("draw_table", {"table": table_wide(bearer)})]), "tool_calls")), "goodbye"
     if name == "tablebad":
         return good(body(message(None, [call("draw_table", {"rows": 3})]), "tool_calls")), "goodbye"
+    if name == "fetch":
+        return good(body(message(None, [call("download_file", {"address": given})]), "tool_calls")), "goodbye"
+    if name == "remove":
+        return good(body(message(None, [call("remove_file", {"file": int(given)})]), "tool_calls")), "goodbye"
     if name == "refused":
         error = {"error": {"code": "", "message": REFUSAL, "type": "orcarouter_api_error"}}
         return with_length(b"HTTP/1.1 401 Unauthorized", json.dumps(error, separators=(",", ":")).encode()), "goodbye"

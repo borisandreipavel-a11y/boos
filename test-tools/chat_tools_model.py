@@ -51,6 +51,23 @@ MAKE_APP = tool("make_app",
                 ["request"])
 
 
+# The tool that fetches a file from the web and keeps it, offered while files can be kept (docs/tools.md).
+DOWNLOAD_FILE = tool("download_file",
+                     "Fetches a file from the internet over an encrypted link and keeps it on the disk: "
+                     "a PDF, a Word or Excel file (.docx, .xlsx), plain text or CSV, of at most 4 MB. "
+                     "Use it when the person wants a file fetched or downloaded from an address, and give the address exactly as the person gave it. "
+                     "The person is asked before a site is contacted for the first time.",
+                     {"address": {"type": "string", "description": "The file's address, beginning with https://"}}, ["address"])
+
+
+def remove_file_tool(files):
+    """`files`: (number, "name, a PDF of 12 KB") of the kept files, the one kept last first."""
+    told = ("Removes one of the kept files from the disk for good, once the person says yes. The kept files, by number: "
+            + "; ".join("%d: %s" % (number, file) for number, file in files) + ".")
+    return tool("remove_file", told, {"file": {"type": "integer", "enum": [number for number, _ in files],
+                                              "description": "The number of the kept file"}}, ["file"])
+
+
 def run_app_tool(apps):
     """`apps`: (number, request) of the kept apps, the one kept last first."""
     told = ("Runs one of the kept apps again, as it was written, without writing it anew. The kept apps, by number: "
@@ -80,10 +97,11 @@ FORGET = {"type": "function", "function": {"name": "forget",
                                            "parameters": {"type": "object", "properties": {}}}}
 
 
-def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800)):
+def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=()):
     """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
-    `draw_table` if the screen (width, height), or None for none, has room for a table, and `forget` if anything
-    said is remembered."""
+    `draw_table` if the screen (width, height), or None for none, has room for a table, `download_file` unless `files`
+    is None (no room for files, as on a disk that is not divided), `remove_file` for the kept files in `files`
+    ((number, words), the one kept last first), and `forget` if anything said is remembered."""
     tools = [MAKE_APP]
     if apps:
         tools.append(run_app_tool(apps))
@@ -91,6 +109,10 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800)):
     table = table_model.tool_meant(*screen) if screen else None
     if table:
         tools.append(table)
+    if files is not None:
+        tools.append(DOWNLOAD_FILE)
+        if files:
+            tools.append(remove_file_tool(files))
     pages = -(-len(apps) // 5)
     if pages > 1:
         tools.append(turn_page_tool(pages, shown))
@@ -105,13 +127,13 @@ def instructions_meant(record="", key=""):
     return CHAT_INSTRUCTIONS + (RECORD_LEAD + hide(record, key) if record else "")
 
 
-def body_meant(line, apps, shown=1, record="", key="", screen=(1280, 800)):
+def body_meant(line, apps, shown=1, record="", key="", screen=(1280, 800), files=()):
     """The whole request for a line, as Python's JSON reader reads it: `record` is what was said before it (a picture.Chat
     keeps the record each line went with in `records`); every piece of `key` in the line and the record is starred;
     `screen` is the screen's (width, height), or None."""
     return {"model": MODEL, "messages": [{"role": "system", "content": instructions_meant(record, key)},
                                          {"role": "user", "content": hide(line, key)}],
-            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen), "max_tokens": LIMIT, "stream": False}
+            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen, files=files), "max_tokens": LIMIT, "stream": False}
 
 
 # ---------- Asking about a line again, when what a tool did goes back to the model ----------
@@ -129,7 +151,7 @@ AGAIN_LEAD = ("\n\nWhat came of the newest line so far, oldest first. "
 LAST_ASK = "\n\nYou are asked about this line for the last time, and no tools are offered now: answer in plain words."
 
 
-def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800)):
+def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800), files=()):
     """The whole request when the model is asked about `line` again: `split` is what it goes with (a picture.Chat keeps
     it in `agains`): the record of the lines before it and the rows the line brought so far. The list of tools is the
     one for the disk as it is then, with `forget`, since the line is remembered; the last ask has none."""
@@ -138,7 +160,7 @@ def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800
     body = {"model": MODEL, "messages": [{"role": "system", "content": told}, {"role": "user", "content": hide(line, key)}],
             "max_tokens": LIMIT, "stream": False}
     if not last:
-        body["tools"] = tools_meant(apps, shown, remembered=True, screen=screen)
+        body["tools"] = tools_meant(apps, shown, remembered=True, screen=screen, files=files)
     return body
 
 

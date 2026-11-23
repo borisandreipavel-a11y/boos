@@ -259,7 +259,7 @@ def main():
         if note.get("request for") == "a line":
             record = chat.records[lines_seen] if lines_seen < len(chat.records) else None
             lines_seen += 1
-            body_right = record is not None and note.get("body") == body_meant(LINE, [], record=record, key=KEY)
+            body_right = record is not None and note.get("body") == body_meant(LINE, [], record=record, key=KEY, files=None)
         else:
             body_right = note.get("body as meant") is True
         for what, right in (("body as meant", body_right),

@@ -6,6 +6,8 @@ Usage: python model_server.py <port> <chain.pem> <key.pem> <log file> <behaviour
        python model_server.py <port> <chain.pem> <key.pem> <log file> <behaviours, as a JSON list>
 (a JSON list when a behaviour holds a comma, as "words=Hello there, I am ..." does)
 
+A GET of a file from any other site, or of another path, gets the answer download_cases.py gives for it.
+
 Behaviours: wrongkey, credit, echo, echopart, good, goodlong, chunked, page, nothttp, harmful, huge, cutoff,
 silent, empty, flaterror, nobody, keepopen, and more below; for a request for an app, the kinds of app_cases.py
 (app..., run...), slowapp and keyapp.
@@ -31,6 +33,7 @@ import time
 # The answers to a request for an app, which test_app.py shares (in this folder), and those to a line.
 import app_cases
 import chat_cases
+import download_cases
 
 port, chain, key, log_path = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 if len(sys.argv) > 5 and sys.argv[5].startswith("["):
@@ -235,6 +238,27 @@ def choose(parsed, bearer, note):
     return answer_for(kind, bearer)
 
 
+# Ends a connection as `ending` says: "goodbye" (the link's goodbye), "cut" (closed without it), or "hold" (held
+# open, saying nothing more, until the other side gives up).
+def end_link(link, ending, note):
+    if ending == "goodbye":
+        try:
+            link.unwrap()
+            note["goodbye answered"] = True
+        except (ssl.SSLError, OSError):
+            note["goodbye answered"] = False
+    elif ending == "cut":
+        socket.socket(fileno=link.detach()).close()
+    else:
+        started = time.time()
+        try:
+            while link.recv(4096):
+                pass
+        except (ssl.SSLError, OSError):
+            pass
+        note["held for"] = round(time.time() - started, 1)
+
+
 names = []
 listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -275,12 +299,22 @@ with open(log_path, "a") as log:
                 notes[label.strip().lower()] = value.strip()
             note["notes"] = notes
             if lines[0].startswith("GET "):
-                link.sendall(with_length(b"HTTP/1.0 200 OK", PAGE, b"text/html"))
-                try:
-                    link.unwrap()
-                except (ssl.SSLError, OSError):
-                    pass
-                note["answered"] = "the page"
+                words = lines[0].split(" ")
+                path = words[1] if len(words) > 1 else ""
+                if notes.get("host") == "example.com" and path == "/":
+                    link.sendall(with_length(b"HTTP/1.0 200 OK", PAGE, b"text/html"))
+                    try:
+                        link.unwrap()
+                    except (ssl.SSLError, OSError):
+                        pass
+                    note["answered"] = "the page"
+                else:
+                    answer, ending = download_cases.answer_get(notes.get("host", ""), path)
+                    if answer:
+                        link.sendall(answer)
+                    note["answered"] = "a file"
+                    note["sent"] = len(answer)
+                    end_link(link, ending, note)
             else:
                 length = int(notes.get("content-length", "0"))
                 while len(body) < length:
@@ -307,23 +341,7 @@ with open(log_path, "a") as log:
                 if answer:
                     link.sendall(answer)
                 note["sent"] = len(answer)
-                if ending == "goodbye":
-                    try:
-                        link.unwrap()
-                        note["goodbye answered"] = True
-                    except (ssl.SSLError, OSError) as problem:
-                        note["goodbye answered"] = False
-                elif ending == "cut":
-                    socket.socket(fileno=link.detach()).close()
-                else:
-                    # Hold the connection open and say nothing more, until the other side gives up.
-                    started = time.time()
-                    try:
-                        while link.recv(4096):
-                            pass
-                    except (ssl.SSLError, OSError):
-                        pass
-                    note["held for"] = round(time.time() - started, 1)
+                end_link(link, ending, note)
         except (ssl.SSLError, OSError, ValueError) as problem:
             note["problem"] = str(problem)[:200]
         finally:

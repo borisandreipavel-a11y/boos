@@ -1,8 +1,9 @@
 """Test certificates for the stand-in servers, made on this computer when first needed.
 
 A real site's certificate cannot be had for a server on this computer, so the tests use a chain of their own:
-a test root, an intermediate, and one leaf made out to both names the kernel asks for (the example site and
-the provider's site), so that one stand-in can answer for both. They are made with OpenSSL (the one that comes
+a test root, an intermediate, and one leaf made out to every name the kernel asks for (the example site, the
+provider's site, and the made-up sites the tests of downloads fetch files from), so that one stand-in can answer
+for all of them. They are made with OpenSSL (the one that comes
 with Git does) into the tests' work folder, never into the project and never into the computer's store of
 certificates. A kernel that trusts the test root is only ever built in a copy (see net_copy.py).
 
@@ -13,7 +14,7 @@ import subprocess
 
 from places import WORK
 
-SITES = ["example.com", "api.orcarouter.ai"]
+SITES = ["example.com", "api.orcarouter.ai", "files.example.org", "other.example.net"]
 
 
 def openssl():
@@ -32,7 +33,9 @@ def openssl():
 def test_keys():
     folder = os.path.join(WORK, "tls")
     authority = os.path.join(folder, "a")
-    if os.path.exists(os.path.join(authority, "both-chain.pem")):
+    # Made anew when the names they were made out to are not the names above.
+    names = os.path.join(authority, "names.txt")
+    if os.path.exists(os.path.join(authority, "both-chain.pem")) and os.path.exists(names) and open(names).read() == " ".join(SITES):
         return folder
     shutil.rmtree(authority, ignore_errors=True)
     os.makedirs(authority)
@@ -66,6 +69,8 @@ def test_keys():
     with open(os.path.join(authority, "both-chain.pem"), "wb") as chain:
         for name in ("both.pem", "inter.pem"):
             chain.write(open(os.path.join(authority, name), "rb").read())
+    with open(names, "w") as handle:
+        handle.write(" ".join(SITES))
     return folder
 
 
