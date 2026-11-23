@@ -54,6 +54,7 @@ mod model; // Asking the model a question through its provider.
 mod lock; // The lock: a secret locked with a password.
 mod lock_values; // The values the check of the lock is made against.
 mod apps; // Apps made on request: what the model is told, and the script it writes.
+mod app_inputs; // Inputs of apps: what the model fills in at each run, and how it is checked.
 mod apps_kept; // Apps kept on the disk, and the panel that lists them.
 mod tools; // The tools: what the kernel can do when the model asks for it.
 mod conversation; // The conversation: the last lines sent to the model, which go with the next.

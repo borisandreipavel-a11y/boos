@@ -47,15 +47,17 @@ pub fn interpreter_check() -> Result<usize, String> {
 // reason in words: an interpreter the box does not take, a script that is too
 // long, a script that is stopped, or a script with a mistake in it.
 pub fn script_run(script: &str) -> Result<(), String> {
-    box_script(INTERPRETER, script, None).map(|_| ()).map_err(|stop| stop.reason)
+    box_script(INTERPRETER, script, None, &[]).map(|_| ()).map_err(|stop| stop.reason)
 }
 
 // Runs a script that came from outside the kernel, such as an app the model
 // wrote, in the same way, with `seed` as the number its random numbers start
-// from, if there is one. Gives back what it left behind: the last text it
+// from, if there is one, and `values`, the values of the app's inputs as the
+// interpreter takes them (see `values_handed` in `app_inputs.rs`), which it
+// puts in the table `input`. Gives back what it left behind: the last text it
 // showed on the screen and the last line it printed (see `ScriptTexts`); or
 // why it was stopped, what kind of stop it was, and what it left behind
 // before that (see `ScriptStop`).
-pub fn script_run_seeded(script: &str, seed: Option<i64>) -> Result<ScriptTexts, ScriptStop> {
-    box_script(INTERPRETER, script, seed)
+pub fn script_run_seeded(script: &str, seed: Option<i64>, values: &[u8]) -> Result<ScriptTexts, ScriptStop> {
+    box_script(INTERPRETER, script, seed, values)
 }

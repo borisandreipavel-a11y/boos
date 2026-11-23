@@ -3,7 +3,8 @@
 //! of named things (`{"name": ...}`), a text (`"..."`), a number, and the
 //! words `true`, `false` and `null`. This file does the things the kernel
 //! needs and no more: it writes a text the JSON way, and it finds one text,
-//! or one whole number, in a piece of JSON by its place.
+//! one whole number, or one number or word as it is written, in a piece of
+//! JSON by its place.
 //! Notes: `docs/json.md`.
 
 use alloc::format;
@@ -26,6 +27,7 @@ pub const NOT_THERE: &str = "it has no such part";
 pub const NOT_A_TEXT: &str = "that part of it is not a text";
 pub const NOT_PROPER_TEXT: &str = "a text in it is not made of proper signs";
 pub const NOT_A_NUMBER: &str = "that part of it is not a whole number";
+pub const NOT_A_WORD: &str = "that part of it is not a number or a word";
 
 // Writes a text the JSON way: in double quotes, with every sign that has a
 // meaning of its own in JSON written as a backslash and a letter, and every
@@ -119,6 +121,33 @@ pub fn json_find_number(json: &[u8], path: &[Step]) -> Result<u64, &'static str>
             Ok(number)
         }
         Some(byte) if value_starts(byte) => Err(NOT_A_NUMBER),
+        _ => Err(NOT_JSON),
+    }
+}
+
+// Finds one number, or one of the words `true`, `false` and `null`, in a
+// piece of JSON, and gives it back as it is written there, such as `-2.5` or
+// `true`: a value that is neither a text nor a list nor a set of named
+// things. `path` says where, as for `json_find_text`. What a number says is
+// not worked out here, since the kernel does not reckon with numbers that
+// have a point; the caller looks at how it is written (see `app_inputs.rs`).
+// It ends where the next comma, closing bracket or space stands, and only
+// plain signs may make it up. As for a text, it is handed out only if what
+// stands behind it closes properly.
+pub fn json_find_word(json: &[u8], path: &[Step]) -> Result<String, &'static str> {
+    let mut reader = reader_at(json, path)?;
+    match reader.peek() {
+        Some(b'-' | b'0'..=b'9' | b't' | b'f' | b'n') => {
+            let start = reader.at;
+            reader.skip_value()?;
+            let word = &reader.bytes[start..reader.at];
+            if !word.iter().all(|byte| (b'!'..=b'~').contains(byte)) {
+                return Err(NOT_JSON);
+            }
+            reader.rest_closes(path.len())?;
+            Ok(word.iter().map(|byte| *byte as char).collect())
+        }
+        Some(byte) if value_starts(byte) => Err(NOT_A_WORD),
         _ => Err(NOT_JSON),
     }
 }

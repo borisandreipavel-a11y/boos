@@ -171,6 +171,11 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **One real answer to a request has been seen,** a script of Lua only that kept to the instruction text (see "What the real model wrote" in [apps.md](apps.md)); in a later run an app the real model wrote ran and its text appeared, which is all that is known of it. How many of the 4000 tokens the model spends thinking, and how long a script takes to come, are not known. An answer cut off at the limit is said and not taken; one that takes longer than the minute the kernel waits ends as "the site took too long".
 - **A short key hides much in a script too:** a key shorter than six signs becomes stars wherever it stands in the script, as in the provider's words (see "Asking the model").
 - **A line of the script over 200 signs is cut in the terminal,** and every sign that is not a plain sign shows as a dot, a tab as two spaces.
+- **An app has at most 4 inputs, of three kinds:** a number (with a point and below zero, at most 15 digits, written with digits only), a text of at most 100 plain signs, and a yes/no. Nothing else, no list and no choice among words; a text that is meant as a choice is the app's to check. See "Inputs" in [apps.md](apps.md).
+- **The model fills in every value at every run,** and nothing checks that the values are the ones the person meant; it may fill in an obvious one itself. A value left out is turned down and the model is told to ask the person; there are no defaults, and an app with no first value is not written.
+- **An app's inputs are fixed when it is made.** Other inputs mean a new app, or one made for the same request, which takes the old one's place; the old script and inputs stay on the disk, out of reach.
+- **Inputs and values are lines of text,** `name | kind | what it is | value` and `name | value`: a text value cannot hold a line end. A list of sets of named things, the first form, was left empty by the real model in two runs; why (the provider or the model) was not found out.
+- **Every start reads every kept script once more,** for the inputs in front of it, and a head of up to 415 bytes means the longest script the box takes cannot be kept with inputs.
 
 ## Random numbers and the date
 

@@ -12,7 +12,9 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
+use crate::app_inputs::{Input, inputs_listed, inputs_read, inputs_wanted, values_read, values_said, values_wanted};
 use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
 use crate::chat::{chat_remember, chat_say};
@@ -24,16 +26,20 @@ use crate::model::ToolCall;
 
 // What the model is told before the line, every time: what it is, that it
 // gets the newest line and a record of what was said before it, that only
-// the tool `forget` forgets that record, how to answer, and when to use the
-// tools for apps. It names no project and no person. (A real model, asked to
-// forget, once said in words that it had, and used no tool.)
+// the tool `forget` forgets that record, how to answer, when to use the tools
+// for apps, and what to do about an app's inputs. It names no project and no
+// person. (A real model, asked to forget, once said in words that it had, and
+// used no tool.)
 pub const CHAT_INSTRUCTIONS: &str = concat!(
     "You are the voice of a small home-made operating system. ",
     "The person at the machine types one line at a time into its chat box. ",
     "You get the newest line, and below these instructions a record of the last lines before it and what came of them, if there were any. ",
     "If the person asks you to forget what was said or to start over, use forget: saying so in words forgets nothing. ",
     "Answer in plain words, in one or two short sentences, or use one of the tools when the person wants something done that a tool does. ",
-    "Use run_app for a kept app that fits the wish, and make_app only when none fits."
+    "Use run_app for a kept app that fits the wish, and make_app only when none fits. ",
+    "An app can take inputs, such as a distance to convert: give them to make_app as its inputs, each with its value, never in its request; ",
+    "for a kept app that fits the wish, use run_app with the new values. ",
+    "If the person has not said a value an app needs and there is no obvious one, ask them for it in plain words."
 );
 
 // What stands between the instructions and the record of what was said
@@ -49,12 +55,12 @@ pub const RECORD_LEAD: &str = concat!(
 // (see `chat.rs`). It comes behind the instructions and the record of the
 // lines before, if there were any. It says what the rows are, that the
 // person has typed nothing since, and how an app can be fixed: the model
-// that writes an app gets nothing but its request.
+// that writes an app gets nothing but its request and its inputs.
 pub const AGAIN_LEAD: &str = concat!(
     "\n\nWhat came of the newest line so far, oldest first. ",
     "\"Model:\" is you, and \"Kernel:\" is the operating system saying what happened. ",
     "The person has typed nothing since. If what they wanted is done, say in plain words what came of it. ",
-    "Use a tool again only if it is not done. A new app is written from its request alone, ",
+    "Use a tool again only if it is not done. A new app is written from its request and its inputs alone, ",
     "so to fix an app, use make_app with a request that says what to do differently.\n"
 );
 
@@ -73,35 +79,63 @@ const FORGET: &str = concat!(
     "\"parameters\":{\"type\":\"object\",\"properties\":{}}}}"
 );
 
-// The tool that has a new app written: the model gives a short request, and
-// the kernel asks the model again, with the text about writing apps (see
-// `app_make` in `apps.rs`).
+// The tool that has a new app written: the model gives a short request and
+// the app's inputs, each with its value for this run, and the kernel asks the
+// model again, with the text about writing apps (see `app_make` in
+// `apps.rs`). The inputs are a text, one line for each, at most four, parted
+// by `|`: the shape the real model fills well for a table. They are required,
+// an empty text for an app without inputs: the real model left them out in
+// three runs while they were not, as a list of sets of named things and as a
+// text, and has filled every input it was required to. The kernel still takes
+// a call without them as an app without inputs. An input without a value is
+// turned down, see `app_inputs.rs`.
 const MAKE_APP: &str = concat!(
     "{\"type\":\"function\",\"function\":{\"name\":\"make_app\",",
     "\"description\":\"Has a new app written for the person and runs it; an app that runs to its end is kept. ",
-    "Use it only when the person wants an app and no kept app fits.\",",
+    "Use it only when the person wants an app and no kept app fits. ",
+    "Give the app inputs for what a wish may change, such as a distance to convert, each with its value for this run.\",",
     "\"parameters\":{\"type\":\"object\",\"properties\":{\"request\":{\"type\":\"string\",",
-    "\"description\":\"What the app does, in at most 45 signs, such as: a dice that rolls\"}},\"required\":[\"request\"]}}}"
+    "\"description\":\"What the app does in general, without its inputs or this run's values, in at most 45 signs, such as: converts km to miles\"},",
+    "\"inputs\":{\"type\":\"string\",\"description\":\"The inputs the app takes at every run, at most 4, one line each: ",
+    "name | kind | what it is | its value for this run. A name has letters, digits or _ and begins with a letter; ",
+    "a kind is number, text or yes/no. Such as: km | number | the distance in kilometres | 5. ",
+    "Empty for an app that takes none.\"}},",
+    "\"required\":[\"request\",\"inputs\"]}}}"
 );
 
 // The tool that runs a kept app again, with the kept apps by number and
-// request, the one kept last first.
-fn run_app_tool(apps: &[(u32, String)]) -> String {
-    let mut told = String::from("Runs one of the kept apps again, as it was written, without writing it anew. The kept apps, by number: ");
+// request, the one kept last first, and the inputs of each that has any.
+// While any of them has inputs, the tool also takes their values, as a text
+// with one line for each, `name | value`, required, as the inputs of
+// `make_app` are; otherwise it is the same as before inputs existed.
+fn run_app_tool(apps: &[(u32, String, Vec<Input>)]) -> String {
+    let with_inputs = apps.iter().any(|(_, _, inputs)| !inputs.is_empty());
+    let mut told = String::from("Runs one of the kept apps again, as it was written, without writing it anew");
+    told.push_str(if with_inputs { ", with a value for each of its inputs. The kept apps, by number: " } else { ". The kept apps, by number: " });
     let mut numbers = String::new();
-    for (place, (number, request)) in apps.iter().enumerate() {
+    for (place, (number, request, inputs)) in apps.iter().enumerate() {
         if place > 0 {
             told.push_str("; ");
             numbers.push(',');
         }
-        told.push_str(&format!("{}: {}", number, request));
+        told.push_str(&format!("{}: {}{}", number, request, inputs_listed(inputs)));
         numbers.push_str(&format!("{}", number));
     }
     told.push('.');
+    let (values, required) = if with_inputs {
+        (
+            ",\"values\":{\"type\":\"string\",\"description\":\"A value for each input of the app, one line each: name | value, such as: km | 12. Empty for an app that takes none.\"}",
+            "\"app\",\"values\"",
+        )
+    } else {
+        ("", "\"app\"")
+    };
     format!(
-        "{{\"type\":\"function\",\"function\":{{\"name\":\"run_app\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"app\":{{\"type\":\"integer\",\"enum\":[{}],\"description\":\"The number of the kept app\"}}}},\"required\":[\"app\"]}}}}}}",
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"run_app\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"app\":{{\"type\":\"integer\",\"enum\":[{}],\"description\":\"The number of the kept app\"}}{}}},\"required\":[{}]}}}}}}",
         json_text(&told),
-        numbers
+        numbers,
+        values,
+        required
     )
 }
 
@@ -224,33 +258,42 @@ pub enum ToolDone {
 // written as a text of digits. Whatever the kernel turns down goes back.
 pub fn tool_do(call: &ToolCall) -> ToolDone {
     let turned_down = match call.name.as_str() {
+        // The app's inputs and their values are read and checked before the
+        // model is asked to write it (see `app_inputs.rs`).
         "make_app" => match input_text(&call.inputs, "request") {
-            Some(request) => match app_make(&request_cleaned(&request)) {
-                Ok(said) => {
-                    chat_say(&said);
-                    return ToolDone::Awaited;
-                }
+            Some(request) => match inputs_read(&call.inputs) {
+                Ok((inputs, values)) => match app_make(&request_cleaned(&request), inputs, values) {
+                    Ok(said) => {
+                        chat_say(&said);
+                        return ToolDone::Awaited;
+                    }
+                    Err(said) => said,
+                },
                 Err(said) => said,
             },
             None => String::from("the model asked for an app, but I could not read what the app should do."),
         },
+        // The values are checked against the inputs kept with the app.
         "run_app" => match input_number(&call.inputs, "app") {
             Some(number) => match app_kept(number) {
-                Ok((request, script)) => {
-                    chat_say(&format!("I am running the app made for \"{}\".", request));
-                    let run = app_run(&script);
-                    chat_say(&run.sentence);
-                    // A kept app that ran to its end ends the line, as it
-                    // did before; one that was stopped goes back, with what
-                    // it left behind.
-                    if run.ran {
-                        return ToolDone::Ended;
+                Ok((request, inputs, script)) => match values_read(&call.inputs, &inputs, &request) {
+                    Ok(values) => {
+                        chat_say(&format!("I am running the app made for \"{}\"{}.", request, values_said(&values)));
+                        let run = app_run(&script, &values);
+                        chat_say(&run.sentence);
+                        // A kept app that ran to its end ends the line, as it
+                        // did before; one that was stopped goes back, with
+                        // what it left behind.
+                        if run.ran {
+                            return ToolDone::Ended;
+                        }
+                        for told in run.told.iter() {
+                            chat_remember(told);
+                        }
+                        return ToolDone::Back;
                     }
-                    for told in run.told.iter() {
-                        chat_remember(told);
-                    }
-                    return ToolDone::Back;
-                }
+                    Err(said) => said,
+                },
                 Err(said) => said,
             },
             None => String::from("the model asked to run a kept app, but I could not read which one."),
@@ -305,12 +348,14 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
 
 // What the model asks the kernel to do with a tool, written so that two
 // requests for the same thing give the same text, however the inputs were
-// written: the tool's name, and what it was given as the kernel reads it.
-// No tool is done twice for one line (see `chat.rs`).
+// written: the tool's name, and what it was given as the kernel reads it; for
+// an app, its inputs and values too, so that a request turned down for them
+// and given again with others is done. No tool is done twice for one line
+// (see `chat.rs`).
 pub fn tool_wanted(call: &ToolCall) -> String {
     let given = match call.name.as_str() {
-        "make_app" => input_text(&call.inputs, "request").map(|request| request_cleaned(&request)),
-        "run_app" => input_number(&call.inputs, "app").map(|number| format!("{}", number)),
+        "make_app" => input_text(&call.inputs, "request").map(|request| format!("{}{}", request_cleaned(&request), inputs_wanted(&call.inputs))),
+        "run_app" => input_number(&call.inputs, "app").map(|number| format!("{}{}", number, values_wanted(&call.inputs))),
         "pick_look" => input_number(&call.inputs, "look").map(|number| format!("{}", number)),
         "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
         "draw_table" => drawing_wanted(&call.inputs, call.cut_off),

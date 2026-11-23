@@ -8,8 +8,10 @@
 //! Notes: `docs/tasks.md`.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
+use crate::app_inputs::{Input, Value};
 use crate::model::{ChatReply, KeyVerdict};
 use crate::processor::{signals_back, signals_off};
 
@@ -27,9 +29,11 @@ pub enum Errand {
     // when the model is asked about the line again, with what came of it so
     // far (`conversation_split`), which is empty for the line's first ask.
     ChatLine { line: String, tools: String, record: String, done: String },
-    // Ask the model to write an app. The text says which app: the request the
-    // model gave with the tool `make_app` (see `tools.rs`).
-    AppRequest(String),
+    // Ask the model to write an app: the request the model gave with the tool
+    // `make_app` (see `tools.rs`), and the app's inputs, which the model that
+    // writes it is told; and the values its first run is given, which stay
+    // in the kernel until the app has come (see `app_inputs.rs`).
+    AppRequest { request: String, inputs: Vec<Input>, values: Vec<Value> },
 }
 
 // The answer to an errand: which errand it answers; what the kernel has to
