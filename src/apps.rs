@@ -13,6 +13,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::app_box::{SCRIPT_LIMIT, StopKind};
+use crate::app_inputs::{Input, Value, inputs_told, values_handed, values_said};
 use crate::errand::{Errand, errand_ask};
 use crate::interpreter::script_run_seeded;
 use crate::page::plain_text;
@@ -42,6 +43,12 @@ pub const APP_INSTRUCTIONS: &str = concat!(
     "\n",
     "Use only plain English letters, digits and the signs of a US keyboard; any other character comes out as a dot.\n",
     "\n",
+    "The app may take inputs, listed below its request, each with a name, a kind and a sentence. Before the script runs, ",
+    "their values are put in a table called input, such as input.km for an input called km: a number as a Lua number, ",
+    "a text as a string of at most 100 characters, and a yes/no as true or false. When no inputs are listed, the app ",
+    "takes none and input is empty: do not read it then. Write the app for any values, not only for one: if a value ",
+    "makes no sense, show in a few words what is wrong.\n",
+    "\n",
     "The script's budget of work is small, about four thousand rounds of a simple loop in all, so keep loops short. ",
     "A script longer than 32 KB is refused.\n",
     "\n",
@@ -55,23 +62,34 @@ pub const APP_LEAD: &str = "Make this app: ";
 // How many signs of a line of the script are shown in the terminal.
 const SCRIPT_LINE_SHOWN: usize = 200;
 
-// The tool `make_app`: has the model write the app for this request, as an
-// errand for the network's task; the model's answer comes later, as a row of
-// its own (see `chat_answer` in `chat.rs`). The request comes from the model,
-// and was cleaned and cut by `tool_do` in `tools.rs`. Gives back what the
-// kernel says at once: that the model is asked, or why it is not. Only the
-// main loop may call this, as every function the chat box calls.
-pub fn app_make(request: &str) -> Result<String, String> {
+// The tool `make_app`: has the model write the app for this request, with
+// these inputs, as an errand for the network's task; the model's answer comes
+// later, as a row of its own (see `chat_answer` in `chat.rs`), and the app is
+// then run with these values. The request comes from the model, and was
+// cleaned and cut by `tool_do` in `tools.rs`; the inputs and values were
+// checked there too (see `app_inputs.rs`). Gives back what the kernel says
+// at once: that the model is asked, with the values named, or why it is not.
+// Only the main loop may call this, as every function the chat box calls.
+pub fn app_make(request: &str, inputs: Vec<Input>, values: Vec<Value>) -> Result<String, String> {
     if request.is_empty() {
         return Err(String::from("the model asked for an app, but did not say what it should do."));
     }
     if secret_length() == 0 {
         return Err(String::from("I cannot ask the model for an app, because no key is kept. Send the line \"key\" first."));
     }
-    match errand_ask(Errand::AppRequest(String::from(request))) {
-        Ok(()) => Ok(format!("I am asking the model to make \"{}\".", request)),
+    let said = values_said(&values);
+    match errand_ask(Errand::AppRequest { request: String::from(request), inputs, values }) {
+        Ok(()) => Ok(format!("I am asking the model to make \"{}\"{}.", request, said)),
         Err(reason) => Err(format!("I cannot ask the model for an app, because {}", reason)),
     }
+}
+
+// What the model that writes an app is asked for, behind `APP_LEAD`: the
+// request, and the app's inputs below it, if it has any (see `inputs_told`
+// in `app_inputs.rs`). The values are not told, so that the model writes the
+// app for any of them.
+pub fn app_wanted(request: &str, inputs: &[Input]) -> String {
+    format!("{}{}", request, inputs_told(inputs))
 }
 
 // Takes the script out of the model's words, and sees that the box could take
@@ -148,8 +166,10 @@ pub struct AppRun {
 // main loop, which is the one part of the kernel that paints the screen after
 // startup, so the app's box and the chat box are never painted at the same
 // time. While it runs, keys wait in the keyboard's line (see `docs/apps.md`).
-// Only the main loop may call this.
-pub fn app_run(script: &str) -> AppRun {
+// The values of its inputs, if it has any, are handed to the interpreter as
+// data behind the script, which puts them in the table `input` (see
+// `app_inputs.rs`). Only the main loop may call this.
+pub fn app_run(script: &str, values: &[Value]) -> AppRun {
     // A new number to start the script's random numbers from at every run,
     // from the processor's random numbers. It is halved, so that it stays a
     // whole number above zero when Lua reads it. A machine without random
@@ -157,7 +177,7 @@ pub fn app_run(script: &str) -> AppRun {
     // start where they always do; but such a machine cannot make the
     // encrypted link, so no app comes to it.
     let seed = random_number().map(|number| (number >> 1) as i64);
-    let (sentence, ran, texts, mistake) = match script_run_seeded(script, seed) {
+    let (sentence, ran, texts, mistake) = match script_run_seeded(script, seed, &values_handed(values)) {
         Ok(texts) if texts.shown.is_none() => (String::from("the app ran to its end, but it showed nothing on the screen."), true, texts, false),
         Ok(texts) => (String::from("the app ran to its end."), true, texts, false),
         Err(stop) => {

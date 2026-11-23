@@ -187,7 +187,8 @@ pub fn model_chat(
 // question down, or why no answer came. Beside the sentence it gives back the
 // script, if the model wrote one that passed the checks (see `apps.rs`), and
 // the terminal's line about how many tokens the answer took. `wanted` is the
-// request the model gave with the tool `make_app`. The key is the one that is
+// request the model gave with the tool `make_app`, with the app's inputs
+// below it, if it has any (`app_wanted` in `apps.rs`). The key is the one that is
 // kept, borrowed as for the fixed question. Called by the network's task when
 // it runs an errand.
 pub fn model_app(
@@ -648,11 +649,13 @@ const SECOND_TOOL: &[Step<'static>] =
 
 // The most signs of a tool's name that are kept, and the most bytes of what
 // the model gives the tool. Every tool of this kernel's has a short name and
-// needs a few words at most, but for the table that `draw_table` is given;
-// what is longer is given to the tool as nothing, and a table is cut off at
-// its bound.
+// needs a few words at most, but for an app's inputs with their values, which
+// come to about 1,070 bytes at the most the kernel takes (see
+// `app_inputs.rs`), and for the table that `draw_table` is given; what is
+// longer is given to the tool as nothing, and a table is cut off at its
+// bound.
 const TOOL_NAME_LONGEST: usize = 64;
-const TOOL_INPUTS_LONGEST: usize = 1024;
+const TOOL_INPUTS_LONGEST: usize = 2048;
 const TABLE_INPUTS_LONGEST: usize = 4096;
 
 // Says what the kernel has to say about the answer to a line typed in the

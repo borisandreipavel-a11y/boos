@@ -13,6 +13,7 @@ use smoltcp::socket::dhcpv4;
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 
+use crate::apps::app_wanted;
 use crate::network_card::{LONGEST_PACKET, network_card_receive, network_card_send};
 use crate::download::download_hop;
 use crate::errand::{Answer, Errand, errand_answer, errand_network_ready, errand_take};
@@ -281,8 +282,8 @@ fn network_task() {
                     let (sentence, reply, tokens, sent) = model_chat(&mut interface, &mut card, &mut sockets, name_server, line, tools, record, done);
                     (sentence, KeyVerdict::NotTold, None, reply, tokens, sent)
                 }
-                Errand::AppRequest(wanted) if has_address => {
-                    let (sentence, script, tokens) = model_app(&mut interface, &mut card, &mut sockets, name_server, wanted);
+                Errand::AppRequest { request, inputs, .. } if has_address => {
+                    let (sentence, script, tokens) = model_app(&mut interface, &mut card, &mut sockets, name_server, &app_wanted(request, inputs));
                     (sentence, KeyVerdict::NotTold, script, None, tokens, None)
                 }
                 // One hop of a file the person wants: what it brought goes

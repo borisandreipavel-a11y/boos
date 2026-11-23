@@ -1,8 +1,9 @@
 //! Apps kept on the disk. An app the model made is kept in the notebook once
 //! it has run to its end, so that it is still there after the machine was
-//! switched off: its script, exactly as it ran, and a note with the request it
-//! was made for. An app made for the same request again takes the place of the
-//! one kept for it. At every start the kept apps are found again, and the
+//! switched off: its script, exactly as it ran, with its inputs in front of
+//! it if it has any, and a note with the request it was made for. An app made
+//! for the same request again takes the place of the one kept for it. At
+//! every start the kept apps are found again, and the
 //! panel of apps, near the top left of the screen, lists them a page at a
 //! time, the one kept last first. The model is told about them with every
 //! line, and can run one again or turn the panel's page (see `tools.rs`).
@@ -14,6 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::app_box::SCRIPT_LIMIT;
+use crate::app_inputs::{Input, inputs_found, inputs_kept};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::look;
 use crate::notebook::{THING_MOST, notebook_find, notebook_keep, notebook_names, notebook_ready};
@@ -46,13 +48,15 @@ pub const REQUEST_MOST: usize = 45;
 // Every script the box takes fits in the notebook as one thing.
 const _: () = assert!(SCRIPT_LIMIT <= THING_MOST);
 
-// An app found in the notebook: its number, the request it was made for, and
-// whether its script was found whole. Only apps with a whole script are
-// listed; the others still hold on to their number.
+// An app found in the notebook: its number, the request it was made for,
+// whether its script was found whole, and its inputs, kept with the script
+// (see `app_inputs.rs`). Only apps with a whole script and inputs that could
+// be read are listed; the others still hold on to their number.
 struct KeptApp {
     number: u32,
     request: String,
     whole: bool,
+    inputs: Vec<Input>,
 }
 
 // The kept apps, the one kept last first, and which page of them the panel
@@ -99,10 +103,10 @@ fn note_request(note: &[u8]) -> Option<String> {
     Some(rest.iter().take(REQUEST_MOST).map(|byte| if (b' '..=b'~').contains(byte) { *byte as char } else { '.' }).collect())
 }
 
-// Finds the apps kept in the notebook, says in the terminal which they are,
-// and shows the panel of apps if any is kept. Call it once at startup, after
-// the notebook is opened. When no app is kept, nothing is said and nothing
-// is shown.
+// Finds the apps kept in the notebook, with the inputs kept in front of each
+// script, says in the terminal which they are, and shows the panel of apps if
+// any is kept. Call it once at startup, after the notebook is opened. When no
+// app is kept, nothing is said and nothing is shown.
 pub fn apps_kept_begin() {
     // The notebook gives its names in the order in which their things were
     // kept, the oldest first, and it knows only things it found whole: an
@@ -126,8 +130,21 @@ pub fn apps_kept_begin() {
         let place = names.iter().position(|other| *other == script);
         if place.is_none() {
             trouble.push_str(&format!("Apps: the script kept for \"{}\" is not whole, so that app is left out\r\n", request));
+            found.push((place, KeptApp { number, request, whole: false, inputs: Vec::new() }));
+            continue;
         }
-        found.push((place, KeptApp { number, request, whole: place.is_some() }));
+        // The app's inputs stand in front of its script, in the same thing
+        // (see `app_inputs.rs`), so the script is read to find them. An app
+        // whose inputs cannot be read is left out like one whose script is
+        // not whole.
+        let inputs = match notebook_find(&script) {
+            Ok(Some(thing)) => inputs_found(&thing).map(|(inputs, _)| inputs),
+            _ => None,
+        };
+        if inputs.is_none() {
+            trouble.push_str(&format!("Apps: the inputs kept for \"{}\" cannot be read, so that app is left out\r\n", request));
+        }
+        found.push((place, KeptApp { number, request, whole: inputs.is_some(), inputs: inputs.unwrap_or_default() }));
     }
     // The app whose script was kept last first, and apps without a whole
     // script last of all.
@@ -155,16 +172,17 @@ pub fn apps_kept_begin() {
 }
 
 // Keeps an app that has just run to its end: its script, exactly as it ran,
-// and a note with the request it was made for. An app made for exactly the
-// same request as a kept one takes that one's number, so that its script
-// takes the place of the old one; any other app gets the number after the
-// highest. The script is read back, and the app counts as kept only if it
-// comes back byte for byte. Then the panel shows its first page, with this
-// app at the top. Gives back what the chat box is to say: nothing when the app
-// was kept, or when there is no notebook it can be added to (the lines at
-// startup have said why); the reason when keeping it failed. Only the main
-// loop may call this.
-pub fn app_keep(request: &str, script: &str) -> Option<String> {
+// with its inputs in front of it if it has any (see `inputs_kept` in
+// `app_inputs.rs`), and a note with the request it was made for. An app made
+// for exactly the same request as a kept one takes that one's number, so
+// that its script and inputs take the place of the old ones; any other app
+// gets the number after the highest. The script is read back, and the app
+// counts as kept only if it comes back byte for byte. Then the panel shows
+// its first page, with this app at the top. Gives back what the chat box is
+// to say: nothing when the app was kept, or when there is no notebook it can
+// be added to (the lines at startup have said why); the reason when keeping
+// it failed. Only the main loop may call this.
+pub fn app_keep(request: &str, inputs: &[Input], script: &str) -> Option<String> {
     if !notebook_ready() {
         return None;
     }
@@ -177,13 +195,14 @@ pub fn app_keep(request: &str, script: &str) -> Option<String> {
         None => return Some(String::from("I could not keep the app, because the numbers for apps have run out.")),
     };
 
-    // The script first, then read back.
+    // The script, with its inputs in front, first, then read back.
     let script_kept = script_name(number);
-    if let Err(reason) = notebook_keep(&script_kept, script.as_bytes()) {
+    let thing = inputs_kept(inputs, script);
+    if let Err(reason) = notebook_keep(&script_kept, &thing) {
         return Some(format!("I could not keep the app, because {}.", reason));
     }
     match notebook_find(&script_kept) {
-        Ok(Some(back)) if back == script.as_bytes() => {}
+        Ok(Some(back)) if back == thing => {}
         Ok(_) => return Some(String::from("I could not keep the app, because the disk did not give its script back as it was written.")),
         Err(reason) => return Some(format!("I could not keep the app, because {}.", reason)),
     }
@@ -202,17 +221,17 @@ pub fn app_keep(request: &str, script: &str) -> Option<String> {
     // first page.
     let apps = kept_apps();
     apps.retain(|app| app.number != number);
-    apps.insert(0, KeptApp { number, request: String::from(request), whole: true });
+    apps.insert(0, KeptApp { number, request: String::from(request), whole: true, inputs: inputs.to_vec() });
     unsafe { PAGE = 0 };
     serial_print(&format!("Apps: the app made for \"{}\" is kept on the disk\r\n", request));
     apps_panel_again();
     None
 }
 
-// The kept apps the model may run, by number and request, the one kept last
-// first: what `chat_tools` in `tools.rs` lists with every line.
-pub fn apps_listed() -> Vec<(u32, String)> {
-    kept_apps().iter().filter(|app| app.whole).map(|app| (app.number, app.request.clone())).collect()
+// The kept apps the model may run, by number, request and inputs, the one
+// kept last first: what `chat_tools` in `tools.rs` lists with every line.
+pub fn apps_listed() -> Vec<(u32, String, Vec<Input>)> {
+    kept_apps().iter().filter(|app| app.whole).map(|app| (app.number, app.request.clone(), app.inputs.clone())).collect()
 }
 
 // How many pages the panel of apps has, and which of them it shows, both
@@ -241,19 +260,24 @@ pub fn apps_page_turn(page: u64) -> Result<String, String> {
     }
 }
 
-// The request and the script of the kept app with this number, read from the
-// notebook, so that the app can run again; or what the kernel says when it
-// cannot be had. The script comes from the disk, and the box checks it like
-// any script before it runs.
-pub fn app_kept(number: u64) -> Result<(String, String), String> {
+// The request, the inputs and the script of the kept app with this number,
+// read from the notebook, so that the app can run again; or what the kernel
+// says when it cannot be had. The inputs and the script come from the disk:
+// the inputs are checked as they were at the start (see `inputs_found` in
+// `app_inputs.rs`), and the box checks the script like any script before it
+// runs.
+pub fn app_kept(number: u64) -> Result<(String, Vec<Input>, String), String> {
     let Some(app) = kept_apps().iter().find(|app| app.whole && u64::from(app.number) == number) else {
         return Err(format!("the model asked for app {}, but no kept app has that number.", number));
     };
     let request = app.request.clone();
     match notebook_find(&script_name(app.number)) {
-        Ok(Some(script)) => match String::from_utf8(script) {
-            Ok(script) => Ok((request, script)),
-            Err(_) => Err(format!("I could not run the app made for \"{}\", because its script on the disk is not proper text.", request)),
+        Ok(Some(thing)) => match inputs_found(&thing) {
+            Some((inputs, script)) => match core::str::from_utf8(script) {
+                Ok(script) => Ok((request, inputs, String::from(script))),
+                Err(_) => Err(format!("I could not run the app made for \"{}\", because its script on the disk is not proper text.", request)),
+            },
+            None => Err(format!("I could not run the app made for \"{}\", because its inputs on the disk cannot be read.", request)),
         },
         Ok(None) => Err(format!("I could not run the app made for \"{}\", because its script is not on the disk.", request)),
         Err(reason) => Err(format!("I could not run the app made for \"{}\", because {}.", request, reason)),

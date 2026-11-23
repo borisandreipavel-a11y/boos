@@ -41,6 +41,18 @@ Made-up key only.
             fit, widths past the room and the key in a cell; one whose inputs are longer than their bound; every dot
             of the screen and every request.
   tablesmall  a screen of 800 by 600 dots: no room for a table, so draw_table is not offered, and not done.
+  inputs    the thing apps with inputs are done by, on a disk with an app kept before inputs existed: "convert 5 km to
+            miles" makes a converter with the number input km, runs it with 5 and keeps it with its input; "convert
+            12 km" runs the kept converter with 12, in one request, without making it again; a run without the value
+            goes back to the model; the old app runs as before; after a restart "convert 2.5 km" runs it with 2.5.
+  inputsodd what the model may give about inputs that must not be believed, each turned down and sent back: a word of
+            Lua's own as a name, inputs that are no lines of text, five inputs, a name twice, an unknown kind, no sentence, no
+            value, numbers that are not written with digits, a yes/no that is neither, a text too long, a name that
+            begins with a digit; an app with all three kinds, a yes/no given as True, a text with signs that are not
+            plain and the key; values for an unknown name, a name twice, none at all (and the same call again, not
+            done twice), a yes/no that is neither and then the right ones in the same line, parted in every way taken;
+            values for an app without inputs; inputs as a set and values as a list, lines without the signs that part
+            them; and a disk whose head of inputs breaks a rule.
 
 Usage: python test_chat_tools.py [scenario ...]        (with none: all)
 Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
@@ -52,7 +64,7 @@ os.environ["DIVIDED_DISK"] = ""
 
 import app_cases
 import chat_cases
-from apps_kept_model import app_things, kept_line, kept_script, note, read_things, screen
+from apps_kept_model import apps_of, app_things, kept_line, kept_script, kept_thing, note, read_things, screen, start_lines
 from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, NO_ADDRESS, NO_KEY, NO_REQUEST, NO_TOOL_LAST, NOT_TWICE,
                               THOUGHT_ALL, ToolsChat, body_again, body_meant, cannot_do, key_pieces, left_on_screen, making,
                               model_row, no_page_row, no_such_app, page_row, refused_row, request_cleaned, round_line, running,
@@ -827,10 +839,279 @@ def scenario_tablesmall():
         check_body("tablesmall asked again", seen[1], body_again(line, [], chat.agains[0], key=KEY, screen=(800, 600)))
 
 
+# ---------- Apps with inputs (docs/apps.md, "Inputs") ----------
+
+KM = ("km", "number", "the distance in kilometres")
+CONVERTER = "converts km to miles"
+DICE = "a dice that rolls"
+KINDS = "shows four kinds of input"
+KINDS_INPUTS = [("count", "number", "how many there are"), ("share", "number", "a part of one"), ("word", "text", "a word to show"),
+                ("loud", "yes/no", "whether to shout")]
+
+
+# What the kernel says when an app's inputs, or a kept app's values, come in another shape than lines of text.
+INPUTS_NOT_LINES = ("the model asked for an app, but did not give its inputs as lines of text, one for each input: name | kind | what it "
+                    "is | value.")
+VALUES_NOT_LINES = "the model asked to run a kept app, but did not give its values as lines of text, one for each: name | value."
+
+
+def tool_lines(run):
+    """The terminal's lines about what the model asked a tool for, since the mark."""
+    return [line for line in run.since() if line.startswith("Tool: ")]
+
+
+def make_in(request, inputs, values=None):
+    """The behaviour "makein": make_app with `request` and `inputs`, (name, kind, about) each, as lines of text, each with
+    the value at the same place in `values` behind it (None: none given)."""
+    lines = []
+    for place, (name, kind, about) in enumerate(inputs):
+        value = None if values is None else values[place]
+        lines.append(" | ".join([name, kind, about] + ([] if value is None else [str(value)])))
+    return "makein=" + json.dumps({"request": request, "inputs": "\n".join(lines)})
+
+
+def run_in(number, values):
+    """The behaviour "runin": run_app with the app `number` and `values`, (name, value) each, as lines of text; a value
+    given as a text of its own is put in as it is."""
+    text = values if isinstance(values, str) else "\n".join("%s | %s" % (name, value) for name, value in values)
+    return "runin=" + json.dumps({"app": number, "values": text})
+
+
+def app_body_inputs(request, inputs):
+    """The request for an app with inputs: the request, then a line that says so and a line for each input."""
+    body = app_body(request)
+    body["messages"][1]["content"] += "\nIts inputs:" + "".join("\n- %s, a %s: %s" % one for one in inputs)
+    return body
+
+
+def turned_down(sentence):
+    return "Kernel: " + sentence
+
+
+def app_lines(run):
+    """The App lines since the mark."""
+    return [line for line in run.since() if line.startswith("App: ")]
+
+
+def compare_requests(tag, run, lines_meant, apps_meant):
+    """Every request the stand-in saw for a line and for an app, against the ones meant, in turn."""
+    seen = posts(run)
+    lines_seen = [n for n in seen if n.get("request for") == "a line"]
+    apps_seen = [n for n in seen if n.get("request for") == "an app"]
+    report(tag + " requests for a line", len(lines_seen) == len(lines_meant), "%d, meant %d" % (len(lines_seen), len(lines_meant)))
+    report(tag + " requests for an app", len(apps_seen) == len(apps_meant), "%d, meant %d" % (len(apps_seen), len(apps_meant)))
+    for kind, got, wanted in (("line", lines_seen, lines_meant), ("app", apps_seen, apps_meant)):
+        for number, (note_, meant) in enumerate(zip(got, wanted)):
+            check_body("%s %s request %d" % (tag, kind, number + 1), note_, meant)
+    everything = "\n".join(json.dumps(n.get("body")) for n in seen)
+    report(tag + " no piece of the key in any request", not key_pieces(everything, KEY))
+
+
+def scenario_inputs():
+    print("inputs: an app with an input is made and kept; the kept app runs with other values, also after a restart")
+    disk, _ = answered_disk("tools-inputs", app_things(1, DICE, kept_script("app", KEY)))
+    before = read_things(disk)
+    behaviours = [make_in(CONVERTER, [KM], ["5"]), "convert", run_in(2, [("km", "12")]), run_in(2, []), "run=1"]
+    run = Run("tools-inputs", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    t = chat_cases.TOKENS_LINE
+    old, new = (1, DICE), (2, CONVERTER, [KM])
+    lines_meant, apps_meant = [], []
+
+    # The line asks for a converter; the model gives it one number input and its value, the app is written for the
+    # input, runs with the value and is kept with its input; what it showed goes back to the model.
+    line = "convert 5 km to miles"
+    shown, printed = app_cases.converted("5")
+    run.mark()
+    exchange(run, chat, line, [t, making(CONVERTER, [("km", "number", "5")]), answer_row("convert"), "Tokens: 12 in; 1000 out",
+                               run_row("convert"), kept_line(CONVERTER), remembered(left_on_screen(shown))] + back(), timeout=150)
+    report("inputs the converter ran with 5", app_lines(run) == [printed], "got %r" % app_lines(run))
+    # The terminal shows what the model asked the tool for, as it asked it.
+    meant = ["Tool: make_app " + behaviours[0][len("makein="):]]
+    report("inputs the tool asked for in the terminal", tool_lines(run) == meant, "got %r" % tool_lines(run))
+    run.shot("made", screen(1280, 800, chat, [CONVERTER, DICE], panel_text=shown))
+    lines_meant += [body_meant(line, [old], record=chat.records[-1], key=KEY), body_again(line, [new, old], chat.agains[0], key=KEY)]
+    apps_meant += [app_body_inputs(CONVERTER, [KM])]
+
+    # The kept converter, with another distance: it runs with it, and nothing is made again.
+    line = "convert 12 km"
+    shown, printed = app_cases.converted("12")
+    run.mark()
+    exchange(run, chat, line, [t, running(CONVERTER, [("km", "number", "12")]), run_row("convert")])
+    report("inputs the kept converter ran with 12", app_lines(run) == [printed], "got %r" % app_lines(run))
+    meant = ["Tool: run_app " + behaviours[2][len("runin="):]]
+    report("inputs the run asked for in the terminal", tool_lines(run) == meant, "got %r" % tool_lines(run))
+    lines_meant += [body_meant(line, [new, old], record=chat.records[-1], key=KEY)]
+
+    # Without the value its input needs, the run is turned down, and that goes back to the model.
+    line = "convert km to miles"
+    exchange(run, chat, line, [t, turned_down('the model asked to run the app made for "%s", but gave no value for its input "km".' % CONVERTER)]
+             + back())
+    lines_meant += [body_meant(line, [new, old], record=chat.records[-1], key=KEY), body_again(line, [new, old], chat.agains[1], key=KEY)]
+
+    # The app kept before inputs existed runs as it always did.
+    line = "roll the dice"
+    run.mark()
+    exchange(run, chat, line, [t, running(DICE), run_row("app")])
+    report("inputs the old app ran", app_cases.run_expect("app", KEY)[1](app_lines(run)), "got %r" % app_lines(run))
+    lines_meant += [body_meant(line, [new, old], record=chat.records[-1], key=KEY)]
+    lines = run.end()
+    compare_requests("inputs", run, lines_meant, apps_meant)
+    no_key_in("inputs", lines)
+    after = read_things(disk)
+    things = after["things"]
+    # Every line is kept as the last line (`key` among them), and the converter once, script and then note, after the
+    # line that made it: running it with 12, the run turned down and the dice wrote nothing more.
+    added = [e[0] for e in after["entries"][len(before["entries"]):]]
+    meant = ["last line", "last line", "app 2 script", "app 2", "last line", "last line", "last line"]
+    report("inputs written in the first run", added == meant, None if added == meant else "%r" % added)
+    report("inputs the converter is kept with its input", things.get("app 2 script", (0, b""))[1] == kept_thing([KM], kept_script("convert", KEY)))
+    report("inputs the converter's note", things.get("app 2", (0, b""))[1] == note(CONVERTER))
+    report("inputs the old app is as it was", things.get("app 1 script", (0, b""))[1] == kept_script("app", KEY))
+
+    # After a restart both apps are found, and the converter runs with a distance that has a point.
+    again = Run("tools-inputs-again", disk, behaviours=[run_in(2, [("km", "2.5")])])
+    chat2 = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"", last_line=line.encode())
+    give_key(again, chat2)
+    line = "convert 2.5 km"
+    shown, printed = app_cases.converted("2.5")
+    again.mark()
+    exchange(again, chat2, line, [t, running(CONVERTER, [("km", "number", "2.5")]), run_row("convert")])
+    report("inputs after the restart the converter ran with 2.5", app_lines(again) == [printed], "got %r" % app_lines(again))
+    again.shot("ran", screen(1280, 800, chat2, [CONVERTER, DICE], panel_text=shown))
+    lines = again.end()
+    found = [l for l in lines if l.startswith("Apps:")]
+    report("inputs after the restart both apps are found", found == start_lines(apps_of(things)), "got %r" % found)
+    seen = posts(again)
+    report("inputs after the restart one request only", len(seen) == 1, "%d requests" % len(seen))
+    if seen:
+        check_body("inputs the request after the restart", seen[0], body_meant(line, [new, old]))
+    third = read_things(disk)
+    added = [e[0] for e in third["entries"][len(after["entries"]):]]
+    # The line `key` and the line sent are kept as the last line, as every line is; nothing else is written.
+    report("inputs after the restart nothing made again", added == ["last line", "last line"], None if added == ["last line", "last line"] else "%r" % added)
+
+
+def scenario_inputsodd():
+    print("inputsodd: inputs and values that must not be believed, each turned down and sent back")
+    disk, _ = answered_disk("tools-inputsodd", app_things(1, DICE, kept_script("app", KEY)))
+    n = [("n", "number", "a number")]
+    five = [("a%d" % k, "number", "a number") for k in range(1, 6)]
+    word = "café " + KEY
+    first = [3, "0.25", word, True]
+    right = [("count", "7"), ("share", "-1.5"), ("word", "plain words"), ("loud", "no")]
+    # The right values with every way of parting a line the kernel takes: |, =, : and a | at either end.
+    right_lines = "count | 7\nshare = -1.5\nword: plain words\n| loud | no |"
+    behaviours = [
+        make_in("counts words", [("end", "number", "the last word")], ["3"]),
+        "again:makein=" + json.dumps({"request": "counts words", "inputs": [{"name": "km", "kind": "number", "about": "a distance", "value": "5"}]}),
+        make_in("adds five numbers", five, ["1"] * 5), "again:" + make_in("adds two numbers", [("a", "number", "one"), ("a", "number", "two")], ["1", "2"]),
+        make_in("counts", [("n", "integer", "a number")], ["1"]), "again:" + make_in("counts", [("n", "number", "  ")], ["1"]),
+        make_in("counts", n), "again:" + make_in("counts", n, ["five"]),
+        make_in("counts", n, ["1e3"]), "again:" + make_in("shouts", [("loud", "yes/no", "whether to shout")], ["maybe"]),
+        make_in("shows a word", [("word", "text", "a word")], ["x" * 101]), "again:" + make_in("counts", [("2km", "number", "a number")], ["1"]),
+        make_in(KINDS, KINDS_INPUTS, first), "kinds",
+        run_in(2, [("count", "3"), ("colour", "red")]), "again:" + run_in(2, [("count", "1"), ("count", "2")]),
+        run_in(2, []), "again:" + run_in(2, []),
+        run_in(2, right[:3] + [("loud", "perhaps")]), "again:" + run_in(2, right_lines),
+        run_in(1, [("sides", "6")]), "again:run=1",
+        "makein=" + json.dumps({"request": CONVERTER, "inputs": {"km": {"kind": "number", "about": "the distance in kilometres", "value": "5"}}}),
+        "again:runin=" + json.dumps({"app": 2, "values": [{"name": "count", "value": "3"}]}),
+        "makein=" + json.dumps({"request": CONVERTER, "inputs": "km number"}), "again:" + run_in(2, "count 3"),
+    ]
+    run = Run("tools-inputsodd", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    t = chat_cases.TOKENS_LINE
+    kept = [(1, DICE)]
+    lines_meant, apps_meant = [], []
+    agains = [0]
+
+    def asked(line, rows, asks, before=None):
+        """Sends `line`, whose answers bring `rows`, asked about `asks` times in all (the last of three without tools).
+        `before`: the kept apps the line's first ask goes with, when an app is kept during the line."""
+        exchange(run, chat, line, rows, timeout=150)
+        lines_meant.append(body_meant(line, kept if before is None else before, record=chat.records[-1], key=KEY))
+        for ask in range(2, asks + 1):
+            lines_meant.append(body_again(line, kept, chat.agains[agains[0]], last=ask == 3, key=KEY))
+            agains[0] += 1
+
+    name_rule = ("the model named an input \"%s\", but a name has letters, digits and _ only, begins with a letter, has at most "
+                 "20 signs, and is no word of Lua's own.")
+    asked("make a counter", [t, turned_down(name_rule % "end"), AGAIN, t, turned_down(INPUTS_NOT_LINES)] + back(), 3)
+    asked("make five", [t, turned_down("the model asked for an app with more than 4 inputs."), AGAIN, t,
+                        turned_down('the model gave two inputs the name "a".')] + back(), 3)
+    asked("make kinds", [t, turned_down('the model gave the input "n" the kind "integer", but an input is a number, a text or a yes/no.'), AGAIN, t,
+                         turned_down('the model gave the input "n" no sentence that says what it is.')] + back(), 3)
+    asked("make missing", [t, turned_down('the model asked for an app with the input "n", but gave it no value, so the app was not written.'), AGAIN, t,
+                           turned_down('the model gave the input "n" the value "five", which is not a number written with digits.')] + back(), 3)
+    asked("make big", [t, turned_down('the model gave the input "n" the value "1e3", which is not a number written with digits.'), AGAIN, t,
+                       turned_down('the model gave the input "loud" the value "maybe", which is not yes or no.')] + back(), 3)
+    asked("make long", [t, turned_down('the model gave the input "word" a text of 101 signs, and an input takes at most 100.'), AGAIN, t,
+                        turned_down(name_rule % "2km")] + back(), 3)
+
+    # An app with all three kinds: a number given as a number of JSON's, one with a point, a text with signs that are not
+    # plain and the key in it (starred where what the model gave the tool comes in, the rest cleaned), and true.
+    text = "caf.. " + "*" * len(KEY)
+    values = [("count", "number", "3"), ("share", "number", "0.25"), ("word", "text", text), ("loud", "yes/no", "yes")]
+    run.mark()
+    before, kept = kept, [(2, KINDS, KINDS_INPUTS)] + kept
+    asked("make the kinds app", [t, making(KINDS, values), answer_row("kinds"), "Tokens: 12 in; 1000 out", run_row("kinds"), kept_line(KINDS),
+                                 remembered(left_on_screen(text[:40]))] + back(), 2, before=before)
+    printed = ["App: integer 3 float 0.25", "App: string %s %d" % (text, len(text)), "App: boolean true"]
+    report("inputsodd the kinds as Lua takes them", app_lines(run) == printed, "got %r" % app_lines(run))
+    apps_meant.append(app_body_inputs(KINDS, KINDS_INPUTS))
+    run.shot("kinds", screen(1280, 800, chat, [KINDS, DICE], panel_text=text[:40]))
+
+    asked("run with a wrong name", [t, turned_down('the model gave a value for "colour", but the app made for "%s" has no input of that name.' % KINDS),
+                                    AGAIN, t, turned_down('the model gave the input "count" two values.')] + back(), 3)
+    asked("run without values", [t, turned_down('the model asked to run the app made for "%s", but gave no value for its input "count".' % KINDS),
+                                 AGAIN, t, NOT_TWICE] + back(), 3)
+    # Turned down for one value, and then given the right ones in the same line: that is another thing, and is done.
+    run.mark()
+    asked("run it right", [t, turned_down('the model gave the input "loud" the value "perhaps", which is not yes or no.'), AGAIN, t,
+                           running(KINDS, [("count", "number", "7"), ("share", "number", "-1.5"), ("word", "text", "plain words"), ("loud", "yes/no", "no")]),
+                           run_row("kinds")], 2)
+    printed = ["App: integer 7 float -1.5", "App: string plain words 11", "App: boolean false"]
+    report("inputsodd the right values in the same line", app_lines(run) == printed, "got %r" % app_lines(run))
+    asked("roll with sides", [t, turned_down('the model gave a value for "sides", but the app made for "%s" takes no inputs.' % DICE), AGAIN, t,
+                              running(DICE), run_row("app")], 2)
+    # Inputs given as a set of named things, and values as a list of them, instead of lines of text: turned down, not
+    # taken for none. Then a line of inputs and a line of values without the signs that part them.
+    asked("make with a set", [t, turned_down(INPUTS_NOT_LINES), AGAIN, t, turned_down(VALUES_NOT_LINES)] + back(), 3)
+    asked("make odd lines", [t, turned_down('the model gave the app\'s input 1 as "km number", but an input is written as name | kind | what it '
+                                            'is | value.'), AGAIN, t,
+                             turned_down('the model gave the value 1 as "count 3", but a value is written as name | value.')] + back(), 3)
+    lines = run.end()
+    compare_requests("inputsodd", run, lines_meant, apps_meant)
+    no_key_in("inputsodd", lines)
+    things = read_things(disk)["things"]
+    report("inputsodd the kinds app is kept with its inputs",
+           things.get("app 2 script", (0, b""))[1] == kept_thing(KINDS_INPUTS, kept_script("kinds", KEY)))
+
+    # A head of inputs that breaks a rule (a word of Lua's own as a name): that app is left out, with a line that says
+    # so, and the other is listed and offered.
+    bad = kept_thing([("end", "number", "the last word")], b'show("never")')
+    disk2, _ = answered_disk("tools-inputshead", app_things(1, "a bad head", bad) + app_things(2, CONVERTER, kept_thing([KM], kept_script("convert", KEY))))
+    head = Run("tools-inputshead", disk2, behaviours=["words=Hello."])
+    chat3 = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(head, chat3)
+    exchange(head, chat3, "hello", [model_row("Hello."), t])
+    lines = head.end()
+    things = read_things(disk2)["things"]
+    found = [l for l in lines if l.startswith("Apps:")]
+    meant = start_lines(apps_of(things))
+    report("inputsodd the bad head is left out", found == meant and len(meant) == 3, "got %r, meant %r" % (found, meant))
+    seen = posts(head)
+    if seen:
+        check_body("inputsodd only the good app is offered", seen[0], body_meant("hello", [(2, CONVERTER, [KM])]))
+
+
 SCENARIOS = {"nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
              "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
              "forgetting": scenario_forgetting, "bound": scenario_bound, "rounds": scenario_rounds, "table": scenario_table,
-             "tablesmall": scenario_tablesmall}
+             "tablesmall": scenario_tablesmall, "inputs": scenario_inputs, "inputsodd": scenario_inputsodd}
 
 
 def main():

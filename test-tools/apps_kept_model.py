@@ -93,6 +93,56 @@ def app_things(number, request, script):
     return [("app %d script" % number, script), ("app %d" % number, note(request))]
 
 
+# ---------- An app's inputs, kept in front of its script (docs/apps.md, "Inputs") ----------
+
+HEAD_MARK, HEAD_FORM = 0xFF, 1
+KIND_LETTERS = {"number": b"n", "text": b"t", "yes/no": b"y"}
+LUA_WORDS = ("and break do else elseif end false for function goto if in local nil not or repeat return then true until "
+             "while").split()
+
+
+def kept_thing(inputs, script):
+    """What is kept under an app's script name: the script alone for an app without inputs; otherwise a head first,
+    the mark 0xFF, the form 1, how many inputs, and for each its kind's letter, its name's length and name, its
+    sentence's length and sentence. `inputs`: (name, kind, about) each; `script`: bytes."""
+    if not inputs:
+        return script
+    head = bytes([HEAD_MARK, HEAD_FORM, len(inputs)])
+    for name, kind, about in inputs:
+        head += KIND_LETTERS[kind] + bytes([len(name)]) + name.encode() + bytes([len(about)]) + about.encode()
+    return head + script
+
+
+def inputs_of(data):
+    """The inputs a kept thing holds in front of its script, as (name, kind, about) each, held to the rules the notes
+    give: [] for a thing without the mark, None for a head that breaks a rule."""
+    if not data or data[0] != HEAD_MARK:
+        return []
+    if len(data) < 3 or data[1] != HEAD_FORM or not 1 <= data[2] <= 4:
+        return None
+    at, found = 3, []
+    kinds = {letter[0]: kind for kind, letter in KIND_LETTERS.items()}
+    for _ in range(data[2]):
+        if at >= len(data) or data[at] not in kinds:
+            return None
+        kind, at = kinds[data[at]], at + 1
+        pieces = []
+        for _ in range(2):
+            if at >= len(data) or at + 1 + data[at] > len(data):
+                return None
+            piece = data[at + 1:at + 1 + data[at]]
+            if not all(32 <= b <= 126 for b in piece):
+                return None
+            pieces.append(piece.decode())
+            at += 1 + data[at]
+        name, about = pieces
+        if (not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,19}", name) or name in LUA_WORDS or name in [f[0] for f in found]
+                or not about or about != about.strip() or len(about) > 80):
+            return None
+        found.append((name, kind, about))
+    return found
+
+
 # ---------- Reading notebooks ----------
 
 def piece_kind(piece, pieces, whole, length):
@@ -172,18 +222,20 @@ def clean_request(data):
 
 
 def apps_of(things):
-    """The apps a start finds: [(number, request, whole)], the one whose script was kept last first, the apps whose
-    script is not whole last, in the order their notes were kept."""
+    """The apps a start finds: [(number, request, whole)], the one whose script was kept last first, the apps left out
+    last, in the order their notes were kept. `whole` is True for an app that is listed, False for one whose script is
+    not whole, and None for one whose inputs, in front of its script, cannot be read."""
     found = []
     for name, (block, data) in sorted(things.items(), key=lambda item: item[1][0]):
         match = re.fullmatch(r"app ([1-9][0-9]{0,8})", name)
         if not match or len(data) < 2 or data[0] != NOTE_FORM:
             continue
         script = things.get("app %s script" % match.group(1))
-        found.append((script[0] if script else None, int(match.group(1)), clean_request(data[1:])))
-    whole = sorted([f for f in found if f[0] is not None], key=lambda f: -f[0])
-    broken = [f for f in found if f[0] is None]
-    return [(number, request, block is not None) for block, number, request in whole + broken]
+        state = False if not script else (None if inputs_of(script[1]) is None else True)
+        found.append((script[0] if script else None, int(match.group(1)), clean_request(data[1:]), state))
+    whole = sorted([f for f in found if f[3] is True], key=lambda f: -f[0])
+    broken = [f for f in found if f[3] is not True]
+    return [(number, request, state) for _, number, request, state in whole + broken]
 
 
 def start_lines(apps):
@@ -193,7 +245,8 @@ def start_lines(apps):
     if listed:
         lines.append("Apps: %d %s kept on the disk:" % (len(listed), "is" if len(listed) == 1 else "are"))
         lines += ['Apps: "%s"' % request for request in listed]
-    lines += ['Apps: the script kept for "%s" is not whole, so that app is left out' % request for _, request, whole in apps if not whole]
+    lines += [('Apps: the script kept for "%s" is not whole, so that app is left out' if whole is False else
+               'Apps: the inputs kept for "%s" cannot be read, so that app is left out') % request for _, request, whole in apps if not whole]
     return lines
 
 

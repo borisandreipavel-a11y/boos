@@ -30,6 +30,7 @@ use crate::onboarding::{
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
 use crate::model::key_starred_kept;
+use crate::page::plain_text;
 use crate::serial::serial_print;
 use crate::tools::{ToolDone, chat_tools, tool_do, tool_wanted};
 
@@ -41,6 +42,9 @@ const CHAT_LINE_LIMIT: usize = 50;
 // included, and not counting the requests that write an app. The last ask
 // goes without the list of tools, so that its answer is words.
 const ASKS_MOST: usize = 3;
+
+// How many signs of what the model gave a tool the terminal shows.
+const TOOL_SHOWN: usize = 300;
 
 // The line whose asks are under way, from its first ask until it ends: how
 // many asks went out; the line as it was sent to the model, with the key
@@ -549,6 +553,15 @@ pub fn chat_answer(answer: Answer) {
         let Some(call) = reply.as_ref().and_then(|reply| reply.tool.as_ref()) else {
             return;
         };
+        // What the model asked a tool for, as it asked it, in the terminal:
+        // the tool's name and what it gave the tool, in which the key was
+        // starred already (see `model.rs`), cleaned and cut at `TOOL_SHOWN`
+        // signs. It is not said in the chat box, and not remembered.
+        if call.inputs.is_empty() {
+            serial_print(&format!("Tool: {}\r\n", call.name));
+        } else {
+            serial_print(&format!("Tool: {} {}\r\n", call.name, plain_text(&call.inputs, TOOL_SHOWN)));
+        }
         let more = reply.as_ref().is_some_and(|reply| reply.more);
         let Some(mut asks) = asks else {
             // `setup` was sent while the answer was awaited: the tool is
@@ -592,7 +605,7 @@ pub fn chat_answer(answer: Answer) {
         asks_after(outcome);
         return;
     }
-    if let Errand::AppRequest(request) = &answer.errand {
+    if let Errand::AppRequest { request, inputs, values } = &answer.errand {
         let asks = asks_take();
         chat_say(&answer.sentence);
         if let Some(tokens) = &answer.tokens {
@@ -600,7 +613,7 @@ pub fn chat_answer(answer: Answer) {
         }
         if let Some(script) = &answer.script {
             app_print_script(script);
-            let run = app_run(script);
+            let run = app_run(script, values);
             chat_say(&run.sentence);
             if asks.is_some() {
                 for told in run.told.iter() {
@@ -608,7 +621,7 @@ pub fn chat_answer(answer: Answer) {
                 }
             }
             if run.ran {
-                if let Some(trouble) = app_keep(request, script) {
+                if let Some(trouble) = app_keep(request, inputs, script) {
                     chat_say(&trouble);
                 }
             }

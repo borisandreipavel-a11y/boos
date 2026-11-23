@@ -2,7 +2,8 @@
 folder), and prints the App: and Interpreter: lines of each boot. Used to check what the instruction text tells
 the model about the interpreter, and how the script at startup reports a stop. The scripts used so far are in
 lua/: claims.lua (the libraries, the cuts, random numbers), seed.lua (math.randomseed), startup_mistake.lua and
-startup_loop.lua (a stopped script at startup).
+startup_loop.lua (a stopped script at startup), numbers.lua (numbers with a point, and the words Lua keeps for itself,
+which an app's input may not be named after).
 
 Usage: python check_lua.py <script file> [boots]"""
 import os

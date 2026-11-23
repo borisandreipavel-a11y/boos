@@ -43,6 +43,22 @@ RUN_SCRIPTS = {
     "runrecurse": "local function deeper(n)\n  return deeper(n + 1) + 1\nend\nshow(deeper(1))",
 }
 
+# Apps with inputs (docs/apps.md, "Inputs"): a converter that reads the number input.km, and one that prints what
+# kind of Lua value each of its four inputs became, and shows its text.
+CONVERT = ('local km = input.km\nlocal miles = km * 0.621371\n'
+           'print(km .. " km is " .. string.format("%.2f", miles) .. " miles")\n'
+           'show(km .. " km = " .. string.format("%.2f", miles) .. " miles")\n')
+KINDS = ('print(math.type(input.count), input.count, math.type(input.share), input.share)\n'
+         'print(type(input.word), input.word, #input.word)\nprint(type(input.loud), input.loud)\nshow(input.word)\n')
+
+
+def converted(km):
+    """What the converter shows and prints for a distance written as `km`, worked out by hand from Lua's rules: the
+    distance as it was written (a whole number of Lua's has no point), the miles with two digits behind the point."""
+    miles = "%.2f" % (float(km) * 0.621371)
+    return "%s km = %s miles" % (km, miles), "App: %s km is %s miles" % (km, miles)
+
+
 INSTRUCTIONS = (
     "You write small apps for a home-made operating system. Each app is one script in the language Lua 5.4. "
     "Answer with the script only: no words before or after it, and no ``` marks around it.\n"
@@ -59,6 +75,12 @@ INSTRUCTIONS = (
     "print stops the script.\n"
     "\n"
     "Use only plain English letters, digits and the signs of a US keyboard; any other character comes out as a dot.\n"
+    "\n"
+    "The app may take inputs, listed below its request, each with a name, a kind and a sentence. Before the script runs, "
+    "their values are put in a table called input, such as input.km for an input called km: a number as a Lua number, "
+    "a text as a string of at most 100 characters, and a yes/no as true or false. When no inputs are listed, the app "
+    "takes none and input is empty: do not read it then. Write the app for any values, not only for one: if a value "
+    "makes no sense, show in a few words what is wrong.\n"
     "\n"
     "The script's budget of work is small, about four thousand rounds of a simple loop in all, so keep loops short. "
     "A script longer than 32 KB is refused.\n"
@@ -94,6 +116,8 @@ def answer(kind, bearer):
         "appcrlf": ({**a, "content": SCRIPT.replace("\n", "\r\n")}, "stop"),
         "appnoending": ({**a, "content": SCRIPT}, None),
         "apponeline": ({**a, "content": "show(\"hi\")"}, "stop"),
+        "convert": ({**a, "content": CONVERT}, "stop"),
+        "kinds": ({**a, "content": KINDS}, "stop"),
     }
     for name, script in RUN_SCRIPTS.items():
         table[name] = ({**a, "content": script}, "stop")
@@ -162,6 +186,9 @@ def run_expect(kind, key):
         "runnil": (RAN, nothing, shows("nil")),
         # Calls without end: the fuel runs out before anything else does (seen, and so meant).
         "runrecurse": (TOO_MUCH_WORK, nothing, keeps),
+        # Apps with inputs: what they print and show depends on the values, which the tests judge themselves.
+        "convert": (RAN, None, None),
+        "kinds": (RAN, None, None),
     }
     return table.get(kind)
 

@@ -23,7 +23,10 @@ CHAT_INSTRUCTIONS = (
     "You get the newest line, and below these instructions a record of the last lines before it and what came of them, if there were any. "
     "If the person asks you to forget what was said or to start over, use forget: saying so in words forgets nothing. "
     "Answer in plain words, in one or two short sentences, or use one of the tools when the person wants something done that a tool does. "
-    "Use run_app for a kept app that fits the wish, and make_app only when none fits."
+    "Use run_app for a kept app that fits the wish, and make_app only when none fits. "
+    "An app can take inputs, such as a distance to convert: give them to make_app as its inputs, each with its value, never in its request; "
+    "for a kept app that fits the wish, use run_app with the new values. "
+    "If the person has not said a value an app needs and there is no obvious one, ask them for it in plain words."
 )
 
 # What stands between the instructions and the record of what was said before the line, when anything was.
@@ -46,9 +49,29 @@ def tool(name, description, inputs, required):
 
 MAKE_APP = tool("make_app",
                 "Has a new app written for the person and runs it; an app that runs to its end is kept. "
-                "Use it only when the person wants an app and no kept app fits.",
-                {"request": {"type": "string", "description": "What the app does, in at most 45 signs, such as: a dice that rolls"}},
-                ["request"])
+                "Use it only when the person wants an app and no kept app fits. "
+                "Give the app inputs for what a wish may change, such as a distance to convert, each with its value for this run.",
+                {"request": {"type": "string",
+                             "description": "What the app does in general, without its inputs or this run's values, in at most 45 signs, such as: "
+                                            "converts km to miles"},
+                 "inputs": {"type": "string",
+                            "description": "The inputs the app takes at every run, at most 4, one line each: name | kind | what it is | its value "
+                                           "for this run. A name has letters, digits or _ and begins with a letter; a kind is number, text or "
+                                           "yes/no. Such as: km | number | the distance in kilometres | 5. Empty for an app that takes none."}},
+                ["request", "inputs"])
+
+# What run_app takes besides the app's number while any kept app has inputs, then required too (docs/tools.md).
+VALUES = {"type": "string", "description": "A value for each input of the app, one line each: name | value, such as: km | 12. Empty for an app "
+                                          "that takes none."}
+
+
+def inputs_listed(inputs):
+    """How run_app lists a kept app's inputs, (name, kind, about) each, behind its request."""
+    out = ""
+    for place, (name, kind, about) in enumerate(inputs):
+        out += ", taking " if place == 0 else (" and " if place + 1 == len(inputs) else ", ")
+        out += "%s (a %s: %s)" % (name, kind, about)
+    return out
 
 
 # The tool that fetches a file from the web and keeps it, offered while files can be kept (docs/tools.md).
@@ -69,11 +92,17 @@ def remove_file_tool(files):
 
 
 def run_app_tool(apps):
-    """`apps`: (number, request) of the kept apps, the one kept last first."""
-    told = ("Runs one of the kept apps again, as it was written, without writing it anew. The kept apps, by number: "
-            + "; ".join("%d: %s" % (number, request) for number, request in apps) + ".")
-    return tool("run_app", told, {"app": {"type": "integer", "enum": [number for number, _ in apps],
-                                          "description": "The number of the kept app"}}, ["app"])
+    """`apps`: (number, request), or (number, request, inputs) with (name, kind, about) for each input, of the kept apps,
+    the one kept last first. While any has inputs, the tool says so and takes their values too."""
+    apps = [app if len(app) == 3 else (app[0], app[1], []) for app in apps]
+    with_inputs = any(inputs for _, _, inputs in apps)
+    told = ("Runs one of the kept apps again, as it was written, without writing it anew"
+            + (", with a value for each of its inputs" if with_inputs else "") + ". The kept apps, by number: "
+            + "; ".join("%d: %s%s" % (number, request, inputs_listed(inputs)) for number, request, inputs in apps) + ".")
+    properties = {"app": {"type": "integer", "enum": [number for number, _, _ in apps], "description": "The number of the kept app"}}
+    if with_inputs:
+        properties["values"] = VALUES
+    return tool("run_app", told, properties, ["app", "values"] if with_inputs else ["app"])
 
 
 def pick_look_tool():
@@ -146,7 +175,7 @@ ASKS_MOST = 3
 AGAIN_LEAD = ("\n\nWhat came of the newest line so far, oldest first. "
               "\"Model:\" is you, and \"Kernel:\" is the operating system saying what happened. "
               "The person has typed nothing since. If what they wanted is done, say in plain words what came of it. "
-              "Use a tool again only if it is not done. A new app is written from its request alone, "
+              "Use a tool again only if it is not done. A new app is written from its request and its inputs alone, "
               "so to fix an app, use make_app with a request that says what to do differently.\n")
 LAST_ASK = "\n\nYou are asked about this line for the last time, and no tools are offered now: answer in plain words."
 
@@ -214,12 +243,22 @@ def request_cleaned(request):
     return plain.strip()[:REQUEST_MOST].rstrip()
 
 
-def making(request):
-    return 'Kernel: I am asking the model to make "%s".' % request
+def values_said(values):
+    """The values of an app's inputs, (name, kind, value) each, as the kernel's sentences name them behind the request: a
+    text in quotes and cut at 40 signs with "..." behind, the others as they were checked."""
+    out = ""
+    for place, (name, kind, given) in enumerate(values):
+        out += ", with " if place == 0 else (" and " if place + 1 == len(values) else ", ")
+        out += '%s "%s"' % (name, given if len(given) <= 40 else given[:40] + "...") if kind == "text" else "%s %s" % (name, given)
+    return out
 
 
-def running(request):
-    return 'Kernel: I am running the app made for "%s".' % request
+def making(request, values=()):
+    return 'Kernel: I am asking the model to make "%s"%s.' % (request, values_said(values))
+
+
+def running(request, values=()):
+    return 'Kernel: I am running the app made for "%s"%s.' % (request, values_said(values))
 
 
 def no_such_app(number):

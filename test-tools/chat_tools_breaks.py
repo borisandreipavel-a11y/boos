@@ -33,12 +33,13 @@ BREAKS = {
     "nokeyhide": {"model.rs": swap("        key_hide(&mut inputs, key);\n", "")},
     # --- Doing the tools ---
     # A kept app asked for is made again instead of being run.
-    "remake": {"tools.rs": swap('                Ok((request, script)) => {\n                    chat_say(&format!("I am running the app made for \\"{}\\".", request));\n'
-                                '                    let run = app_run(&script);\n',
-                                "                Ok((request, _)) => {\n                    let said = match app_make(&request) { Ok(said) | Err(said) => said };\n"
-                                "                    let run = crate::apps::AppRun { sentence: said, ran: true, told: alloc::vec::Vec::new() };\n")},
+    "remake": {"tools.rs": swap('                        chat_say(&format!("I am running the app made for \\"{}\\"{}.", request, values_said(&values)));\n'
+                                '                        let run = app_run(&script, &values);\n',
+                                "                        let said = match app_make(&request, inputs.clone(), values.clone()) { Ok(said) | Err(said) => said };\n"
+                                "                        let run = crate::apps::AppRun { sentence: said, ran: true, told: alloc::vec::Vec::new() };\n")},
     # The request the model gave is not cleaned or cut.
-    "rawrequest": {"tools.rs": swap("Some(request) => match app_make(&request_cleaned(&request)) {", "Some(request) => match app_make(&request) {")},
+    "rawrequest": {"tools.rs": swap("Ok((inputs, values)) => match app_make(&request_cleaned(&request), inputs, values) {",
+                                    "Ok((inputs, values)) => match app_make(&request, inputs, values) {")},
     # A number written as a text is not taken.
     "nonumbertext": {"tools.rs": swap("    digits.parse().ok()\n", "    None\n")},
     # A look picked by the model is not kept.
@@ -96,6 +97,22 @@ BREAKS = {
     "tablefaint": {"drawing.rs": swap("    if 2 * (lighter + FLARE) >= 9 * (darker + FLARE) {\n", "    if true {\n")},
     # Another table asked for after the kernel turned one down counts as the same thing again.
     "tablewanted": {"tools.rs": swap('        "draw_table" => drawing_wanted(&call.inputs, call.cut_off),\n', "")},
+    # --- Apps with inputs (docs/apps.md, "Inputs") ---
+    # A number is not looked at before it is handed to the app.
+    "numbernotchecked": {"app_inputs.rs": swap("            if !number_fits(written) {\n", "            if false {\n")},
+    # A run of a kept app counts as the same thing whatever its values, so values given again in the same line are not taken.
+    "valueswanted": {"tools.rs": swap('"run_app" => input_number(&call.inputs, "app").map(|number| format!("{}{}", number, values_wanted(&call.inputs))),',
+                                      '"run_app" => input_number(&call.inputs, "app").map(|number| format!("{}", number)),')},
+    # An app's inputs are not kept with its script.
+    "inputsnotkept": {"apps_kept.rs": swap("    let thing = inputs_kept(inputs, script);\n", "    let thing = inputs_kept(&[], script);\n")},
+    # A head of inputs read from the disk is not held to the rules.
+    "headnotchecked": {"app_inputs.rs": swap(
+        "        if !name_fits(name) || inputs.iter().any(|input| input.name == name) || about.is_empty() || about != about_cleaned(about) {\n",
+        "        if false {\n")},
+    # A kept app runs without the value one of its inputs needs.
+    "missingtaken": {"app_inputs.rs": swap(
+        '            None => return Err(format!("the model asked to run the app made for \\"{}\\", but gave no value for its input \\"{}\\".", request, input.name)),\n',
+        "            None => continue,\n")},
 }
 
 CATCH = {
@@ -136,4 +153,9 @@ CATCH = {
     "nostarkept": "rounds",
     "tablefaint": "table",
     "tablewanted": "table",
+    "numbernotchecked": "inputsodd",
+    "valueswanted": "inputsodd",
+    "inputsnotkept": "inputs",
+    "headnotchecked": "inputsodd",
+    "missingtaken": "inputs",
 }
