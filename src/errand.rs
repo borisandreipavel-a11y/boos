@@ -26,10 +26,12 @@ pub enum Errand {
     // the kernel can do for it: the JSON that `chat_tools` in `tools.rs` made
     // when the line was sent, or nothing for the last ask about a line (see
     // `chat.rs`); with the record of what was said before it
-    // (`conversation_record` in `conversation.rs`), which may be empty; and,
-    // when the model is asked about the line again, with what came of it so
-    // far (`conversation_split`), which is empty for the line's first ask.
-    ChatLine { line: String, tools: String, record: String, done: String },
+    // (`conversation_record` in `conversation.rs`), which may be empty; with
+    // what the model is told about the open document (`documents_told` in
+    // `documents.rs`), empty while none is open; and, when the model is asked
+    // about the line again, with what came of it so far
+    // (`conversation_split`), which is empty for the line's first ask.
+    ChatLine { line: String, tools: String, record: String, document: String, done: String },
     // Ask the model to write an app: the request the model gave with the tool
     // `make_app` (see `tools.rs`), and the app's inputs, which the model that
     // writes it is told; and the values its first run is given, which stay

@@ -242,6 +242,16 @@ pub fn screen_panel_again() {
     panel_paint(core::str::from_utf8(&room[..length.min(PANEL_TEXT_MOST)]).unwrap_or(""));
 }
 
+// Where the panel sits: its left and top edges, and how many dots it is
+// across and down. Under the panel of apps, at its left edge, whether or not
+// any app is kept, so that it never covers the frame of a table beside the
+// panel; the panel of documents goes under it (see `documents.rs`).
+pub fn screen_panel_place() -> (u32, u32, u32, u32) {
+    let style = PANEL_STYLE;
+    let (apps_left, apps_top, _, apps_height) = apps_panel_place();
+    (apps_left, apps_top.saturating_add(apps_height).saturating_add(style.gap), style.width, style.height)
+}
+
 // Paints the panel and the text in it, and gives back the part of the text
 // that was written: as many signs as fit.
 fn panel_paint(text: &str) -> &str {
@@ -250,12 +260,7 @@ fn panel_paint(text: &str) -> &str {
     }
     let style = PANEL_STYLE;
     let look = look();
-
-    // Under the panel of apps, at its left edge, whether or not any app is
-    // kept, so that it never covers the frame of a table beside the panel.
-    let (apps_left, apps_top, _, apps_height) = apps_panel_place();
-    let left = apps_left;
-    let top = apps_top.saturating_add(apps_height).saturating_add(style.gap);
+    let (left, top, _, _) = screen_panel_place();
 
     // The frame: the whole panel in the frame's colour first, then the
     // inside painted over it, smaller by the frame's thickness on each side.

@@ -17,6 +17,7 @@ use crate::apps_kept::{app_keep, apps_kept_begin};
 use crate::conversation::{
     conversation_again, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent, conversation_split,
 };
+use crate::documents::{documents_begin, documents_setup, documents_told};
 use crate::errand::{Answer, Errand, errand_ask, errand_grown};
 use crate::files::{download_answer, files_answer, files_asking, files_setup};
 use crate::keyboard::BACKSPACE;
@@ -441,6 +442,7 @@ pub fn chat_begin() {
         chat_add(Speaker::Kernel, row);
     }
     apps_kept_begin();
+    documents_begin();
 }
 
 // The row that says the last line that was sent before the machine was
@@ -506,7 +508,13 @@ fn model_ask(said: &str) -> String {
     if secret_length() == 0 {
         return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
     }
-    match errand_ask(Errand::ChatLine { line: String::from(said), tools: chat_tools(), record: conversation_record(), done: String::new() }) {
+    match errand_ask(Errand::ChatLine {
+        line: String::from(said),
+        tools: chat_tools(),
+        record: conversation_record(),
+        document: documents_told(),
+        done: String::new(),
+    }) {
         Ok(()) => {
             conversation_sent();
             asks_put(Asks { made: 1, sent: String::new(), wanted: Vec::new() });
@@ -533,7 +541,7 @@ fn ask_again(mut asks: Asks) {
     asks.made += 1;
     let last = asks.made >= ASKS_MOST;
     let tools = if last { String::new() } else { chat_tools() };
-    match errand_ask(Errand::ChatLine { line: asks.sent.clone(), tools, record, done }) {
+    match errand_ask(Errand::ChatLine { line: asks.sent.clone(), tools, record, document: documents_told(), done }) {
         Ok(()) => {
             conversation_sent();
             let without = if last { ", without tools" } else { "" };
@@ -808,10 +816,12 @@ pub fn chat_key(letter: u8) {
                 // And the word that asks the questions of the onboarding
                 // again: the kernel asks for the person's name, and the next
                 // line is the answer. Another person may be at the machine
-                // now, so what was said before is forgotten, and the model is
-                // not asked again about a line whose asks are under way.
+                // now, so what was said before is forgotten, the open document
+                // is closed, and the model is not asked again about a line
+                // whose asks are under way.
                 asks_take();
                 files_setup();
+                documents_setup();
                 conversation_forget();
                 onboarding_again()
             } else {

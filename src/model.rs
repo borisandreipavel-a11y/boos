@@ -160,8 +160,10 @@ pub fn model_tell(
 // kernel can do for it (`tools`, the JSON that `chat_tools` in `tools.rs`
 // made when the line was sent, or nothing for the last ask about a line), the
 // record of what was said before it (`record`, from `conversation.rs`, empty
-// when nothing was) and, when the model is asked about the line again, what
-// came of it so far (`done`, empty for the line's first ask). Gives back what
+// when nothing was), what the model is told about the open document
+// (`document`, from `documents.rs`, empty while none is open) and, when the
+// model is asked about the line again, what came of it so far (`done`, empty
+// for the line's first ask). Gives back what
 // the kernel has to say about the answer in one sentence: nothing when the
 // model answered as it should, otherwise why the provider turned the line
 // down, why no answer came, or what was wrong with it. Beside it, what the
@@ -178,6 +180,7 @@ pub fn model_chat(
     line: &str,
     tools: &str,
     record: &str,
+    document: &str,
     done: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
@@ -185,7 +188,7 @@ pub fn model_chat(
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), None, None, None)
     } else {
-        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools, record, done)
+        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools, record, document, done)
     };
     wipe(&mut key_room);
     told
@@ -261,8 +264,9 @@ fn question_ask(
 
 // A line typed in the chat box, with the key in hand. The request holds two
 // messages: first the instruction text, as the "system" message, which tells
-// a model how to behave before it reads what it is asked, with the record of
-// what was said before the line behind it; then the line, as the "user"
+// a model how to behave before it reads what it is asked, with what it is
+// told about the open document behind it, and the record of what was said
+// before the line behind that; then the line, as the "user"
 // message, as it was typed. Behind them comes the list of tools: what the
 // kernel can do when the model asks for it. When the model is asked about
 // the line again (see `chat.rs`), the instruction text goes on with what came
@@ -283,10 +287,16 @@ fn chat_question_ask(
     line: &str,
     tools: &str,
     record: &str,
+    document: &str,
     done: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let sent = key_starred(line, key);
     let mut told = String::from(CHAT_INSTRUCTIONS);
+    // The open document comes before the record: while it does not change,
+    // the beginning of the request stays the same from line to line.
+    if !document.is_empty() {
+        told.push_str(&key_starred(document, key));
+    }
     if !record.is_empty() {
         told.push_str(RECORD_LEAD);
         told.push_str(&key_starred(record, key));

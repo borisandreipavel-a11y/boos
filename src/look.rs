@@ -20,6 +20,7 @@ use alloc::vec::Vec;
 
 use crate::apps_kept::apps_panel_again;
 use crate::chat::chat_paint;
+use crate::documents::documents_panel_again;
 use crate::drawing::drawing_paint_again;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_background, screen_panel_again};
@@ -341,14 +342,16 @@ pub fn look_reset_trouble() -> Vec<String> {
 // Paints the whole screen again in the look in use: the background and the
 // sentence, then the chat box with everything in it, then the box with an
 // app's text, if an app has shown one, the panel of apps, if any app is kept,
-// and the frame with the table drawn last, if one was drawn. The background
-// is painted first because it covers everything.
+// the frame with the table drawn last, if one was drawn, and the panel of
+// documents, if any is kept. The background is painted first because it
+// covers everything.
 pub fn look_paint() {
     screen_background();
     chat_paint();
     screen_panel_again();
     apps_panel_again();
     drawing_paint_again();
+    documents_panel_again();
 }
 
 // The looks as the model is told about them with the tool `pick_look` (see

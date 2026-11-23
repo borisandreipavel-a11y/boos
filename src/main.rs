@@ -60,6 +60,7 @@ mod tools; // The tools: what the kernel can do when the model asks for it.
 mod conversation; // The conversation: the last lines sent to the model, which go with the next.
 mod drawing; // A table the model describes, drawn by the kernel in a frame.
 mod drawing_values; // The values the drawing's check of letters is worked out with.
+mod documents; // Documents: tables kept on the disk, opened and changed by a wish.
 mod download; // Fetching a file from the web, one hop at a time.
 mod files; // Files kept on the disk, and the questions before a fetch or a removal.
 

@@ -38,6 +38,7 @@ STAND_IN = ["src/model.rs", "src/page.rs", "src/errand.rs"]  # asking the provid
 APPS = ["src/apps.rs"]
 SECRET = ["src/secret.rs"]  # a key or a password typed and kept
 FILES = ["src/files.rs", "src/download.rs", "src/notebook.rs", "src/parts.rs", "src/disk.rs", "src/tls.rs"]  # files from the web, kept
+DOCUMENTS = ["src/documents.rs", "src/drawing.rs", "src/notebook.rs"]  # tables kept as documents
 
 SUITES = [
     dict(name="app", command=["test_app.py", APP_KINDS, "dump"], watches=STAND_IN + APPS + SECRET, seconds=420),
@@ -79,6 +80,9 @@ SUITES = [
     # Files fetched from the web and kept on the disk, in the stand-in copy, whose stand-in serves made-up files.
     dict(name="downloads", command=["test_downloads.py"], split=True, watches=STAND_IN + FILES,
          seconds=dict(fetch=110, refusals=330, remove=110, startlines=60, full=50)),
+    # Documents: tables kept on the disk, opened and changed by a wish, in the stand-in copy.
+    dict(name="documents", command=["test_documents.py"], split=True, watches=STAND_IN + DOCUMENTS,
+         seconds=dict(keep=120, cut=110, odd=120, broken=70)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -126,7 +130,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10}
+                "intel": 10, "downloads": 10, "documents": 11}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -324,4 +328,15 @@ CAUGHT_BY = {
     'break intel: the virtio card not looked for first': 'both: the network lines are not as meant',
     'break intel: no Intel card after a virtio card that cannot be set up': 'fallback: the network lines are not as meant',
     'break intel: the gateway asked once only': 'asking: the kernel asked for the gateway 1 times, not twice',
+    'break documents: cutchangekept': "doc-cut 'add their moons'",
+    'break documents: closedchanged': "doc-cut 'add moons to the planets'",
+    'break documents: wantedwithoutopen': "doc-cut 'add moons to the planets'",
+    'break documents: documentlinekept': 'keep request 2',
+    'break documents: nolines': 'keep request 2',
+    'break documents: openends': "doc-keep-2 'open the planets'",
+    'break documents: namenotcleaned': 'doc-odd squares',
+    'break documents: oldestfirst': 'keep restart the lines about documents',
+    'break documents: numberreused': "doc-odd-2 'fruit please'",
+    'break documents: nopanel': 'doc-keep-2 restart',
+    'break documents: setupkeepsopen': 'doc-keep-2 setup',
 }

@@ -233,6 +233,12 @@ def break_jobs():
         add("downloads", name, ["test_downloads.py", download_breaks.CATCH[name]], {"BREAK": name},
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["download_breaks.py"], 60)
+    # Documents: in the stand-in copy, through test_documents.py with BREAK.
+    import documents_breaks
+    for name, changes in documents_breaks.BREAKS.items():
+        add("documents", name, ["test_documents.py", documents_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["documents_breaks.py"], 60)
     # Intel's network card: in the break copy, test_intel_card.py's scenarios booting the copy's kernel ("many" and
     # "page" carry the break into a copy of their own, through KERNEL_BREAK).
     import run_intel_card_breaks
