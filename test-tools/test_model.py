@@ -4,8 +4,10 @@ through QEMU's keys; then an ordinary line, which goes to the model like every l
 (docs/tools.md), is sent once for each behaviour of the stand-in, and the rows the kernel says are compared with
 what is meant: the model's words as a row of their own, or the kernel's sentence about the answer.
 
-Usage: python test_model.py <behaviour,behaviour,...> [dump]
-With `dump`, the machine's memory is searched for the made-up key after the last answer.
+Usage: python test_model.py <behaviour,behaviour,...> [dump] [pieces]
+With `dump`, the machine's memory is searched for the made-up key after the last answer. The stand-in answers whole,
+though a line asks for its answer piece by piece; with `pieces`, it sends a good answer piece by piece, and the rows
+meant are the same.
 Environment: BREAK (a break on purpose from model_breaks.py), RAW (print the raw answer)."""
 import json
 import os
@@ -123,7 +125,8 @@ MEANT = {
     "blank": K("the model's answer was empty."),
     "echo200": M("Your key is " + KEY + ", hello!"),
     "nochoices": K(NOT_FOUND5 % ("it has no such part", B(json.dumps({"object": "chat.completion", "choices": []})))),
-    "streamed": K(NOT_FOUND5 % ("it is not sound JSON", B('data: {"id":"gen-1","choices":[{"index":0,"delta":{"content":"Hello"}}]}\n\ndata: [DONE]\n\n'))),
+    # An answer in pieces, with a length note: its notes say so, and the kernel reads it piece by piece.
+    "streamed": M("Hello"),
     "otherform": K(NOT_FOUND5 % ("it has no such part", B('{"output": {"text": "Hello in another shape"}, "status": "done"}'))),
     "echobody": K(NOT_FOUND5 % ("it has no such part", B(json.dumps({"note": "your key " + KEY + " works"})))),
     "notfound": K(DOWN % (404, W("Model not found: deepseek/deepseek-v4.1-flash-1017"), "")),
@@ -157,6 +160,9 @@ def find_all(data, piece):
 def main():
     behaviours = sys.argv[1].split(",")
     dump = "dump" in sys.argv[2:]
+    # The stand-in answers whole, as a provider that does not send an answer in pieces would, unless "pieces" is
+    # given: then a good answer goes piece by piece, as a line asks for it (docs/model.md), and must bring the same rows.
+    pieces = "pieces" in sys.argv[2:]
     more = {"model.rs": with_raw_print} if os.environ.get("RAW") else None
     if os.environ.get("BREAK"):
         import model_breaks5  # registers the breaks of the real question
@@ -168,7 +174,8 @@ def main():
     if os.path.exists(log):
         os.remove(log)
     server = subprocess.Popen([sys.executable, os.path.join(HERE, "model_server.py"), str(PORT), os.path.join(TLS, "a", "both-chain.pem"),
-                               os.path.join(TLS, "a", "both.key"), log, ",".join(behaviours)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                               os.path.join(TLS, "a", "both.key"), log, ",".join(behaviours), "" if pieces else "whole"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     assert server.stdout.readline().strip() == "ready"
     machine = Machine("model", network="open", kernel=kernel)
     chat = Chat(1280)

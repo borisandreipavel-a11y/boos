@@ -53,9 +53,16 @@ Made-up key only.
             done twice), a yes/no that is neither and then the right ones in the same line, parted in every way taken;
             values for an app without inputs; inputs as a set and values as a list, lines without the signs that part
             them; and a disk whose head of inputs breaks a rule.
+  stream    an answer that comes piece by piece (every scenario's lines are answered so, by the stand-in): the
+            mark that the model thinks, and the words as they come, in pictures taken while the stand-in holds the
+            answer, then the whole answer as it would have come whole; the counts in a piece of their own and lines
+            that only say the link is alive; answers that break off (the connection ends, a piece breaks it off, the
+            model's maker's "aborted"), whose words that came are said and remembered, with a tool not done and a
+            table's whole rows drawn, the line ending there; an answer in pieces with their lengths in between.
 
 Usage: python test_chat_tools.py [scenario ...]        (with none: all)
 Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
+import copy
 import json
 import os
 import time
@@ -64,11 +71,12 @@ os.environ["DIVIDED_DISK"] = ""
 
 import app_cases
 import chat_cases
+from app_cases import clean, hide
 from apps_kept_model import apps_of, app_things, kept_line, kept_script, kept_thing, note, read_things, screen, start_lines
 from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, NO_ADDRESS, NO_KEY, NO_REQUEST, NO_TOOL_LAST, NOT_TWICE,
                               THOUGHT_ALL, ToolsChat, body_again, body_meant, cannot_do, key_pieces, left_on_screen, making,
                               model_row, no_page_row, no_such_app, page_row, refused_row, request_cleaned, round_line, running,
-                              terminal_says, words_cut)
+                              terminal_says, words_cut, WORDS_SHOWN)
 from conversation_model import BYTES_REMEMBERED, LINES_REMEMBERED
 from disk_helpers import make
 from table_model import CANNOT_READ_TABLE, NO_ROOM, drawn
@@ -104,15 +112,18 @@ def shown_since(run, shown=SHOWN):
     return [line for line in run.since() if line.startswith(shown)]
 
 
-def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN):
+def exchange(run, chat, line, after, last=None, timeout=90, shown=SHOWN, meanwhile=None):
     """Sends `line` (the chat model takes it too), waits for the last line meant, and compares what the terminal
     showed since with the person's row, the row said at once, and the rows in `after`. Rows in `after` that belong in
     the chat box are added to the chat model, in turn with its other items: steps of the chat model's own (see
     remembered and AGAIN below), which the terminal does not show. `shown`: how the terminal's lines that count begin
-    (the person's rows begin with their name when one is kept)."""
+    (the person's rows begin with their name when one is kept). `meanwhile` is done after the line is sent, before the
+    wait (see held below)."""
     run.mark()
     run.press(line + "\n", chat)
     pressed = time.time()
+    if meanwhile:
+        meanwhile()
     rows = [item for item in after if isinstance(item, str)]
     meant = chat.said[-2:] + rows
     wanted = last or (rows[-1] if rows else meant[-1])
@@ -227,7 +238,9 @@ def scenario_words():
     exchange(run, chat, "think hard", [THOUGHT_ALL, chat_cases.TOKENS_LINE])
     exchange(run, chat, "my key", [model_row("Your key is " + KEY + ", I think.", KEY), chat_cases.TOKENS_LINE])
     exchange(run, chat, "refuse me", [refused_row(chat_cases.REFUSAL)])
-    beginning = words_cut(chat_cases.body({"role": "assistant"}, None).decode(), KEY, 160)
+    # Sent piece by piece, as a line asks for it: what is said is how the pieces begin.
+    beginning = words_cut(chat_cases.stream_body(chat_cases.stream_pieces(json.loads(chat_cases.body({"role": "assistant"}, None)))).decode(),
+                          KEY, 160)
     nothing = ("Kernel: the provider answered, but I could not find the model's words in its answer, because it has no such part. "
                'It begins "%s".' % beginning)
     exchange(run, chat, "nothing", [nothing, chat_cases.TOKENS_LINE])
@@ -1108,10 +1121,179 @@ def scenario_inputsodd():
         check_body("inputsodd only the good app is offered", seen[0], body_meant("hello", [(2, CONVERTER, [KM])]))
 
 
+# ---------- An answer that comes piece by piece ----------
+
+# What the kernel says when an answer that came piece by piece broke off (docs/tools.md).
+BROKE = "Kernel: the model's answer broke off before it was whole."
+BROKE_UNDONE = "Kernel: the model's answer broke off before it was whole, so I did not do what it asked for."
+BROKE_BY = 'Kernel: the provider broke the model\'s answer off: "%s".' % chat_cases.BREAK_MESSAGE
+STOPPED = "Kernel: the provider stopped the model's answer before its end."
+CHUNKED = ('Kernel: no answer came that I could read, because the provider sent its answer in pieces with their lengths in '
+           'between ("chunked"), which it should not for this kind of request')
+
+
+def so_far(words, key=KEY):
+    """What the chat box shows of the model's words while more may come (docs/chat.md): the words from the first that
+    is not a space, cleaned, the key hidden, without the last signs, one fewer than the key is long, and at most 300."""
+    signs = hide(clean(words.lstrip())[:WORDS_SHOWN + len(key)], key)
+    return signs[:max(0, min(WORDS_SHOWN, len(signs) - max(len(key) - 1, 0)))]
+
+
+def pieces_of(kind):
+    """The pieces the stand-in sends for a line's behaviour, with its ways (chat_cases.stream_pieces)."""
+    ways, kind = chat_cases.stream_ways(kind)
+    found = chat_cases.answer(kind, "", KEY)[0]
+    return chat_cases.stream_pieces(json.loads(found.partition(b"\r\n\r\n")[2]), ways)
+
+
+def growing(chat, words="", thinking=False):
+    """The chat model as the chat box shows it while an answer comes in: the words so far under the rows of what was
+    said, or the mark that the model thinks behind the row that says it is asked."""
+    shown = copy.deepcopy(chat)
+    if thinking:
+        speaker, text = shown.rows[-1]
+        shown.rows[-1] = (speaker, text + " It is thinking.")
+    if words:
+        shown.add("kernel", "Model: " + words)
+    return shown
+
+
+def held(run, name, meant):
+    """A step for `exchange`'s meanwhile: waits until the stand-in holds the answer it sends, compares a picture with
+    the one meant, and lets the stand-in go on."""
+    def step():
+        end = time.time() + 60
+        while time.time() < end and not os.path.exists(run.log + ".held"):
+            time.sleep(0.05)
+        holding = os.path.exists(run.log + ".held")
+        report(run.tag + " " + name + " held", holding, "the stand-in holds the answer" if holding else "the stand-in never held the answer")
+        run.shot(name, meant())
+        open(run.log + ".go", "w").close()
+    return step
+
+
+def text_unfinished(given):
+    """What the kernel's JSON reader takes out of a description cut off before its closing quote (`given`, what the
+    model gave draw_table so far): its text as far as it goes, a backslash form cut in two left out."""
+    rest = given[given.index('"table": "') + len('"table": "'):]
+    out, at = [], 0
+    while at < len(rest) and rest[at] != '"':
+        if rest[at] != "\\":
+            out.append(rest[at])
+            at += 1
+            continue
+        if at + 1 >= len(rest) or (rest[at + 1] == "u" and at + 6 > len(rest)):
+            break
+        if rest[at + 1] == "u":
+            out.append(chr(int(rest[at + 2:at + 6], 16)))
+            at += 6
+        else:
+            out.append({"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}.get(rest[at + 1], rest[at + 1]))
+            at += 2
+    return "".join(out)
+
+
+def stream_line(run):
+    """The terminal's line about how the pieces of the last answer came, or an empty text."""
+    return next((line for line in reversed(run.since()) if line.startswith("Stream: ")), "")
+
+
+def scenario_stream():
+    print("stream: an answer piece by piece, as it comes, and answers that break off")
+    disk, _ = answered_disk("tools-stream")
+    first = "words=This answer thinks first, and then it comes in pieces of a few signs."
+    second = ("words=This answer comes in pieces, a few signs at a time, and the chat box shows the words as they come, "
+              "row after row, until the whole answer has come and is said as it would have been.")
+    broken = "words=These words break off in the middle, and only the first of them are ever said in the chat box."
+    keyed = ("words=Your key is " + KEY + ", and these words go on long enough for the stand-in to hold them for a picture of "
+             "the words so far.")
+    behaviours = ["holdthinking:" + first, "hold:" + second, "hold:" + keyed, "keepalive:usagealone:routerusage", "cut:" + broken, "error:" + broken,
+                  "aborted:words=Five words of hello here.", "cut:make=a dice that rolls", "cut:table=long", "chunkedstream"]
+    run = Run("tools-stream", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    t, none = chat_cases.TOKENS_LINE, chat_cases.NO_TOKENS_LINE
+    lines = []
+
+    # The model thinks first: while it does, the row that says it is asked says so too; then the words come.
+    line = "think first"
+    exchange(run, chat, line, [model_row(first[len("words="):]), t],
+             meanwhile=held(run, "thinking", lambda: screen(1280, 800, growing(chat, thinking=True), [])))
+    lines.append(line)
+    run.shot("thought", screen(1280, 800, chat, []))
+    report("stream the line about the pieces", "thinking from " in stream_line(run) and "the end mark after " in stream_line(run),
+           stream_line(run))
+
+    # The words as they come: those that came show, but for the last, as many as the key is long less one.
+    line = "tell me more"
+    sent = chat_cases.stream_sent(pieces_of("hold:" + second), "hold")[0]
+    exchange(run, chat, line, [model_row(second[len("words="):]), t],
+             meanwhile=held(run, "words", lambda: screen(1280, 800, growing(chat, so_far(sent)), [])))
+    lines.append(line)
+    run.shot("said", screen(1280, 800, chat, []))
+
+    # The key in the words that came so far is starred while more may come, as it is at the end.
+    line = "my key, in pieces"
+    sent = chat_cases.stream_sent(pieces_of("hold:" + keyed), "hold")[0]
+    report("stream the key came whole before the hold", KEY in sent and KEY not in so_far(sent), "%d signs sent" % len(sent))
+    exchange(run, chat, line, [model_row(keyed[len("words="):], KEY), t],
+             meanwhile=held(run, "keyed", lambda: screen(1280, 800, growing(chat, so_far(sent)), [])))
+    lines.append(line)
+
+    # The counts in a piece of their own, with no choices, and lines that only say the link is alive.
+    line = "count the router's way"
+    exchange(run, chat, line, [model_row("Counted the router's way."), chat_cases.TOKENS_ROUTER])
+    lines.append(line)
+    report("stream lines that say the link is alive", "2 lines that the link is alive" in stream_line(run), stream_line(run))
+
+    # The connection ends in the middle: the words that came are said, and that it broke off; no counts came.
+    line = "break off"
+    came = chat_cases.stream_sent(pieces_of("cut:" + broken))[0]
+    exchange(run, chat, line, ([model_row(came)] if came.strip() else []) + [BROKE, none])
+    lines.append(line)
+    report("stream no end mark", stream_line(run).endswith("no end mark."), stream_line(run))
+
+    # A piece that breaks the answer off, and the model's maker's "aborted".
+    line = "an error"
+    came = chat_cases.stream_sent(pieces_of("error:" + broken))[0]
+    exchange(run, chat, line, ([model_row(came)] if came.strip() else []) + [BROKE_BY, none])
+    lines.append(line)
+    line = "stop short"
+    exchange(run, chat, line, [model_row("Five words of hello here."), STOPPED, t])
+    lines.append(line)
+
+    # A tool whose call broke off is not done, and the line ends there.
+    line = "a dice, cut"
+    exchange(run, chat, line, [BROKE_UNDONE, none])
+    lines.append(line)
+    report("stream no app asked for", not any(l.startswith("Kernel: I am asking the model to make") for l in run.since()), "")
+
+    # A table whose call broke off: its rows that came whole are drawn, and the line ends there.
+    line = "a table, cut"
+    given = chat_cases.stream_sent(pieces_of("cut:table=long"))[1]
+    cut, said, whole = drawn(text_unfinished(given), whole=False)
+    report("stream the cut table is meant with some rows", not whole and "it was cut off" in said, said)
+    exchange(run, chat, line, [BROKE, none, said, holds(cut)])
+    lines.append(line)
+    report("stream a broken table does not go back", rounds_since(run) == [], "got %r" % rounds_since(run))
+    run.shot("table", screen(1280, 800, chat, []))
+
+    # Pieces with their lengths in between are not read.
+    line = "in chunks"
+    exchange(run, chat, line, [CHUNKED])
+    lines.append(line)
+    run.shot("end", screen(1280, 800, chat, []))
+
+    run_lines = run.end()
+    bodies_meant("stream", run, chat, lines)
+    no_key_in("stream", run_lines)
+
+
 SCENARIOS = {"nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
              "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
              "forgetting": scenario_forgetting, "bound": scenario_bound, "rounds": scenario_rounds, "table": scenario_table,
-             "tablesmall": scenario_tablesmall, "inputs": scenario_inputs, "inputsodd": scenario_inputsodd}
+             "tablesmall": scenario_tablesmall, "inputs": scenario_inputs, "inputsodd": scenario_inputsodd,
+             "stream": scenario_stream}
 
 
 def main():

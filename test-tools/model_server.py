@@ -23,8 +23,15 @@ behaviour left, a line gets "words=Hello." and anything else "wrongkey".
 Another ask about a line, when what a tool did needs the model, is a line too, with or without a list of tools (the
 last ask goes without): its instruction text holds chat_cases.AGAIN_MARK. It gets the next behaviour only when that
 begins with "again:", as "again:make=a dice that rolls" does, and chat_cases.AGAIN_WORDS in words otherwise, which
-leaves the list as it is."""
+leaves the list as it is.
+
+A request that asks for its answer piece by piece ("stream": true, as a line's does) gets a good answer of the shape
+above piece by piece (chat_cases.stream_pieces), unless the last argument is "whole": then it gets it whole, as a
+provider that does not send pieces would. Ways in front of a line's behaviour change how the pieces go
+(chat_cases.STREAM_WAYS): "hold:words=..." holds the answer after its first words, and goes on when a file named as
+the log with ".go" behind it appears; the stand-in says it holds by writing the file named as the log with ".held"."""
 import json
+import os
 import socket
 import ssl
 import sys
@@ -40,6 +47,8 @@ if len(sys.argv) > 5 and sys.argv[5].startswith("["):
     behaviours = json.loads(sys.argv[5])
 else:
     behaviours = sys.argv[5].split(",") if len(sys.argv) > 5 and sys.argv[5] else []
+# Whether answers go whole even to a request that asks for them piece by piece.
+WHOLE = len(sys.argv) > 6 and sys.argv[6] == "whole"
 
 PAGE = b"<html>\n<head><title>The test server</title></head>\n<body>\n<p>Hello from the test server.</p>\n</body>\n</html>\n"
 MEANT = {"model": "deepseek/deepseek-v4.1-flash-1017", "messages": [{"role": "user", "content": "Say hello in five words."}], "max_tokens": 1000, "stream": False}
@@ -222,6 +231,7 @@ def choose(parsed, bearer, note):
         else:
             kind = "words=" + chat_cases.AGAIN_WORDS
         note["behaviour"] = "again, " + kind
+        note["ways"], kind = chat_cases.stream_ways(kind)
         found = chat_cases.answer(kind, the_line(parsed) or "", bearer)
         return found if found is not None else answer_for(kind, bearer)
     if chat and behaviours and an_app_kind(behaviours[0], bearer):
@@ -232,6 +242,7 @@ def choose(parsed, bearer, note):
     if kind.startswith("app:"):
         kind = kind[len("app:"):]
     if chat:
+        note["ways"], kind = chat_cases.stream_ways(kind)
         found = chat_cases.answer(kind, the_line(parsed) or "", bearer)
         if found is not None:
             return found
@@ -258,6 +269,59 @@ def end_link(link, ending, note):
             pass
         note["held for"] = round(time.time() - started, 1)
 
+
+def streamed(parsed, answer, ways):
+    """The pieces `answer` goes in, when its request asked for it piece by piece and it is a good answer that can go
+    so (chat_cases.stream_pieces); None when it goes whole."""
+    if WHOLE or not isinstance(parsed, dict) or parsed.get("stream") is not True:
+        return None
+    head, _, data = answer.partition(b"\r\n\r\n")
+    if not head.startswith(b"HTTP/1.1 200 ") or b"application/json" not in head:
+        return None
+    try:
+        whole = json.loads(data)
+    except ValueError:
+        return None
+    return chat_cases.stream_pieces(whole, ways)
+
+
+def stream_send(link, pieces, note):
+    """Sends the notes and the pieces: what lies between two marks in three writes cut anywhere, a twentieth of a
+    second apart, so that pieces arrive cut in two and several together. At "hold" it waits for the test; at "cut" it
+    stops there. Gives back how to end."""
+    gathered, sent = chat_cases.STREAM_HEAD, 0
+    for item in pieces + [None]:
+        if isinstance(item, bytes):
+            gathered += item
+            continue
+        third = len(gathered) // 3
+        for part in (gathered[:third], gathered[third:2 * third], gathered[2 * third:]):
+            if part:
+                link.sendall(part)
+                time.sleep(0.05)
+        sent, gathered = sent + len(gathered), b""
+        if item == "hold":
+            note["held"] = True
+            with open(HELD, "w") as held:
+                held.write("held\n")
+            end = time.time() + 120
+            while not os.path.exists(GO) and time.time() < end:
+                time.sleep(0.05)
+            for name in (GO, HELD):
+                if os.path.exists(name):
+                    os.remove(name)
+        elif item == "cut":
+            note["sent"] = sent
+            return "cut"
+    note["sent"] = sent
+    return "goodbye"
+
+
+# The files by which a held answer is said to be held, and is let go on (see the top).
+HELD, GO = log_path + ".held", log_path + ".go"
+for name in (HELD, GO):
+    if os.path.exists(name):
+        os.remove(name)
 
 names = []
 listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -338,9 +402,14 @@ with open(log_path, "a") as log:
                 note["key came as"] = bearer
                 bearer = bearer[len("Bearer "):] if bearer.startswith("Bearer ") else ""
                 answer, ending = choose(parsed, bearer, note)
-                if answer:
-                    link.sendall(answer)
-                note["sent"] = len(answer)
+                pieces = streamed(parsed, answer, note.get("ways", []))
+                if pieces is not None:
+                    note["piece by piece"] = True
+                    ending = stream_send(link, pieces, note)
+                else:
+                    if answer:
+                        link.sendall(answer)
+                    note["sent"] = len(answer)
                 end_link(link, ending, note)
         except (ssl.SSLError, OSError, ValueError) as problem:
             note["problem"] = str(problem)[:200]

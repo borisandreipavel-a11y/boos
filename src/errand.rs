@@ -119,15 +119,45 @@ pub fn errand_answer(answer: Answer) {
 }
 
 // The main loop picks up the answer, if one lies ready. After that the next
-// errand can be asked for.
+// errand can be asked for. What was left of the answer's words as they came
+// (below) goes with it: the answer itself says them now.
 pub fn errand_answer_take() -> Option<Answer> {
     let were_on = signals_off();
-    let answer = if STATE.load(Ordering::Relaxed) == ANSWERED {
+    let (answer, grown) = if STATE.load(Ordering::Relaxed) == ANSWERED {
         STATE.store(NONE, Ordering::Relaxed);
-        unsafe { (*(&raw mut ANSWER)).take() }
+        unsafe { ((*(&raw mut ANSWER)).take(), (*(&raw mut GROWN)).take()) }
     } else {
-        None
+        (None, None)
     };
     signals_back(were_on);
+    drop(grown);
     answer
+}
+
+// ---------- The words of an answer as they come ----------
+
+// While the model's answer to a line comes in, piece by piece (see
+// `model.rs`), the network's task leaves here what of its words can be shown
+// so far, and whether the model is thinking before its first word. The main
+// loop takes the newest when it paints the chat box (see `chat_grow` in
+// `chat.rs`); a newer one put here before that takes the place of the older.
+// Two tasks reach this, so it is touched only with device signals off.
+static mut GROWN: Option<(String, bool)> = None;
+
+// The network's task leaves what of the answer can be shown so far.
+pub fn errand_grow(words: &str, thinking: bool) {
+    let grown = Some((String::from(words), thinking));
+    let were_on = signals_off();
+    let older = unsafe { core::mem::replace(&mut *(&raw mut GROWN), grown) };
+    signals_back(were_on);
+    drop(older);
+}
+
+// The main loop takes what of the answer can be shown so far, if anything new
+// was left since it took the last.
+pub fn errand_grown() -> Option<(String, bool)> {
+    let were_on = signals_off();
+    let grown = unsafe { (*(&raw mut GROWN)).take() };
+    signals_back(were_on);
+    grown
 }

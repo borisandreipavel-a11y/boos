@@ -17,7 +17,7 @@ use crate::apps_kept::{app_keep, apps_kept_begin};
 use crate::conversation::{
     conversation_again, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent, conversation_split,
 };
-use crate::errand::{Answer, Errand, errand_ask};
+use crate::errand::{Answer, Errand, errand_ask, errand_grown};
 use crate::files::{download_answer, files_answer, files_asking, files_setup};
 use crate::keyboard::BACKSPACE;
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -32,7 +32,9 @@ use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
 use crate::model::key_starred_kept;
 use crate::page::plain_text;
 use crate::serial::serial_print;
+use crate::timer::TICKS;
 use crate::tools::{ToolDone, chat_tools, tool_do, tool_wanted};
+use core::sync::atomic::Ordering;
 
 // The longest line that can be typed, in signs. A key pressed after that is
 // ignored, until a sign is taken away again or the line is sent with Enter.
@@ -138,6 +140,30 @@ fn chat_rows() -> &'static mut Vec<(Speaker, String)> {
 fn chat_line() -> &'static mut String {
     unsafe { &mut *(&raw mut CHAT_LINE) }
 }
+
+// The model's answer to a line while it comes in, piece by piece (see
+// `model.rs`): its words so far as rows, painted under the rows of what was
+// said, and whether the model is thinking before its first word. They are not
+// rows of what was said: when the answer is over, they go, and the answer is
+// said as before (`chat_answer`), so that the chat box then holds what it
+// would have held had the answer come whole. Only the main loop may touch
+// them, by the same rule as the rows above.
+static mut GROWING: Vec<String> = Vec::new();
+static mut THINKING: bool = false;
+
+fn growing() -> &'static mut Vec<String> {
+    unsafe { &mut *(&raw mut GROWING) }
+}
+
+// The row said at once when a line goes to the model; while the model thinks
+// before its first word, it is painted with `ASKING_THINKING` behind it.
+const ASKING_ROW: &str = "Kernel: I am asking the model.";
+const ASKING_THINKING: &str = " It is thinking.";
+
+// How many ticks of the timer lie at least between two paintings of an answer
+// that comes in: a tenth of a second.
+const GROW_TICKS: u64 = 10;
+static mut GROW_NEXT: u64 = 0;
 
 // A secret being typed: whether the kernel has asked for one, the signs typed
 // so far, and how many they are. The signs are not kept in the line above. A
@@ -272,13 +298,29 @@ fn chat_paint_rows() {
     let inside_width = place.width.saturating_sub(style.frame.saturating_mul(2));
     screen_rectangle(inside_left, inside_top, inside_width, place.typing_top.saturating_sub(inside_top), look.chat_inside);
 
+    // The rows of an answer that comes in go under the rows of what was said,
+    // and the newest rows that fit are shown. While the model thinks before
+    // its first word, the row that says it is asked shows so, if that row is
+    // the last and the words behind it fit.
+    let rows = chat_rows();
+    let growing = growing();
+    let thinking = unsafe { THINKING } && growing.is_empty();
+    let last = rows.len().saturating_sub(1);
+    let shown: Vec<(Speaker, &str)> =
+        rows.iter().map(|(speaker, text)| (*speaker, text.as_str())).chain(growing.iter().map(|text| (Speaker::Kernel, text.as_str()))).collect();
+    let skipped = shown.len().saturating_sub(style.rows as usize);
     let mut top = inside_top.saturating_add(style.padding);
-    for (speaker, text) in chat_rows().iter() {
+    for (number, (speaker, text)) in shown.into_iter().enumerate().skip(skipped) {
         let colour = match speaker {
             Speaker::Person => look.chat_person,
             Speaker::Kernel => look.chat_kernel,
         };
-        chat_write(&place, top, text, colour);
+        let marked = thinking && number == last && text == ASKING_ROW && text.len() + ASKING_THINKING.len() <= place.room as usize;
+        if marked {
+            chat_write(&place, top, &format!("{}{}", text, ASKING_THINKING), colour);
+        } else {
+            chat_write(&place, top, text, colour);
+        }
         top = top.saturating_add(place.row_height);
     }
 }
@@ -468,7 +510,7 @@ fn model_ask(said: &str) -> String {
         Ok(()) => {
             conversation_sent();
             asks_put(Asks { made: 1, sent: String::new(), wanted: Vec::new() });
-            String::from("Kernel: I am asking the model.")
+            String::from(ASKING_ROW)
         }
         Err(reason) => format!("Kernel: I cannot ask the model, because {}", reason),
     }
@@ -531,6 +573,9 @@ fn asks_after(outcome: ToolDone) {
 // tool needs the model, it is asked about the line again (`ask_again`).
 pub fn chat_answer(answer: Answer) {
     if let Errand::ChatLine { done, .. } = &answer.errand {
+        // What was shown while the answer came in goes; the answer is said
+        // now, as it would have been had it come whole.
+        grow_end();
         let first = done.is_empty();
         if first {
             conversation_line(answer.sent.as_deref());
@@ -543,6 +588,9 @@ pub fn chat_answer(answer: Answer) {
         }
         if !answer.sentence.is_empty() {
             chat_say(&answer.sentence);
+        }
+        if let Some(stream) = reply.as_ref().and_then(|reply| reply.stream.as_deref()) {
+            serial_print(&format!("{}\r\n", stream));
         }
         if let Some(tokens) = &answer.tokens {
             serial_print(&format!("{}\r\n", tokens));
@@ -561,6 +609,14 @@ pub fn chat_answer(answer: Answer) {
             serial_print(&format!("Tool: {}\r\n", call.name));
         } else {
             serial_print(&format!("Tool: {} {}\r\n", call.name, plain_text(&call.inputs, TOOL_SHOWN)));
+        }
+        // An answer that broke off ends the line too. The tool asked for in
+        // it is not done, but for a table: its rows that came whole are drawn.
+        if reply.as_ref().is_some_and(|reply| reply.broken) {
+            if call.name == "draw_table" {
+                tool_do(call);
+            }
+            return;
         }
         let more = reply.as_ref().is_some_and(|reply| reply.more);
         let Some(mut asks) = asks else {
@@ -873,5 +929,50 @@ fn secret_key(letter: u8) {
             unsafe { SECRET_SIGNS = signs + 1 };
             chat_paint_typing();
         }
+    }
+}
+
+// Shows what has come of the model's answer to a line while it comes in:
+// its words so far, as rows that begin with "Model:" under the rows of what
+// was said, or that it is thinking before its first word (see `errand.rs`
+// and `model.rs`, which cleaned the words and hid the key in them). The main
+// loop calls it at every turn; the chat box is painted again at most every
+// `GROW_TICKS` ticks, with the newest that came. Nothing is kept on a machine
+// without a screen, where nothing is shown.
+pub fn chat_grow() {
+    let now = TICKS.load(Ordering::Relaxed);
+    if now < unsafe { GROW_NEXT } {
+        return;
+    }
+    let Some((words, thinking)) = errand_grown() else {
+        return;
+    };
+    unsafe { GROW_NEXT = now + GROW_TICKS };
+    let Some(place) = chat_place() else {
+        return;
+    };
+    if place.room == 0 {
+        return;
+    }
+    let rows = growing();
+    rows.clear();
+    if !words.is_empty() {
+        let signs: Vec<char> = format!("Model: {}", words).chars().collect();
+        for piece in signs.chunks(place.room as usize) {
+            rows.push(piece.iter().collect());
+        }
+    }
+    unsafe { THINKING = thinking };
+    chat_paint_rows();
+}
+
+// The answer that came in is over: its rows go, and the mark that the model
+// is thinking, so that the answer can be said as before.
+fn grow_end() {
+    let shown = !growing().is_empty() || unsafe { THINKING };
+    growing().clear();
+    unsafe { THINKING = false };
+    if shown {
+        chat_paint_rows();
     }
 }
