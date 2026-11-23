@@ -33,7 +33,8 @@ Made-up key only.
             in its last answer is not done; a look that is picked does not go back; a second tool goes back, and the
             same tool is not done twice for a line; an ask again that the provider turns down ends the line; an app
             that puts the key together goes back starred; `setup` while a new app is awaited stops the asks.
-  table     a table the model describes with draw_table, drawn in the frame beside the panel of apps: one with every
+  table     on a disk without a notebook, where tables are not kept as documents (test_documents.py tests those): a
+            table the model describes with draw_table, drawn in the frame beside the panel of apps: one with every
             kind of line and its own colours, drawn whole, which ends the line; the same in another look; one with
             more rows than fit, in the look's colours, which goes back, and is not drawn twice; one cut off at the
             limit of tokens, whose whole rows are drawn; inputs that hold no table, turned down, and another table
@@ -79,6 +80,7 @@ from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, 
                               terminal_says, words_cut, WORDS_SHOWN)
 from conversation_model import BYTES_REMEMBERED, LINES_REMEMBERED
 from disk_helpers import make
+from documents_model import not_kept_row
 from table_model import CANNOT_READ_TABLE, NO_ROOM, drawn
 from keyed_model import LOCKED
 from lockref import lock
@@ -746,11 +748,13 @@ def holds(table):
 
 def scenario_table():
     print("table: a table the model describes, drawn in the frame beside the panel of apps, in the look in use")
-    disk, _ = answered_disk("tools-table")
+    # A disk that is not divided: no notebook, so tables are drawn as they were before documents, and not kept
+    # (test_documents.py tests tables kept as documents).
+    disk = make("tools-table.img", "16M")
     behaviours = ["table=fruit", "look=2", "table=big", "again:table=big", "tablecut=long", "tablebad", "again:table=fewer", "tablewide",
                   "table=many"]
     run = Run("tools-table", disk, behaviours=behaviours)
-    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    chat = ToolsChat(1280, notebook=None, kept_look=None)
     give_key(run, chat)
     t = chat_cases.TOKENS_LINE
     lines_meant = []
@@ -762,14 +766,14 @@ def scenario_table():
     exchange(run, chat, line, [t, said, holds(fruit)])
     report("table drawn whole does not go back", rounds_since(run) == [], "got %r" % rounds_since(run))
     run.shot("fruit", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None)]
 
     # Another look paints the table again: its frame and title in the new look, its own colours as they were.
     line = "make it night"
-    exchange(run, chat, line, [t, "Kernel: this is look 2, Night. It is kept on the disk."])
-    chat.look, chat.look_kept = "Night", "Night"
+    exchange(run, chat, line, [t, "Kernel: this is look 2, Night. It lasts until the machine is switched off, because there is no notebook to keep it in."])
+    chat.look = "Night"
     run.shot("night", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None)]
 
     # More rows than fit, and no colours: drawn in the look's, the head's letters too faint in Night and so black. The
     # rows left out go back; the same table asked for again is not drawn twice, which goes back too, and the last ask,
@@ -779,8 +783,8 @@ def scenario_table():
     report("table the squares are meant to be cut", not whole and "6 more rows did not fit" in said, said)
     exchange(run, chat, line, [t, said, holds(big), AGAIN, t, NOT_TWICE, AGAIN, model_row(chat_cases.AGAIN_WORDS), t])
     run.shot("squares", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[0], key=KEY),
-                    body_again(line, [], chat.agains[1], last=True, key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None), body_again(line, [], chat.agains[0], key=KEY, files=None),
+                    body_again(line, [], chat.agains[1], last=True, key=KEY, files=None)]
 
     # A table that the limit of tokens cut off inside a line end: the rows that came whole are drawn, and that goes back.
     line = "a long one"
@@ -788,7 +792,7 @@ def scenario_table():
     report("table the cut one is meant with six rows", not whole and "with 2 columns and 6 rows; it was cut off" in said, said)
     exchange(run, chat, line, [CUT_OFF, t, said, holds(cut)] + back())
     run.shot("cut", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[2], key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None), body_again(line, [], chat.agains[2], key=KEY, files=None)]
 
     # Inputs that hold no table are turned down, which goes back; the model then draws another table, which is not the
     # same thing again, and is drawn whole: the line ends.
@@ -797,7 +801,7 @@ def scenario_table():
     report("table the ten squares are meant whole", whole, said)
     exchange(run, chat, line, [t, CANNOT_READ_TABLE, AGAIN, t, said, holds(fewer)])
     run.shot("fewer", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[3], key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None), body_again(line, [], chat.agains[3], key=KEY, files=None)]
 
     # The kernel's own lines over the screen (F1), and a key that brings the usual picture back, the table with it
     # (Backspace, which takes nothing away from an empty line).
@@ -812,7 +816,7 @@ def scenario_table():
     report("table the wide one is meant with six columns", not whole and said.endswith("only the first 6 of its 8 columns fit."), said)
     exchange(run, chat, line, [t, said, holds(wide)] + back())
     run.shot("wide", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[4], key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None), body_again(line, [], chat.agains[4], key=KEY, files=None)]
 
     # Inputs longer than their bound: cut there, and the rows that came whole drawn as for a table cut off at the limit.
     line = "a huge one"
@@ -820,7 +824,7 @@ def scenario_table():
     report("table the huge one is meant cut", not whole and said.endswith("; it was cut off, so I drew only the rows that came whole."), said)
     exchange(run, chat, line, [t, said, holds(many)] + back())
     run.shot("many", screen(1280, 800, chat, []))
-    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[5], key=KEY)]
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY, files=None), body_again(line, [], chat.agains[5], key=KEY, files=None)]
     lines = run.end()
 
     seen = [n for n in posts(run) if n.get("request for") == "a line"]
@@ -1268,12 +1272,13 @@ def scenario_stream():
     lines.append(line)
     report("stream no app asked for", not any(l.startswith("Kernel: I am asking the model to make") for l in run.since()), "")
 
-    # A table whose call broke off: its rows that came whole are drawn, and the line ends there.
+    # A table whose call broke off: its rows that came whole are drawn, and the line ends there. On this disk documents
+    # can be kept, and a new table that did not come whole is not kept (documents_model.py).
     line = "a table, cut"
     given = chat_cases.stream_sent(pieces_of("cut:table=long"))[1]
     cut, said, whole = drawn(text_unfinished(given), whole=False)
     report("stream the cut table is meant with some rows", not whole and "it was cut off" in said, said)
-    exchange(run, chat, line, [BROKE, none, said, holds(cut)])
+    exchange(run, chat, line, [BROKE, none, not_kept_row(said), holds(cut)])
     lines.append(line)
     report("stream a broken table does not go back", rounds_since(run) == [], "got %r" % rounds_since(run))
     run.shot("table", screen(1280, 800, chat, []))

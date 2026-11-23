@@ -4,10 +4,13 @@
 //! it. The frame never covers the chat box or the panel of apps. The frame
 //! and the title are in the look in use; the table's colours are the model's,
 //! but letters too faint to read on their background become black or white.
-//! The table is kept in memory only, and painted again with the rest of the
-//! screen (`look_paint`); a new table takes its place. Only the startup code
-//! and the main loop may call these functions.
-//! Notes: `docs/screen.md` ("The table") and `docs/tools.md` (`draw_table`).
+//! The table drawn last is kept in memory, and painted again with the rest of
+//! the screen (`look_paint`); a new table takes its place, and `setup` empties
+//! the frame. Where documents can be kept, the description itself is kept on
+//! the disk too and drawn again from there (see `documents.rs`). Only the
+//! startup code and the main loop may call these functions.
+//! Notes: `docs/screen.md` ("The table", "Documents") and `docs/tools.md`
+//! (`draw_table`).
 
 use alloc::format;
 use alloc::string::String;
@@ -172,10 +175,11 @@ const ROWS: usize = 2;
 const LETTERS: usize = 3;
 const LINES: usize = 4;
 
-// A table as the model described it, read line by line: its title, the
-// colours it picked, the widths it asked for, its head, and its rows, each
-// row its cells.
+// A table as the model described it, read line by line: which kept document
+// it changes, if it says (0 for a new one), its title, the colours it picked,
+// the widths it asked for, its head, and its rows, each row its cells.
 struct Described {
+    document: Option<u64>,
     title: Option<String>,
     colours: [Option<Colour>; 5],
     widths: Option<Vec<u32>>,
@@ -183,28 +187,35 @@ struct Described {
     rows: Vec<Vec<String>>,
 }
 
+// One line of a description: its first word, which says what the line is,
+// without a colon right behind it, and the rest. Spaces, tabs and a return at
+// either end of the line do not count.
+fn line_parts(line: &str) -> (&str, &str) {
+    let line = line.trim_matches(|sign| sign == ' ' || sign == '\t' || sign == '\r');
+    let (word, rest) = match line.find([' ', '\t']) {
+        Some(end) => (&line[..end], line[end..].trim_start_matches([' ', '\t'])),
+        None => (line, ""),
+    };
+    (word.strip_suffix(':').unwrap_or(word), rest)
+}
+
 // Reads the lines of a table's description. Each line says one thing, and
-// its first word says what: `title`, `colours`, `widths`, `head` or `row`,
-// in capitals or not. The line `row` adds a row; the others shape the table,
-// and count only before the first row: after it they are skipped, so that a
+// its first word says what: `document`, `title`, `colours`, `widths`, `head`
+// or `row`, in capitals or not. The line `row` adds a row; the others count
+// only before the first row: after it they are skipped, so that a
 // description cut off anywhere is a smaller table whose shape is whole. Of
-// a shape line given twice the later counts; colours given on two lines are
-// all taken. A line with any other first word, and an empty line, is
-// skipped. Spaces, tabs and a return at either end of a line do not count,
-// nor does a colon right behind the first word.
+// a line given twice the later counts; colours given on two lines are all
+// taken. A line with any other first word, and an empty line, is skipped.
 fn described(text: &str) -> Described {
-    let mut found = Described { title: None, colours: [None; 5], widths: None, head: None, rows: Vec::new() };
+    let mut found = Described { document: None, title: None, colours: [None; 5], widths: None, head: None, rows: Vec::new() };
     for line in text.split('\n') {
-        let line = line.trim_matches(|sign| sign == ' ' || sign == '\t' || sign == '\r');
-        let (word, rest) = match line.find([' ', '\t']) {
-            Some(end) => (&line[..end], line[end..].trim_start_matches([' ', '\t'])),
-            None => (line, ""),
-        };
-        let word = word.strip_suffix(':').unwrap_or(word);
+        let (word, rest) = line_parts(line);
         if word.eq_ignore_ascii_case("row") {
             found.rows.push(cells(rest));
         } else if !found.rows.is_empty() {
             continue;
+        } else if word.eq_ignore_ascii_case("document") {
+            found.document = document_number(rest);
         } else if word.eq_ignore_ascii_case("title") {
             found.title = Some(String::from(rest));
         } else if word.eq_ignore_ascii_case("head") {
@@ -216,6 +227,15 @@ fn described(text: &str) -> Described {
         }
     }
     found
+}
+
+// The number on a `document` line: a whole number of at most nine digits, and
+// nothing else. Anything else says no number.
+fn document_number(rest: &str) -> Option<u64> {
+    if rest.is_empty() || rest.len() > 9 || !rest.bytes().all(|sign| sign.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
 }
 
 // The cells of a head or a row: parted by `|`, each without the spaces and
@@ -329,30 +349,106 @@ fn table_put(table: Table) {
     unsafe { TABLE = Some(table) };
 }
 
-// The tool `draw_table`: reads the table the model described in what it gave
-// the tool, draws it in the frame in place of the one shown before, and keeps
-// it. Gives back what the kernel says, and whether the table was drawn whole:
-// with every row, every column and every line the model wrote. A table that
-// cannot be drawn changes nothing; the kernel says why, as the model's request
-// turned down.
+// The tool `draw_table` where no documents can be kept: reads the table the
+// model described in what it gave the tool, draws it in the frame in place of
+// the one shown before, and keeps it in memory. Gives back what the kernel
+// says, and whether the table was drawn whole: with every row, every column
+// and every line the model wrote. A table that cannot be drawn changes
+// nothing; the kernel says why, as the model's request turned down.
 pub fn drawing_table(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
-    let Some((place, room)) = room() else {
+    let (text, whole) = drawing_text(inputs, cut_off)?;
+    let drawn = drawing_show(&text).map_err(|not| drawing_refused(not, whole))?;
+    Ok((drawing_said(&drawn, whole), drawn.whole() && whole))
+}
+
+// The text the model gave `draw_table`, as far as it counts, and whether it
+// came whole; or what the kernel says when it cannot be read. A piece of the
+// key in the text is starred, however it was written in the JSON. Of a text
+// that was cut off, only the lines that came whole count: what follows its
+// last line end may be half a line.
+pub fn drawing_text(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
+    if room().is_none() {
         return Err(String::from("the model asked to draw a table, but this screen has no room for one."));
-    };
+    }
     let Some((text, whole)) = table_text(inputs, cut_off) else {
         return Err(String::from("the model asked to draw a table, but I could not read it."));
     };
-    // A piece of the key in the text is starred, however it was written in
-    // the JSON. Of a text that was cut off, only the lines that came whole
-    // count: what follows its last line end may be half a line.
-    let text = key_starred_kept(&text);
-    let text = if whole {
-        text.as_str()
-    } else {
-        match text.rfind('\n') {
-            Some(end) => &text[..end],
-            None => "",
+    let mut text = key_starred_kept(&text);
+    if !whole {
+        let end = text.rfind('\n').unwrap_or(0);
+        text.truncate(end);
+    }
+    Ok((text, whole))
+}
+
+// Why a description was not drawn: this screen has no room for a table, or
+// the description has no head and no rows.
+pub enum NotDrawn {
+    NoRoom,
+    Empty,
+}
+
+// What the kernel says when the model's table was not drawn, for a text that
+// came whole or one that was cut off.
+pub fn drawing_refused(not: NotDrawn, whole: bool) -> String {
+    String::from(match not {
+        NotDrawn::NoRoom => "the model asked to draw a table, but this screen has no room for one.",
+        NotDrawn::Empty if whole => "the model asked to draw a table, but it has no head and no rows.",
+        NotDrawn::Empty => "the model asked to draw a table, but it was cut off before any of its rows came whole.",
+    })
+}
+
+// What came of drawing a description: its title as the model wrote it, if it
+// gave one, and as drawn; how many columns it has and how many were drawn;
+// how many rows were drawn, and how many did not fit.
+pub struct Drawn {
+    pub title_written: Option<String>,
+    pub title: String,
+    columns: usize,
+    drawn_columns: usize,
+    rows: usize,
+    left_out: usize,
+}
+
+impl Drawn {
+    // Whether every row and every column the description holds was drawn.
+    pub fn whole(&self) -> bool {
+        self.left_out == 0 && self.columns == self.drawn_columns
+    }
+}
+
+// The number on the description's `document` line, if it has one before its
+// first row: which kept document the table changes, or 0 for a new one.
+pub fn drawing_document(text: &str) -> Option<u64> {
+    described(text).document
+}
+
+// A description as a document keeps it: every line as the model wrote it,
+// but the `document` lines before the first row, which say only which
+// document it is.
+pub fn drawing_lines_kept(text: &str) -> String {
+    let mut kept = String::new();
+    let mut rows_begun = false;
+    for line in text.split('\n') {
+        let (word, _) = line_parts(line);
+        rows_begun = rows_begun || word.eq_ignore_ascii_case("row");
+        if !rows_begun && word.eq_ignore_ascii_case("document") {
+            continue;
         }
+        if !kept.is_empty() {
+            kept.push('\n');
+        }
+        kept.push_str(line);
+    }
+    kept
+}
+
+// Reads a description and draws it in the frame, in place of the table shown
+// before, and keeps the table drawn in memory. A description that cannot be
+// drawn changes nothing.
+pub fn drawing_show(text: &str) -> Result<Drawn, NotDrawn> {
+    let Some((place, room)) = room() else {
+        return Err(NotDrawn::NoRoom);
     };
     let found = described(text);
 
@@ -363,11 +459,7 @@ pub fn drawing_table(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
         (None, None) => 0,
     };
     if columns == 0 {
-        return Err(String::from(if whole {
-            "the model asked to draw a table, but it has no head and no rows."
-        } else {
-            "the model asked to draw a table, but it was cut off before any of its rows came whole."
-        }));
+        return Err(NotDrawn::Empty);
     }
     let style = TABLE_STYLE;
     let drawn_columns = columns.min(style.columns_most);
@@ -401,28 +493,53 @@ pub fn drawing_table(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
         rows: found.rows.iter().take(drawn_rows).map(&fitted).collect(),
     };
     table_paint(&place, &room, &table);
+    let drawn = Drawn { title_written: found.title, title: table.title.clone(), columns, drawn_columns, rows: drawn_rows, left_out };
+    table_put(table);
+    Ok(drawn)
+}
 
-    // What the kernel says: the table, by its title, and what of it did not
-    // fit or did not come.
-    let size = format!("{} and {}", counted(drawn_columns, "column", "columns"), rows_said(drawn_rows));
-    let mut said = if table.title.is_empty() {
+// What the kernel says about a table it drew: the table, by its title, its
+// size, and what of it did not fit or did not come.
+pub fn drawing_said(drawn: &Drawn, whole: bool) -> String {
+    let size = format!("{} and {}", counted(drawn.drawn_columns, "column", "columns"), rows_said(drawn.rows));
+    let mut said = if drawn.title.is_empty() {
         format!("I drew a table with {}", size)
     } else {
-        format!("I drew the table \"{}\", with {}", table.title, size)
+        format!("I drew the table \"{}\", with {}", drawn.title, size)
     };
-    if left_out > 0 {
-        let (verb, were) = if left_out == 1 { ("row did", "was") } else { ("rows did", "were") };
-        said.push_str(&format!("; {} more {} not fit and {} left out", left_out, verb, were));
-    }
-    if columns > drawn_columns {
-        said.push_str(&format!("; only the first {} of its {} columns fit", drawn_columns, columns));
-    }
+    said.push_str(&drawing_fit(drawn));
     if !whole {
         said.push_str("; it was cut off, so I drew only the rows that came whole");
     }
     said.push('.');
-    table_put(table);
-    Ok((said, left_out == 0 && columns == drawn_columns && whole))
+    said
+}
+
+// What of a table did not fit, as the kernel says it behind what it drew or
+// opened: rows left out, and columns past the most it draws. Nothing when
+// all of it fit.
+pub fn drawing_fit(drawn: &Drawn) -> String {
+    let mut said = String::new();
+    if drawn.left_out > 0 {
+        let (verb, were) = if drawn.left_out == 1 { ("row did", "was") } else { ("rows did", "were") };
+        said.push_str(&format!("; {} more {} not fit and {} left out", drawn.left_out, verb, were));
+    }
+    if drawn.columns > drawn.drawn_columns {
+        said.push_str(&format!("; only the first {} of its {} columns fit", drawn.drawn_columns, drawn.columns));
+    }
+    said
+}
+
+// `setup` empties the frame: the table drawn last is forgotten, and where it
+// was, the screen's background is painted, as a whole new picture would
+// show it there.
+pub fn drawing_clear() {
+    if table_take().is_none() {
+        return;
+    }
+    if let Some(place) = frame_place() {
+        screen_rectangle(place.left, place.top, place.width, place.height, look().background);
+    }
 }
 
 // "1 column", "3 columns", and so on.
