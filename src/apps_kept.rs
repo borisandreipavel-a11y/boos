@@ -286,8 +286,8 @@ struct AppsPanelStyle {
 
 // Under the sentence near the top left corner, five apps a page, letters
 // twice the size of their pictures. A row holds 47 signs, so a request of 45
-// fits whole behind the "- " in front of it. The panel is 158 dots high, and
-// lies above the box with an app's text on every screen from 800 by 600 dots.
+// fits whole behind the "- " in front of it. The panel is 158 dots high; the
+// box with an app's text lies under it, and the frame of a table beside it.
 const APPS_PANEL_STYLE: AppsPanelStyle = AppsPanelStyle {
     left: 40,
     top: 80,
@@ -298,6 +298,26 @@ const APPS_PANEL_STYLE: AppsPanelStyle = AppsPanelStyle {
     row_gap: 4,
     apps_on_a_page: 5,
 };
+
+// How high the panel of apps is, in dots. A row is as high as a letter, plus
+// the gap to the next row. The panel holds the row about the page and a full
+// page of apps, whatever the page shown holds, so that it always has the
+// same size.
+fn apps_panel_height() -> u32 {
+    let style = APPS_PANEL_STYLE;
+    let row_height = style.text_size.saturating_mul(LETTER_HEIGHT).saturating_add(style.row_gap);
+    let rows = style.apps_on_a_page.saturating_add(1);
+    style.frame.saturating_mul(2).saturating_add(style.padding.saturating_mul(2)).saturating_add(rows.saturating_mul(row_height))
+}
+
+// Where the panel of apps sits: its left and top edges, and how many dots it
+// is across and down. It is the same on every screen, whether or not any app
+// is kept, so that the box with an app's text can go under it and the frame
+// of a table beside it (see `screen.rs` and `drawing.rs`).
+pub fn apps_panel_place() -> (u32, u32, u32, u32) {
+    let style = APPS_PANEL_STYLE;
+    (style.left, style.top, style.width, apps_panel_height())
+}
 
 // Paints the panel of apps as it is: the row that says which page is shown,
 // and the apps on that page, in the look in use. Paints nothing while no app
@@ -314,13 +334,8 @@ pub fn apps_panel_again() {
     }
     let style = APPS_PANEL_STYLE;
     let look = look();
-
-    // A row is as high as a letter, plus the gap to the next row. The panel
-    // holds the row about the page and a full page of apps, whatever the
-    // page shown holds, so that it always has the same size.
     let row_height = style.text_size.saturating_mul(LETTER_HEIGHT).saturating_add(style.row_gap);
-    let rows = style.apps_on_a_page.saturating_add(1);
-    let height = style.frame.saturating_mul(2).saturating_add(style.padding.saturating_mul(2)).saturating_add(rows.saturating_mul(row_height));
+    let height = apps_panel_height();
 
     // The frame: the whole panel in the frame's colour first, then the
     // inside painted over it, smaller by the frame's thickness on each side.

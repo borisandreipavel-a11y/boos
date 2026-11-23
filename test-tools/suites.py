@@ -69,7 +69,7 @@ SUITES = [
     # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
          seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=130, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
-                      bound=125, rounds=120)),
+                      bound=125, rounds=120, table=110, tablesmall=40)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -116,7 +116,7 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 35,
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 37,
                 "intel": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -280,6 +280,8 @@ CAUGHT_BY = {
     'break tools: twice': "tools-rounds 'two looks at once'",
     'break tools: newpiece': 'rounds line request 3',
     'break tools: nostarkept': 'rounds line request 15',
+    'break tools: tablefaint': 'tools-table fruit',
+    'break tools: tablewanted': "tools-table 'a broken one'",
     'break intel: receiving never switched on': 'start: the network lines are not as meant',
     'break intel: the card may not reach memory': 'start: the network lines are not as meant',
     'break intel: a used card not started over': 'again: the second setup did not start the card over, once',

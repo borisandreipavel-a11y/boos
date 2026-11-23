@@ -91,6 +91,11 @@ BREAKS = {
                                  "        conversation_line(answer.sent.as_deref());\n")},
     # What an app left behind is remembered with the key as it was, starred only when it goes.
     "nostarkept": {"model.rs": swap("    let starred = key_starred(text, &key_room[..key_length]);\n", "    let starred = String::from(text);\n")},
+    # --- Drawing a table ---
+    # Letters too faint to read on their background are painted as the model asked.
+    "tablefaint": {"drawing.rs": swap("    if 2 * (lighter + FLARE) >= 9 * (darker + FLARE) {\n", "    if true {\n")},
+    # Another table asked for after the kernel turned one down counts as the same thing again.
+    "tablewanted": {"tools.rs": swap('        "draw_table" => drawing_wanted(&call.inputs, call.cut_off),\n', "")},
 }
 
 CATCH = {
@@ -129,4 +134,6 @@ CATCH = {
     "twice": "rounds",
     "newpiece": "rounds",
     "nostarkept": "rounds",
+    "tablefaint": "table",
+    "tablewanted": "table",
 }

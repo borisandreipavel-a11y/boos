@@ -52,7 +52,7 @@ INSTRUCTIONS = (
     "require, debug, coroutine and utf8 are not. math.random works.\n"
     "\n"
     "Two functions put out what the app has to say:\n"
-    "- show(text) puts one line of at most 40 characters in a box in the middle of the screen. This is what the person "
+    "- show(text) puts one line of at most 40 characters in a box on the screen. This is what the person "
     "at the machine sees. Each show replaces the line shown before, and the last one stays on the screen after the "
     "script has ended. A longer text is cut at 40 characters, and a 21st show stops the script.\n"
     "- print(...) writes one line to a log beside the screen. A line longer than 200 characters is cut, and a 101st "

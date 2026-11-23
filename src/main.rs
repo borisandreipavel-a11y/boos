@@ -57,6 +57,8 @@ mod apps; // Apps made on request: what the model is told, and the script it wri
 mod apps_kept; // Apps kept on the disk, and the panel that lists them.
 mod tools; // The tools: what the kernel can do when the model asks for it.
 mod conversation; // The conversation: the last lines sent to the model, which go with the next.
+mod drawing; // A table the model describes, drawn by the kernel in a frame.
+mod drawing_values; // The values the drawing's check of letters is worked out with.
 
 use alloc::format;
 use alloc::string::String;
@@ -257,8 +259,8 @@ extern "efiapi" fn efi_main(image: *mut c_void, table: *mut SystemTable) -> usiz
     }
 
     // And an app that asks for its text to be shown on the screen. The
-    // kernel paints a box in the middle of the screen and writes the app's
-    // text in it. Nothing is printed for it unless the app is stopped.
+    // kernel paints a box under the panel of apps and writes the app's text
+    // in it. Nothing is printed for it unless the app is stopped.
     if let Err(reason) = box_run(&SHOWING_APP) {
         write!(serial, "Box: the app that shows a text was stopped, because {}\r\n", reason).ok();
     }

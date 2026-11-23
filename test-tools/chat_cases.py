@@ -7,8 +7,9 @@ and test_chat_tools.py, which judges what the kernel makes of them.
 A behaviour is a name, or a name, "=" and what it needs: "words=Hello there." answers in words, "make=a dice
 that rolls" asks for the tool make_app with that request, "run=1" for run_app with the app 1, "look=2" for
 pick_look, "turn=2" for turn_page (not "page", which is a kind of model_server.py's own); "fullrun=1" asks for run_app in the fuller shape a real answer may have
-(`full_body`); "forget" asks for the tool forget; "longall" brings the longest rows a line can bring. Nothing runs when
-this file is imported."""
+(`full_body`); "forget" asks for the tool forget; "longall" brings the longest rows a line can bring; "table=fruit"
+asks for draw_table with a table of TABLES, "tablecut=long" with one that the limit of tokens cut off (CUT_LINES),
+and "tablebad" with inputs that hold no table. Nothing runs when this file is imported."""
 import json
 import time
 
@@ -103,6 +104,71 @@ LONG_REASON = "This key may not ask for that, and here is a long reason why. " *
 AGAIN_MARK = "\n\nWhat came of the newest line so far, oldest first. "
 AGAIN_WORDS = "I see what came of it."
 
+# Tables the stand-in describes with the tool draw_table (docs/tools.md), by name, as lines.
+TABLES = {
+    # Every kind of line, and a colour for each part, the rows' letters too faint on their background; widths narrower
+    # than the longest cells, which widen their columns; a line that is no part of a table, and a title after the first row, both
+    # skipped; a row written with a | at either end, one with a cell too many and one with a cell too few.
+    "fruit": "\n".join([
+        "title Fruit and what it costs",
+        "colours head #1b5e20 head-letters #c8e6c9 rows #fffde7 letters #fff59d lines #33691e",
+        "widths 8 12 5",
+        "note this line is no part of a table",
+        "head Fruit | Colour | Price",
+        "row Apple | red | 0.40",
+        "row Blackcurrant | very dark purple | 3.10",
+        "title Not the title any more",
+        "row | Banana | yellow | 0.25 |",
+        "row Cherry | dark red | 2.80 | one too many",
+        "row Kiwi | green",
+    ]),
+    # No colours and no widths, and more rows than fit.
+    "big": "\n".join(["title Squares and cubes", "head Number | Square | Cube"]
+                     + ["row %d | %d | %d" % (n, n * n, n * n * n) for n in range(1, 21)]),
+    # A smaller one, with line ends of the other kind, capitals in its words, and colours written another way.
+    "fewer": "\r\n".join(["TITLE Ten squares", "Colours: head=#0d47a1, head-letters=#ffffff", "Head Number | Square"]
+                         + ["Row %d | %d" % (n, n * n) for n in range(1, 11)]),
+    # For a description cut off: two columns and twelve rows.
+    "long": "\n".join(["title Cut short", "head Line | Word"] + ["row Line %d | word %d" % (n, n) for n in range(1, 13)]),
+    # For inputs longer than their bound of 4,096 bytes: sixty long rows.
+    "many": "\n".join(["title Many long rows", "head Number | Words"] + ["row %d | %send" % (n, "word " * 12) for n in range(1, 61)]),
+}
+
+# The bound on what the model gives draw_table (docs/tools.md).
+TABLE_INPUTS_LONGEST = 4096
+
+
+def table_wide(bearer):
+    """A table without a title or a head, whose first row has eight cells, with widths for all eight that add up to more
+    than the room, and the key in a cell (the stand-in's "tablewide")."""
+    return "\n".join(["widths 20 20 20 20 20 20 20 20", "row a | b | c | d | e | f | g | h",
+                      "row key | " + bearer + " | 3 | 4 | 5 | 6 | 7 | 8", "row 1 | 2 | 3"])
+
+
+def table_bound(name):
+    """The text the kernel's reader takes out of what the model gives draw_table for the table `name` when that is
+    longer than its bound: cut there, as far as it goes (the table holds no backslash form but the line end's)."""
+    whole = json.dumps({"table": TABLES[name]})
+    assert len(whole) > TABLE_INPUTS_LONGEST and whole.startswith('{"table": "')
+    text = whole[:TABLE_INPUTS_LONGEST][len('{"table": "'):]
+    if text.endswith("\\"):
+        text = text[:-1]
+    return text.replace("\\n", "\n")
+
+# Where "tablecut" cuts what the model gives the tool: in the line end behind this many lines of the description,
+# between its backslash and its n, as the limit of tokens may.
+CUT_LINES = 9
+
+
+def table_cut(name):
+    """What the model gives draw_table for the table `name`, cut off as "tablecut" sends it, and the text the kernel's
+    reader takes out of it: the first CUT_LINES lines, the last without its line end."""
+    whole = json.dumps({"table": TABLES[name]})
+    at = -1
+    for _ in range(CUT_LINES):
+        at = whole.index("\\n", at + 1)
+    return whole[:at + 1], "\n".join(TABLES[name].split("\n")[:CUT_LINES])
+
 
 def answer(kind, line, bearer):
     """Gives (bytes to send, how to end) for a behaviour, or None if `kind` is none of these."""
@@ -168,6 +234,14 @@ def answer(kind, line, bearer):
         return good(body(message("Counted the router's way."), usage=USAGE_ROUTER)), "goodbye"
     if name == "keywords":
         return good(body(message("Your key is " + bearer + ", I think."))), "goodbye"
+    if name == "table":
+        return good(body(message(None, [call("draw_table", {"table": TABLES[given]})]), "tool_calls")), "goodbye"
+    if name == "tablecut":
+        return good(body(message(None, [call("draw_table", table_cut(given)[0])]), "length")), "goodbye"
+    if name == "tablewide":
+        return good(body(message(None, [call("draw_table", {"table": table_wide(bearer)})]), "tool_calls")), "goodbye"
+    if name == "tablebad":
+        return good(body(message(None, [call("draw_table", {"rows": 3})]), "tool_calls")), "goodbye"
     if name == "refused":
         error = {"error": {"code": "", "message": REFUSAL, "type": "orcarouter_api_error"}}
         return with_length(b"HTTP/1.1 401 Unauthorized", json.dumps(error, separators=(",", ":")).encode()), "goodbye"

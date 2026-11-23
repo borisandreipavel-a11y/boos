@@ -8,7 +8,8 @@
 //! Enter alone keeps it (see `onboarding.rs`). The line `setup` brings the
 //! first look back at once, so that no look can leave the screen unreadable
 //! (see `look_reset`). Sizes and places are not part of a look: they stay in
-//! `CHAT_STYLE` in `chat.rs` and `PANEL_STYLE` in `screen.rs`. Only the
+//! `CHAT_STYLE` in `chat.rs`, `PANEL_STYLE` in `screen.rs` and `TABLE_STYLE`
+//! in `drawing.rs`. Only the
 //! startup code and the main loop may call these functions. Notes:
 //! `docs/screen.md` ("The look") and `docs/chat.md` ("Picking a look").
 
@@ -19,6 +20,7 @@ use alloc::vec::Vec;
 
 use crate::apps_kept::apps_panel_again;
 use crate::chat::chat_paint;
+use crate::drawing::drawing_paint_again;
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::screen::{Colour, screen_background, screen_panel_again};
 
@@ -338,13 +340,15 @@ pub fn look_reset_trouble() -> Vec<String> {
 
 // Paints the whole screen again in the look in use: the background and the
 // sentence, then the chat box with everything in it, then the box with an
-// app's text, if an app has shown one, and the panel of apps, if any app is
-// kept. The background is painted first because it covers everything.
+// app's text, if an app has shown one, the panel of apps, if any app is kept,
+// and the frame with the table drawn last, if one was drawn. The background
+// is painted first because it covers everything.
 pub fn look_paint() {
     screen_background();
     chat_paint();
     screen_panel_again();
     apps_panel_again();
+    drawing_paint_again();
 }
 
 // The looks as the model is told about them with the tool `pick_look` (see

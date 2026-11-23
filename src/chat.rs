@@ -216,6 +216,13 @@ fn chat_place() -> Option<ChatPlace> {
     Some(ChatPlace { left, top, width, height, row_height, typing_top, room })
 }
 
+// Where the chat box sits on this screen: its left and top edges, and how
+// many dots it is across and down. Gives nothing on a machine without a
+// usable screen. The frame of a table is placed above it (see `drawing.rs`).
+pub fn chat_box_place() -> Option<(u32, u32, u32, u32)> {
+    chat_place().map(|place| (place.left, place.top, place.width, place.height))
+}
+
 // How many signs the line being typed may have on this machine: the limit,
 // or less if the screen is so narrow that fewer fit on the row. Three places
 // of the row are taken: two by the "> " in front and one by the "_" behind.

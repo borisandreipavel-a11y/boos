@@ -85,6 +85,26 @@ pub fn json_find_text(json: &[u8], path: &[Step]) -> Result<String, &'static str
     }
 }
 
+// Finds one text the way `json_find_text` does, in a piece of JSON that is
+// known to have been cut off: what a model gives a tool when its answer
+// reached its limit of tokens in the middle (see `drawing.rs`). Everything on
+// the path before the text has to be whole. The text is handed out as far as
+// it goes, with `true` if its closing quote came and `false` if the JSON ended
+// before it; a backslash form that the end cut in two is left out. What
+// stands behind the text is not looked at. Only for what is known to have
+// been cut off: anything else is read with `json_find_text`.
+pub fn json_find_text_unfinished(json: &[u8], path: &[Step]) -> Result<(String, bool), &'static str> {
+    let mut reader = reader_at(json, path)?;
+    match reader.peek() {
+        Some(b'"') => {
+            reader.at += 1;
+            reader.text_unfinished()
+        }
+        Some(byte) if value_starts(byte) => Err(NOT_A_TEXT),
+        _ => Err(NOT_JSON),
+    }
+}
+
 // Finds one whole number in a piece of JSON, such as how many tokens an
 // answer took. `path` says where, as for `json_find_text`. Only digits alone
 // make such a number: one with a minus sign, a point or a power of ten is not
@@ -328,6 +348,57 @@ impl Reader<'_> {
         }
         // The bytes between the quotes have to be proper text (UTF-8).
         String::from_utf8(out).map_err(|_| NOT_PROPER_TEXT)
+    }
+
+    // Behind the opening quote of a text that may have been cut off: reads
+    // it as `text` does, up to its closing quote or to the end of the JSON,
+    // whichever comes first, and says which. A backslash form cut in two at
+    // the end is left out; the bytes before it stand.
+    fn text_unfinished(&mut self) -> Result<(String, bool), &'static str> {
+        let mut out: Vec<u8> = Vec::new();
+        let closed = loop {
+            match self.take() {
+                Some(b'"') => break true,
+                Some(b'\\') => {
+                    let sign = match self.take() {
+                        None => break false,
+                        Some(b'"') => '"',
+                        Some(b'\\') => '\\',
+                        Some(b'/') => '/',
+                        Some(b'n') => '\n',
+                        Some(b'r') => '\r',
+                        Some(b't') => '\t',
+                        Some(b'b') => '\u{8}',
+                        Some(b'f') => '\u{c}',
+                        Some(b'u') => match self.numbered_sign() {
+                            Ok(sign) => sign,
+                            Err(_) if self.peek().is_none() => break false,
+                            Err(reason) => return Err(reason),
+                        },
+                        _ => return Err(NOT_JSON),
+                    };
+                    let mut room = [0u8; 4];
+                    out.extend_from_slice(sign.encode_utf8(&mut room).as_bytes());
+                }
+                Some(byte) if byte < 0x20 => return Err(NOT_JSON),
+                Some(byte) => out.push(byte),
+                None => break false,
+            }
+        };
+        // The bytes have to be proper text (UTF-8), but for a sign whose
+        // bytes the end cut in two, which is left out too.
+        match String::from_utf8(out) {
+            Ok(text) => Ok((text, closed)),
+            Err(problem) => {
+                let error = problem.utf8_error();
+                if closed || error.error_len().is_some() {
+                    return Err(NOT_PROPER_TEXT);
+                }
+                let mut bytes = problem.into_bytes();
+                bytes.truncate(error.valid_up_to());
+                String::from_utf8(bytes).map(|text| (text, false)).map_err(|_| NOT_PROPER_TEXT)
+            }
+        }
     }
 
     // Behind `\u`: reads the four digits that give a sign's number. Signs
