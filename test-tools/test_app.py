@@ -6,7 +6,7 @@ answers it with the tool make_app and the request, and then the request for the 
 behaviour of model_server.py's own (OTHER below) is given to it with "app:" in front, so that it too answers the
 request for the app and not the line. The kernel's rows, the script it shows in the terminal and every dot of the
 screen are compared with what is meant (app_cases.py, written apart from the kernel). A script that is taken is
-run: the lines it prints, the row that says how the run went, and the text the box in the middle shows are
+run: the lines it prints, the row that says how the run went, and the text the app's box shows are
 compared too. A line before a key is kept, lines while an answer is awaited, and at the end one line that the model
 answers in words are part of every run; so is every request the stand-in saw, compared with what the notes say.
 
@@ -212,7 +212,7 @@ def main():
         print("%-12s | %s" % ("before a key", look(machine, chat, "before-key", failures)[0]))
         press(machine, chat, "key" + ENTER)
         press(machine, chat, KEY + ENTER)
-        panel = "Hello from a Lua script!!!"  # what the box in the middle shows, as far as the test knows
+        panel = "Hello from a Lua script!!!"  # what the app's box shows, as far as the test knows
         randoms = []
         for number, behaviour in enumerate(behaviours):
             request = REQUESTS[number % len(REQUESTS)]

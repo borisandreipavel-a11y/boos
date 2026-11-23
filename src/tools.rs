@@ -17,6 +17,7 @@ use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
 use crate::chat::{chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
+use crate::drawing::{drawing_room, drawing_table, drawing_wanted};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
 use crate::model::ToolCall;
@@ -121,6 +122,43 @@ fn pick_look_tool() -> String {
     )
 }
 
+// The tool that draws a table in the frame beside the panel of apps (see
+// `drawing.rs`): how a table is written, with the room this screen has for
+// one, and an example.
+fn draw_table_tool(rows: usize, columns: usize, signs: u32) -> String {
+    let told = format!(
+        concat!(
+            "Draws a table in a frame on the screen, beside the panel of apps, in place of the table shown before. ",
+            "Use it when the person wants something shown as a table. ",
+            "The table is written as lines, one thing to a line, each beginning with the word that says what it is: ",
+            "title and the table's name; ",
+            "colours and any of head, head-letters, rows, letters and lines (the head's background and letters, the rows' background and letters, and the lines between the cells), ",
+            "each followed by its colour as # and six hex digits, picked to fit the wish; ",
+            "widths and the number of signs each column needs; head and the head's cells; then row and a row's cells, one line for each row. ",
+            "Cells are parted by |. Everything but the rows comes before the first row. ",
+            "This screen has room for the head and {} rows, at most {} columns, and {} signs across all columns together; ",
+            "longer cells are cut, and rows that do not fit are left out."
+        ),
+        rows, columns, signs
+    );
+    format!(
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"draw_table\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"table\":{{\"type\":\"string\",\"description\":{}}}}},\"required\":[\"table\"]}}}}}}",
+        json_text(&told),
+        json_text(TABLE_EXAMPLE)
+    )
+}
+
+// The example of a table that the tool `draw_table` gives the model.
+const TABLE_EXAMPLE: &str = concat!(
+    "The table, as lines, such as:\n",
+    "title Fruit\n",
+    "colours head #2e7d32 head-letters #ffffff\n",
+    "widths 10 12\n",
+    "head Fruit | Colour\n",
+    "row Apple | red\n",
+    "row Banana | yellow"
+);
+
 // The tool that turns the page of the panel of apps.
 fn turn_page_tool(pages: usize, shown: usize) -> String {
     format!(
@@ -134,9 +172,9 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 }
 
 // The list of tools that goes to the model with a line, as JSON: `make_app`
-// and `pick_look` always; `run_app` while any app is kept; `turn_page` while
-// the panel of apps has more than one page; `forget` while anything that was
-// said is remembered.
+// and `pick_look` always; `run_app` while any app is kept; `draw_table` while
+// the screen has room for a table; `turn_page` while the panel of apps has
+// more than one page; `forget` while anything that was said is remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
     tools.push_str(MAKE_APP);
@@ -147,6 +185,10 @@ pub fn chat_tools() -> String {
     }
     tools.push(',');
     tools.push_str(&pick_look_tool());
+    if let Some((rows, columns, signs)) = drawing_room() {
+        tools.push(',');
+        tools.push_str(&draw_table_tool(rows, columns, signs));
+    }
     let (pages, shown) = apps_pages();
     if pages > 1 {
         tools.push(',');
@@ -168,7 +210,7 @@ pub enum ToolDone {
     // Done, and nothing in what came of it needs the model: the line ends.
     Ended,
     // What came of it goes back to the model: the kernel turned the request
-    // down, or a kept app was stopped.
+    // down, a kept app was stopped, or a table was not drawn whole.
     Back,
     // A new app is being written: what comes of it is known when the model's
     // app has come, and goes back then (see `chat_answer` in `chat.rs`).
@@ -236,6 +278,16 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             },
             None => String::from("the model asked for another page of the panel of apps, but I could not read which one."),
         },
+        // A table drawn whole ends the line. One that was not, because rows
+        // or columns did not fit or it was cut off, goes back, so that the
+        // model can say so or draw a smaller one.
+        "draw_table" => match drawing_table(&call.inputs, call.cut_off) {
+            Ok((said, whole)) => {
+                chat_say(&said);
+                return if whole { ToolDone::Ended } else { ToolDone::Back };
+            }
+            Err(said) => said,
+        },
         // Everything said is forgotten first, the line that asked for it
         // too, so the row that says so is not remembered either, and nothing
         // of the line is left to go back.
@@ -261,6 +313,7 @@ pub fn tool_wanted(call: &ToolCall) -> String {
         "run_app" => input_number(&call.inputs, "app").map(|number| format!("{}", number)),
         "pick_look" => input_number(&call.inputs, "look").map(|number| format!("{}", number)),
         "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
+        "draw_table" => drawing_wanted(&call.inputs, call.cut_off),
         _ => None,
     };
     match given {

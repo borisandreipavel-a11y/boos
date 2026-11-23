@@ -41,8 +41,8 @@ def no5xx(text):
 def nostrict(text):
     # In chat_reply, the path of a line, which test_model.py sends (indented deeper than the same rule in
     # model_sentence, the fixed question's path, which only the try of a key takes now).
-    return swap(text, "            Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),",
-                "            Err(NOT_A_TEXT | NOT_THERE) => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS), // BREAK")
+    return swap(text, "            Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short, LINE_TOKENS),",
+                "            Err(NOT_A_TEXT | NOT_THERE) => empty_sentence(body, out_of_room, held_back, cut_short, LINE_TOKENS), // BREAK")
 
 
 def nothought(text):

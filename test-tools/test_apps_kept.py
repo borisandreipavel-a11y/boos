@@ -370,7 +370,7 @@ def scenario_make():
             if new:
                 added.append("app %d" % number)
         if place == 0:
-            # The first app kept: the panel appears, with the dice the app showed in the box in the middle.
+            # The first app kept: the panel appears, with the dice the app showed in the app's box.
             shown = app_cases.run_expect(kind, KEY)[2](app_lines)
             run.shot("first-kept", screen(1280, 800, chat, ["a dice that rolls"], panel_text=shown[0] if shown else ""))
     run.end()

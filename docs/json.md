@@ -2,7 +2,7 @@
 
 Code: `src/json.rs`, `src/json_values.rs`, and the check in `efi_main`.
 
-JSON is the form in which many services on the internet send and expect their data. The kernel has to speak it to ask a model for anything. It is done with code written for this kernel, about 400 lines with their comments, and no outside crate. That code does three things and no more: it writes a text the JSON way, it finds one text in a piece of JSON, and it finds one whole number there.
+JSON is the form in which many services on the internet send and expect their data. The kernel has to speak it to ask a model for anything. It is done with code written for this kernel, about 400 lines with their comments, and no outside crate. That code does three things and no more: it writes a text the JSON way, it finds one text in a piece of JSON, and it finds one whole number there; and for a piece known to have been cut off, it finds a text as far as it goes.
 
 **What uses it:** every question to the model is written with it, the list of tools that goes with a line among it, and the provider's answer is read with it: the model's words, the tool it asks for and what it gives the tool, and how many tokens the answer took (see [model.md](model.md) and [tools.md](tools.md)). A check at startup shows that it works.
 
@@ -36,6 +36,8 @@ What comes back when there is no text to give:
 - Every byte is reached through `get`, which gives nothing where there is no byte instead of stopping the kernel.
 - No function here calls itself. A list or a set of names that is passed over is passed by counting brackets, so brackets nested ten thousand deep cost no more of the stack than two. This matters because nothing notices a stack that overflows.
 - The text that is handed out is whatever the other side sent. It has to be cleaned like any text from outside before it is printed or shown (see `plain_text` in `page.rs`).
+
+`json_find_text_unfinished(json, path)` is for one case only: what the model gives the tool `draw_table` when its answer reached its limit of tokens in the middle, or was longer than its bound (see [tools.md](tools.md)). Such a piece ends without its closing quote and brackets, and `json_find_text` turns it away whole. This one walks the path the same way, and everything on it before the text must be whole; then it hands out the text as far as it goes, with `true` if its closing quote came and `false` if the piece ended before it. A backslash form that the end cut in two (`\`, `\u` with fewer than four digits) is left out, and so is a sign whose bytes the end cut in two; a control sign, a backslash form that is wrong and not cut, or bytes that are not proper text make the piece unsound, as for `json_find_text`. What stands behind the text is not looked at. It is called only after `json_find_text` failed on a piece known to have been cut off, so that a piece damaged in another way is never believed as far as it goes.
 
 The rules, where JSON leaves a choice or the kernel is stricter or laxer than others:
 

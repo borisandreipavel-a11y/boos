@@ -2,8 +2,10 @@
 //! with its sentence, and the box in which an app's text is shown. Their
 //! colours come from the look in use (`look.rs`). While the kernel's own lines
 //! cover the screen (`lines.rs`), this usual picture waits. Notes:
-//! `docs/screen.md`. (The chat box is drawn with these pieces by `chat.rs`.)
+//! `docs/screen.md`. (The chat box is drawn with these pieces by `chat.rs`,
+//! and the frame of a table by `drawing.rs`.)
 
+use crate::apps_kept::apps_panel_place;
 use crate::firmware::{ColourOrder, Screen};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH, letter_shape};
 use crate::look::look;
@@ -42,11 +44,11 @@ pub fn screen_reach() {
 }
 
 // Whether the kernel's own lines cover the screen (see `lines.rs`). While
-// they do, the usual picture waits: the background, the chat box and the box
-// in the middle go on keeping what they show, but none of it is painted until
-// the lines go and `look_paint` paints all of it at once. The lines are
-// painted with `screen_rectangle_over` and `screen_text_over`, which do not
-// wait. Only the startup code and the main loop change this.
+// they do, the usual picture waits: the background, the chat box, the box
+// with an app's text and the table go on keeping what they show, but none of
+// it is painted until the lines go and `look_paint` paints all of it at once.
+// The lines are painted with `screen_rectangle_over` and `screen_text_over`,
+// which do not wait. Only the startup code and the main loop change this.
 static mut COVERED: bool = false;
 
 pub fn screen_cover(covered: bool) {
@@ -181,6 +183,8 @@ struct PanelStyle {
     // How far the text begins from the panel's left and top edges.
     text_left: u32,
     text_top: u32,
+    // How many dots it stays below the panel of apps.
+    gap: u32,
 }
 
 // A panel that holds one line of 40 signs at this width and letter size.
@@ -191,6 +195,7 @@ const PANEL_STYLE: PanelStyle = PanelStyle {
     text_size: 2,
     text_left: 20,
     text_top: 21,
+    gap: 20,
 };
 
 // What the panel shows, so that it can be painted again in another look:
@@ -205,7 +210,7 @@ static mut PANEL_TEXT_LENGTH: usize = 0;
 // Shows a text in the panel: paints the panel and writes the text in it, on
 // one line, and remembers what it wrote. Painting the whole panel each time
 // wipes out what it showed before. Where the panel sits is decided here as
-// well: in the middle of the screen.
+// well: under the panel of apps, on every screen.
 pub fn screen_panel(text: &str) {
     if (unsafe { SCREEN }).is_none() {
         return;
@@ -240,15 +245,17 @@ pub fn screen_panel_again() {
 // Paints the panel and the text in it, and gives back the part of the text
 // that was written: as many signs as fit.
 fn panel_paint(text: &str) -> &str {
-    let Some(screen) = (unsafe { SCREEN }) else {
+    if (unsafe { SCREEN }).is_none() {
         return "";
-    };
+    }
     let style = PANEL_STYLE;
     let look = look();
 
-    // Half the screen's width less half the panel's puts it in the middle.
-    let left = (screen.width / 2).saturating_sub(style.width / 2);
-    let top = (screen.height / 2).saturating_sub(style.height / 2);
+    // Under the panel of apps, at its left edge, whether or not any app is
+    // kept, so that it never covers the frame of a table beside the panel.
+    let (apps_left, apps_top, _, apps_height) = apps_panel_place();
+    let left = apps_left;
+    let top = apps_top.saturating_add(apps_height).saturating_add(style.gap);
 
     // The frame: the whole panel in the frame's colour first, then the
     // inside painted over it, smaller by the frame's thickness on each side.

@@ -34,7 +34,7 @@ pub const APP_INSTRUCTIONS: &str = concat!(
     "require, debug, coroutine and utf8 are not. math.random works.\n",
     "\n",
     "Two functions put out what the app has to say:\n",
-    "- show(text) puts one line of at most 40 characters in a box in the middle of the screen. This is what the person ",
+    "- show(text) puts one line of at most 40 characters in a box on the screen. This is what the person ",
     "at the machine sees. Each show replaces the line shown before, and the last one stays on the screen after the ",
     "script has ended. A longer text is cut at 40 characters, and a 21st show stops the script.\n",
     "- print(...) writes one line to a log beside the screen. A line longer than 200 characters is cut, and a 101st ",
@@ -143,7 +143,7 @@ pub struct AppRun {
 
 // Runs a script the model wrote, in the box, and says in one plain sentence
 // how the run went, and whether it ran to its end. What the script shows
-// appears in the box in the middle of the screen, and what it prints comes
+// appears in the box under the panel of apps, and what it prints comes
 // out in the terminal as `App: ` lines, as for any app. It runs here, in the
 // main loop, which is the one part of the kernel that paints the screen after
 // startup, so the app's box and the chat box are never painted at the same

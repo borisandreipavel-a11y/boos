@@ -51,6 +51,10 @@ GREETING = "Kernel: type a line and press Enter."
 LETTER_WIDTH = 5
 LETTER_HEIGHT = 9
 
+# Where the box with an app's text begins: under the panel of apps, which is 40 dots from the left, 80 from the top
+# and 158 high, with 20 dots between them.
+BOX_LEFT, BOX_TOP = 40, 80 + 158 + 20
+
 # The looks a person can pick (look_values.py, typed in by hand from the design). A model of the chat box may say
 # which one is in use with an attribute `look` (its name); without one, the first look, "Blue", is meant.
 from look_values import LOOKS as LOOK_COLOURS
@@ -107,10 +111,11 @@ class Picture:
             sign_left += size * (LETTER_WIDTH + 1)
 
     def panel(self, text, look=None):
+        """The box with an app's text (docs/screen.md, "The panel"): 520 by 60 dots, 20 dots under the panel of apps
+        (40 dots from the left, 80 from the top, 158 high), at its left edge, on every screen."""
         look = look or LOOK_COLOURS["Blue"]
         width, height, frame = 520, 60, 3
-        left = self.width // 2 - width // 2
-        top = self.height // 2 - height // 2
+        left, top = BOX_LEFT, BOX_TOP
         self.rectangle(left, top, width, height, look["panel_frame"])
         self.rectangle(left + frame, top + frame, width - 2 * frame, height - 2 * frame, look["panel_inside"])
         self.text(left + 20, top + 21, text[:40], 2, look["panel_text"])
@@ -276,9 +281,13 @@ def expected(width, height, chat, panel_text="Hello from a Lua script!!!"):
     if panel_text is not None:
         picture.panel(panel_text, look)
         # The parts must not lie on top of each other on this screen.
-        panel_bottom = height // 2 - 30 + 60
-        assert panel_bottom <= box[1], "the panel and the chat box overlap"
-        assert 40 + 18 <= height // 2 - 30, "the sentence and the panel overlap"
+        assert BOX_TOP + 60 <= box[1], "the panel and the chat box overlap"
+    # The table drawn last, kept in memory until the machine is switched off (table_model.py), when the model of the
+    # chat box holds one.
+    table = getattr(chat, "table", None)
+    if table is not None:
+        import table_model
+        table_model.paint(picture, table, getattr(chat, "look", "Blue"))
     return picture
 
 

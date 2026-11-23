@@ -86,7 +86,7 @@ The text comes from outside the kernel, so `app_text` takes nothing about it on 
 
 "Stopped" means that `start` ends there and `box_run` gives back the reason, such as `it asked to print a text that lies outside its memory`. What the app printed before stays printed.
 
-**`kernel.show(start, length)`** shows a text on the screen. The app hands the text over exactly as for `print`, and nothing comes back. The kernel paints a box in the middle of the screen and writes the text in it; see "The panel" in [screen.md](screen.md).
+**`kernel.show(start, length)`** shows a text on the screen. The app hands the text over exactly as for `print`, and nothing comes back. The kernel paints a box under the panel of apps and writes the text in it; see "The panel" in [screen.md](screen.md).
 
 - **The app says only what it wants shown.** How the box looks, how large the letters are and where the box sits is the kernel's business: the sizes are kept in one place, `PANEL_STYLE` in `screen.rs`, and the colours are those of the look the person at the machine picked (see "The look" in [screen.md](screen.md)). An app cannot paint, and cannot say anything about the look.
 - **The rules for the text are the same as for `print`,** with the word "show" in the reasons: the app must show its memory as `memory`, the whole text must lie inside it, and every byte that is not a plain sign becomes a dot.
@@ -149,7 +149,7 @@ All are whole WebAssembly programs written out by hand in `app_box.rs`, with a c
 - `App: Hello from inside the box`
 - when the run fails: `Box: the app was stopped, because ...` with the reason.
 
-`box_run(&SHOWING_APP)` comes last. It brings no line. Its text appears on the screen, in the box in the middle:
+`box_run(&SHOWING_APP)` comes last. It brings no line. Its text appears on the screen, in the box under the place of the panel of apps:
 
 - on the screen: `Hello from an app in the box`, for a few seconds, until the script that runs after the three apps shows its own text there (see [interpreter.md](interpreter.md))
 - when the run fails: `Box: the app that shows a text was stopped, because ...` with the reason, and no box is painted.

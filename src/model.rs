@@ -36,13 +36,17 @@ const MODEL_NAME: &str = "deepseek/deepseek-v4.1-flash-1017";
 // The one fixed question, with which a key typed at the onboarding is tried.
 pub const QUESTION: &str = "Say hello in five words.";
 
-// The longest answer the model may give to the fixed question or to a line
-// typed in the chat box. Models count in tokens, which are pieces of words; a
-// token is about three quarters of a word. A model that thinks before it
-// answers may spend tokens on that too, so there is room for far more than a
-// short answer needs. The provider is paid by the token used, not by this
-// limit.
+// The longest answer the model may give to the fixed question. Models count
+// in tokens, which are pieces of words; a token is about three quarters of a
+// word. A model that thinks before it answers may spend tokens on that too,
+// so there is room for far more than a short answer needs. The provider is
+// paid by the token used, not by this limit.
 const ANSWER_TOKENS: usize = 1000;
+
+// The longest answer the model may give to a line typed in the chat box: room
+// for its thinking and a table it describes with the tool `draw_table` (see
+// `drawing.rs`).
+const LINE_TOKENS: usize = 4000;
 
 // The longest answer the model may give when it is asked for an app. A script
 // is longer than a greeting, and a model that thinks first pays its thinking
@@ -90,14 +94,17 @@ pub enum KeyVerdict {
     NotTold,
 }
 
-// A tool the model asked for in its answer to a line: the tool's name, and
-// what the model gives it, as a text that is itself JSON. Both come from
-// outside the kernel: the name is cleaned and the key is hidden in both, and
-// the main loop checks them before anything is done (see `tools.rs`).
+// A tool the model asked for in its answer to a line: the tool's name, what
+// the model gives it, as a text that is itself JSON, and whether that text
+// was cut off, because the answer reached its limit of tokens or the text its
+// bound. Both texts come from outside the kernel: the name is cleaned and the
+// key is hidden in both, and the main loop checks them before anything is
+// done (see `tools.rs`).
 #[derive(Clone, PartialEq)]
 pub struct ToolCall {
     pub name: String,
     pub inputs: String,
+    pub cut_off: bool,
 }
 
 // What the model answered to a line typed in the chat box: its words, if it
@@ -287,7 +294,7 @@ fn chat_question_ask(
         json_text(&told),
         json_text(&sent),
         offered,
-        ANSWER_TOKENS
+        LINE_TOKENS
     );
     match provider_exchange(interface, card, sockets, name_server, key, &body) {
         Err(sentence) => (sentence, None, None, Some(sent)),
@@ -640,9 +647,12 @@ const SECOND_TOOL: &[Step<'static>] =
 
 // The most signs of a tool's name that are kept, and the most bytes of what
 // the model gives the tool. Every tool of this kernel's has a short name and
-// needs a few words at most; what is longer is given to the tool as nothing.
+// needs a few words at most, but for the table that `draw_table` is given;
+// what is longer is given to the tool as nothing, and a table is cut off at
+// its bound.
 const TOOL_NAME_LONGEST: usize = 64;
 const TOOL_INPUTS_LONGEST: usize = 1024;
+const TABLE_INPUTS_LONGEST: usize = 4096;
 
 // Says what the kernel has to say about the answer to a line typed in the
 // chat box, and gives back what the model answered: its words, the tool it
@@ -665,16 +675,25 @@ fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatRep
 
     // The first tool the model asked for. Its name is cleaned like every word
     // from the provider. What it gives the tool is JSON, which cleaning would
-    // spoil: it is only held to its bound, with the key hidden in it.
+    // spoil: it is only held to its bound, with the key hidden in it. A table
+    // past its bound is cut there, and counts as cut off, as everything the
+    // tool is given does when the answer reached its limit of tokens.
     let tool = json_find_text(body, TOOL_NAME).ok().map(|name| {
         let mut inputs = json_find_text(body, TOOL_INPUTS).unwrap_or_default().into_bytes();
-        if inputs.len() > TOOL_INPUTS_LONGEST {
+        let mut cut_off = out_of_room;
+        if name == "draw_table" {
+            if inputs.len() > TABLE_INPUTS_LONGEST {
+                inputs.truncate(TABLE_INPUTS_LONGEST);
+                cut_off = true;
+            }
+        } else if inputs.len() > TOOL_INPUTS_LONGEST {
             inputs.clear();
         }
         key_hide(&mut inputs, key);
         // Only signs of the key, which are plain signs, became stars, so the
-        // text is still proper text.
-        ToolCall { name: words_cut(&name, key, TOOL_NAME_LONGEST), inputs: String::from_utf8_lossy(&inputs).into_owned() }
+        // text is still proper text; a sign that the bound cut in two becomes
+        // the sign for "unknown".
+        ToolCall { name: words_cut(&name, key, TOOL_NAME_LONGEST), inputs: String::from_utf8_lossy(&inputs).into_owned(), cut_off }
     });
     let more = tool.is_some() && json_find_text(body, SECOND_TOOL).is_ok();
 
@@ -687,7 +706,7 @@ fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatRep
 
     let sentence = if words.is_some() || tool.is_some() {
         if out_of_room {
-            format!("the model's answer was cut off at the limit of {} tokens.{}", ANSWER_TOKENS, cut_short)
+            format!("the model's answer was cut off at the limit of {} tokens.{}", LINE_TOKENS, cut_short)
         } else if held_back {
             format!("the provider held part of the model's answer back.{}", cut_short)
         } else if !whole {
@@ -697,8 +716,8 @@ fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatRep
         }
     } else {
         match found {
-            Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),
-            Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short, ANSWER_TOKENS),
+            Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short, LINE_TOKENS),
+            Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => empty_sentence(body, out_of_room, held_back, cut_short, LINE_TOKENS),
             Err(reason) => words_not_found(body, key, reason, cut_short),
         }
     };

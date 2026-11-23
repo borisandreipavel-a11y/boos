@@ -5,13 +5,14 @@ kernel says at once and when the answer comes, and the chat box where every line
 model. Nothing runs when this file is imported."""
 import re
 
+import table_model
 from app_cases import clean, hide
 from conversation_model import FORGOT  # noqa: F401 (the row the tool `forget` gets, for the tests)
 from keyed_model import ORDER, KeyedChat
 from picture import ASKING, BUSY, NO_ADDRESS, NO_KEY  # noqa: F401 (the rows a line gets at once, for the tests)
 
 MODEL = "deepseek/deepseek-v4.1-flash-1017"
-LIMIT = 1000
+LIMIT = 4000  # the most tokens of an answer to a line (docs/tools.md)
 REQUEST_MOST = 45
 WORDS_SHOWN = 300
 NAME_LONGEST = 64
@@ -79,13 +80,17 @@ FORGET = {"type": "function", "function": {"name": "forget",
                                            "parameters": {"type": "object", "properties": {}}}}
 
 
-def tools_meant(apps, shown=1, remembered=False):
+def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800)):
     """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
-    and `forget` if anything said is remembered."""
+    `draw_table` if the screen (width, height), or None for none, has room for a table, and `forget` if anything
+    said is remembered."""
     tools = [MAKE_APP]
     if apps:
         tools.append(run_app_tool(apps))
     tools.append(pick_look_tool())
+    table = table_model.tool_meant(*screen) if screen else None
+    if table:
+        tools.append(table)
     pages = -(-len(apps) // 5)
     if pages > 1:
         tools.append(turn_page_tool(pages, shown))
@@ -100,12 +105,13 @@ def instructions_meant(record="", key=""):
     return CHAT_INSTRUCTIONS + (RECORD_LEAD + hide(record, key) if record else "")
 
 
-def body_meant(line, apps, shown=1, record="", key=""):
+def body_meant(line, apps, shown=1, record="", key="", screen=(1280, 800)):
     """The whole request for a line, as Python's JSON reader reads it: `record` is what was said before it (a picture.Chat
-    keeps the record each line went with in `records`); every piece of `key` in the line and the record is starred."""
+    keeps the record each line went with in `records`); every piece of `key` in the line and the record is starred;
+    `screen` is the screen's (width, height), or None."""
     return {"model": MODEL, "messages": [{"role": "system", "content": instructions_meant(record, key)},
                                          {"role": "user", "content": hide(line, key)}],
-            "tools": tools_meant(apps, shown, remembered=bool(record)), "max_tokens": LIMIT, "stream": False}
+            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen), "max_tokens": LIMIT, "stream": False}
 
 
 # ---------- Asking about a line again, when what a tool did goes back to the model ----------
@@ -123,7 +129,7 @@ AGAIN_LEAD = ("\n\nWhat came of the newest line so far, oldest first. "
 LAST_ASK = "\n\nYou are asked about this line for the last time, and no tools are offered now: answer in plain words."
 
 
-def body_again(line, apps, split, last=False, shown=1, key=""):
+def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800)):
     """The whole request when the model is asked about `line` again: `split` is what it goes with (a picture.Chat keeps
     it in `agains`): the record of the lines before it and the rows the line brought so far. The list of tools is the
     one for the disk as it is then, with `forget`, since the line is remembered; the last ask has none."""
@@ -132,7 +138,7 @@ def body_again(line, apps, split, last=False, shown=1, key=""):
     body = {"model": MODEL, "messages": [{"role": "system", "content": told}, {"role": "user", "content": hide(line, key)}],
             "max_tokens": LIMIT, "stream": False}
     if not last:
-        body["tools"] = tools_meant(apps, shown, remembered=True)
+        body["tools"] = tools_meant(apps, shown, remembered=True, screen=screen)
     return body
 
 

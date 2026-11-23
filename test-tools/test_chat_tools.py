@@ -33,6 +33,14 @@ Made-up key only.
             in its last answer is not done; a look that is picked does not go back; a second tool goes back, and the
             same tool is not done twice for a line; an ask again that the provider turns down ends the line; an app
             that puts the key together goes back starred; `setup` while a new app is awaited stops the asks.
+  table     a table the model describes with draw_table, drawn in the frame beside the panel of apps: one with every
+            kind of line and its own colours, drawn whole, which ends the line; the same in another look; one with
+            more rows than fit, in the look's colours, which goes back, and is not drawn twice; one cut off at the
+            limit of tokens, whose whole rows are drawn; inputs that hold no table, turned down, and another table
+            after that; the table again after F1 and a key; one without a title or a head, with more columns than
+            fit, widths past the room and the key in a cell; one whose inputs are longer than their bound; every dot
+            of the screen and every request.
+  tablesmall  a screen of 800 by 600 dots: no room for a table, so draw_table is not offered, and not done.
 
 Usage: python test_chat_tools.py [scenario ...]        (with none: all)
 Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
@@ -51,6 +59,7 @@ from chat_tools_model import (ASKING, BUSY, CANNOT_READ, CUT_OFF, FORGOT, MORE, 
                               terminal_says, words_cut)
 from conversation_model import BYTES_REMEMBERED, LINES_REMEMBERED
 from disk_helpers import make
+from table_model import CANNOT_READ_TABLE, NO_ROOM, drawn
 from keyed_model import LOCKED
 from lockref import lock
 from test_apps_kept import (KEY, SCRIPT, Run, answer_row, answered_disk, failures, give_key, report, run_row)
@@ -703,9 +712,125 @@ def scenario_rounds():
     no_key_in("rounds", lines)
 
 
+def holds(table):
+    """A step for `exchange`: from then on the screen holds this table (table_model.py), kept in memory."""
+    def step(chat):
+        chat.table = table
+    return step
+
+
+def scenario_table():
+    print("table: a table the model describes, drawn in the frame beside the panel of apps, in the look in use")
+    disk, _ = answered_disk("tools-table")
+    behaviours = ["table=fruit", "look=2", "table=big", "again:table=big", "tablecut=long", "tablebad", "again:table=fewer", "tablewide",
+                  "table=many"]
+    run = Run("tools-table", disk, behaviours=behaviours)
+    chat = ToolsChat(1280, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    t = chat_cases.TOKENS_LINE
+    lines_meant = []
+
+    # A small table with every kind of line, drawn whole: the line ends there, in one ask.
+    line = "show fruit prices as a table"
+    fruit, said, whole = drawn(chat_cases.TABLES["fruit"])
+    report("table the fruit is meant whole", whole and said.endswith("with 3 columns and 5 rows."), said)
+    exchange(run, chat, line, [t, said, holds(fruit)])
+    report("table drawn whole does not go back", rounds_since(run) == [], "got %r" % rounds_since(run))
+    run.shot("fruit", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY)]
+
+    # Another look paints the table again: its frame and title in the new look, its own colours as they were.
+    line = "make it night"
+    exchange(run, chat, line, [t, "Kernel: this is look 2, Night. It is kept on the disk."])
+    chat.look, chat.look_kept = "Night", "Night"
+    run.shot("night", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY)]
+
+    # More rows than fit, and no colours: drawn in the look's, the head's letters too faint in Night and so black. The
+    # rows left out go back; the same table asked for again is not drawn twice, which goes back too, and the last ask,
+    # without tools, is answered in words.
+    line = "all twenty squares"
+    big, said, whole = drawn(chat_cases.TABLES["big"])
+    report("table the squares are meant to be cut", not whole and "6 more rows did not fit" in said, said)
+    exchange(run, chat, line, [t, said, holds(big), AGAIN, t, NOT_TWICE, AGAIN, model_row(chat_cases.AGAIN_WORDS), t])
+    run.shot("squares", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[0], key=KEY),
+                    body_again(line, [], chat.agains[1], last=True, key=KEY)]
+
+    # A table that the limit of tokens cut off inside a line end: the rows that came whole are drawn, and that goes back.
+    line = "a long one"
+    cut, said, whole = drawn(chat_cases.table_cut("long")[1], whole=False)
+    report("table the cut one is meant with six rows", not whole and "with 2 columns and 6 rows; it was cut off" in said, said)
+    exchange(run, chat, line, [CUT_OFF, t, said, holds(cut)] + back())
+    run.shot("cut", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[2], key=KEY)]
+
+    # Inputs that hold no table are turned down, which goes back; the model then draws another table, which is not the
+    # same thing again, and is drawn whole: the line ends.
+    line = "a broken one"
+    fewer, said, whole = drawn(chat_cases.TABLES["fewer"])
+    report("table the ten squares are meant whole", whole, said)
+    exchange(run, chat, line, [t, CANNOT_READ_TABLE, AGAIN, t, said, holds(fewer)])
+    run.shot("fewer", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[3], key=KEY)]
+
+    # The kernel's own lines over the screen (F1), and a key that brings the usual picture back, the table with it
+    # (Backspace, which takes nothing away from an empty line).
+    run.m.named_key("f1", pause=1)
+    run.m.named_key("backspace", pause=0.5)
+    run.shot("after-f1", screen(1280, 800, chat, []))
+
+    # A table without a title or a head, whose first row has eight cells, with widths for all eight that add up to more
+    # than the room, and the key in a cell: six columns share the room in proportion, the key is starred, and that goes back.
+    line = "a wide one"
+    wide, said, whole = drawn(chat_cases.table_wide(KEY), key=KEY)
+    report("table the wide one is meant with six columns", not whole and said.endswith("only the first 6 of its 8 columns fit."), said)
+    exchange(run, chat, line, [t, said, holds(wide)] + back())
+    run.shot("wide", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[4], key=KEY)]
+
+    # Inputs longer than their bound: cut there, and the rows that came whole drawn as for a table cut off at the limit.
+    line = "a huge one"
+    many, said, whole = drawn(chat_cases.table_bound("many"), whole=False)
+    report("table the huge one is meant cut", not whole and said.endswith("; it was cut off, so I drew only the rows that came whole."), said)
+    exchange(run, chat, line, [t, said, holds(many)] + back())
+    run.shot("many", screen(1280, 800, chat, []))
+    lines_meant += [body_meant(line, [], record=chat.records[-1], key=KEY), body_again(line, [], chat.agains[5], key=KEY)]
+    lines = run.end()
+
+    seen = [n for n in posts(run) if n.get("request for") == "a line"]
+    report("table requests for a line", len(seen) == len(lines_meant), "%d, meant %d" % (len(seen), len(lines_meant)))
+    for number, (note_, meant) in enumerate(zip(seen, lines_meant)):
+        check_body("table line request %d" % (number + 1), note_, meant)
+    offered = [n.get("tools offered") for n in seen]
+    meant_offered = [True, True, True, True, False, True, True, True, True, True, True, True, True]
+    report("table tools offered", offered == meant_offered, "got %r" % offered)
+    if seen:
+        print("  the first request for a line: %d bytes" % seen[0].get("body bytes", 0))
+    no_key_in("table", lines)
+
+
+def scenario_tablesmall():
+    print("tablesmall: a screen of 800 by 600 dots has no room for a table, so draw_table is not offered, nor done")
+    disk, _ = answered_disk("tools-tablesmall")
+    run = Run("tools-tablesmall", disk, behaviours=["table=fruit"], width=800, height=600, extra=["-vga", "cirrus"])
+    chat = ToolsChat(800, kept_name=b"", key_entry=b"", kept_look=b"")
+    give_key(run, chat)
+    line = "a table please"
+    exchange(run, chat, line, [chat_cases.TOKENS_LINE, NO_ROOM] + back())
+    run.shot("small", screen(800, 600, chat, []))
+    run.end()
+    seen = [n for n in posts(run) if n.get("request for") == "a line"]
+    report("tablesmall two requests", len(seen) == 2, "%d requests" % len(seen))
+    if len(seen) == 2:
+        check_body("tablesmall the line, without draw_table", seen[0], body_meant(line, [], key=KEY, screen=(800, 600)))
+        check_body("tablesmall asked again", seen[1], body_again(line, [], chat.agains[0], key=KEY, screen=(800, 600)))
+
+
 SCENARIOS = {"nokey": scenario_nokey, "words": scenario_words, "dice": scenario_dice, "pages": scenario_pages, "odd": scenario_odd,
              "busy": scenario_busy, "nocard": scenario_nocard, "nodisk": scenario_nodisk, "remember": scenario_remember,
-             "forgetting": scenario_forgetting, "bound": scenario_bound, "rounds": scenario_rounds}
+             "forgetting": scenario_forgetting, "bound": scenario_bound, "rounds": scenario_rounds, "table": scenario_table,
+             "tablesmall": scenario_tablesmall}
 
 
 def main():
