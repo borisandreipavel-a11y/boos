@@ -29,6 +29,9 @@ APP_KINDS = ("app,appfenced,appprose,appopen,appclose,apptwo,appmarksonly,appcut
 MODEL_KINDS = ("wrongkey,credit,echo,echopart,echoescaped,echocut,good,goodlong,harmful,flaterror,keepopen,page,nobody,chunked,"
                "cutoff,nothttp,huge,silent,empty,lengthempty,lengthnull,nullthink,pieces,lengthwords,filtered,filteredwords,spaces,"
                "nocontent,oddending,noending,blank,echo200,nochoices,streamed,otherform,echobody,notfound,upstream,upstreambare")
+# The good answers among them, which the stand-in can send piece by piece, as a line asks for its answer: the rows meant
+# are the same.
+MODEL_PIECE_KINDS = "good,goodlong,lengthempty,lengthnull,nullthink,pieces,lengthwords,filtered,filteredwords,spaces,nocontent,oddending,noending,blank,echo200"
 
 # Kernel files that only some suites go through. Every other file in src/ is on the path of every start.
 STAND_IN = ["src/model.rs", "src/page.rs", "src/errand.rs"]  # asking the provider (the stand-in in tests)
@@ -55,6 +58,8 @@ SUITES = [
     # The chat box's limits and every sign, then Shift in the same start (test_shift.py's steps).
     dict(name="chat box and shift", command=["test_more.py", "more-shift", "shift"], watches=[], seconds=75),
     dict(name="model", command=["test_model.py", MODEL_KINDS], env={"DIVIDED_DISK": ""}, watches=STAND_IN + SECRET, seconds=260),
+    dict(name="model piece by piece", command=["test_model.py", MODEL_PIECE_KINDS, "pieces"], env={"DIVIDED_DISK": ""},
+         watches=STAND_IN + SECRET, seconds=120),
     dict(name="look", command=["test_look.py"], split=True, watches=SECRET,
          seconds=dict(pick=66, atonce=33, his=42, setup=39, norandom=18, stays=38, nonotebook=22, odd=86, locked=55, damaged=20,
                       small=35, noscreen=29)),
@@ -70,7 +75,7 @@ SUITES = [
     # (model_server.py). src/tools.rs is watched by no entry, so a change to it runs every suite: every line goes there.
     dict(name="chat tools", command=["test_chat_tools.py"], split=True, watches=STAND_IN + APPS,
          seconds=dict(nokey=30, words=80, dice=70, pages=45, odd=130, busy=40, nocard=20, nodisk=30, remember=90, forgetting=110,
-                      bound=125, rounds=120, table=110, tablesmall=40, inputs=120, inputsodd=150)),
+                      bound=125, rounds=120, table=110, tablesmall=40, inputs=120, inputsodd=150, stream=120)),
     # Files fetched from the web and kept on the disk, in the stand-in copy, whose stand-in serves made-up files.
     dict(name="downloads", command=["test_downloads.py"], split=True, watches=STAND_IN + FILES,
          seconds=dict(fetch=110, refusals=330, remove=110, startlines=60, full=50)),
@@ -120,7 +125,7 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 42,
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
                 "intel": 10, "downloads": 10}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -199,7 +204,7 @@ CAUGHT_BY = {
     'break model: nokeycheck': 'good',
     'break model: othername': 'good',
     'break model: shortprefix': 'echocut',
-    'break model: nobeginning': 'streamed',
+    'break model: nobeginning': 'otherform',
     'break model: noending': 'lengthwords',
     'break model: notrim': 'spaces',
     'break model: nopieces': 'pieces',
@@ -291,6 +296,14 @@ CAUGHT_BY = {
     'break tools: inputsnotkept': "tools-inputs 'convert 12 km'",
     'break tools: missingtaken': "tools-inputs 'convert km to miles'",
     'break tools: numbernotchecked': "tools-inputsodd 'make missing'",
+    'break tools: nodone': "tools-stream 'think first'",
+    'break tools: noholdback': 'tools-stream words',
+    'break tools: nohidesofar': 'tools-stream keyed',
+    'break tools: firstpart': "tools-stream 'a table, cut'",
+    'break tools: nochunked': "tools-stream 'in chunks'",
+    'break tools: brokendone': "tools-stream 'a dice, cut'",
+    'break tools: growstays': 'tools-stream thought',
+    'break tools: nothinking': 'tools-stream thinking',
     'break downloads: noidentity': 'dl-fetch GET /go/a.pdf',
     'break downloads: nolengthcap': "dl-refusals 'You: fetch /big.pdf'",
     'break downloads: chunkedtaken': "dl-refusals 'You: fetch /chunked.pdf'",

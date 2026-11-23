@@ -162,7 +162,8 @@ def body_meant(line, apps, shown=1, record="", key="", screen=(1280, 800), files
     `screen` is the screen's (width, height), or None."""
     return {"model": MODEL, "messages": [{"role": "system", "content": instructions_meant(record, key)},
                                          {"role": "user", "content": hide(line, key)}],
-            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen, files=files), "max_tokens": LIMIT, "stream": False}
+            "tools": tools_meant(apps, shown, remembered=bool(record), screen=screen, files=files), "max_tokens": LIMIT, "stream": True,
+            "stream_options": {"include_usage": True}}
 
 
 # ---------- Asking about a line again, when what a tool did goes back to the model ----------
@@ -187,7 +188,7 @@ def body_again(line, apps, split, last=False, shown=1, key="", screen=(1280, 800
     record, done = split
     told = instructions_meant(record, key) + AGAIN_LEAD + hide(done, key) + (LAST_ASK if last else "")
     body = {"model": MODEL, "messages": [{"role": "system", "content": told}, {"role": "user", "content": hide(line, key)}],
-            "max_tokens": LIMIT, "stream": False}
+            "max_tokens": LIMIT, "stream": True, "stream_options": {"include_usage": True}}
     if not last:
         body["tools"] = tools_meant(apps, shown, remembered=True, screen=screen, files=files)
     return body

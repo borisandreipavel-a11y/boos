@@ -8,23 +8,28 @@
 //! onboarding is tried. The provider wants a key with every question, which
 //! is the secret that the person at the machine typed. This is the one file
 //! that may borrow that secret, and it sends it to one site only, over an
-//! encrypted link.
+//! encrypted link. The answer to a line is asked for piece by piece, as the
+//! model writes it, and what of its words has come is handed on as it comes
+//! (see `errand.rs`); every other answer is collected whole.
 //! Notes: `docs/model.md`, `docs/tools.md`, `docs/apps.md`.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
 
 use smoltcp::iface::{Interface, SocketSet};
 use smoltcp::wire::Ipv4Address;
 
 use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
+use crate::errand::errand_grow;
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_number, json_find_text, json_text};
 use crate::tools::{AGAIN_LEAD, CHAT_INSTRUCTIONS, LAST_ASK, RECORD_LEAD};
 use crate::network::Card;
-use crate::page::{Waits, plain_text, site_exchange};
+use crate::page::{Head, HeadRead, HeadReader, Waits, plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
+use crate::timer::{TICKS, TICKS_PER_SECOND};
 
 // The provider's site, and the place on it where questions go.
 pub const MODEL_SITE: &str = "api.orcarouter.ai";
@@ -109,12 +114,16 @@ pub struct ToolCall {
 
 // What the model answered to a line typed in the chat box: its words, if it
 // said any, cleaned, with the key hidden and cut at `WORDS_SHOWN` signs; the
-// first tool it asked for, if it asked for one; and whether it asked for more
-// than one.
+// first tool it asked for, if it asked for one; whether it asked for more
+// than one; whether its answer broke off before its end, when it came piece
+// by piece; and for such an answer the terminal's line about how its pieces
+// came.
 pub struct ChatReply {
     pub words: Option<String>,
     pub tool: Option<ToolCall>,
     pub more: bool,
+    pub broken: bool,
+    pub stream: Option<String>,
 }
 
 // Asks the model the question and says in one sentence how that went: what
@@ -244,7 +253,7 @@ fn question_ask(
         json_text(QUESTION),
         ANSWER_TOKENS
     );
-    match provider_exchange(interface, card, sockets, name_server, key, &body) {
+    match provider_exchange(interface, card, sockets, name_server, key, &body, None) {
         Err(sentence) => (sentence, KeyVerdict::NotTold),
         Ok((answer, whole)) => answer_sentence(&answer, whole, key),
     }
@@ -261,7 +270,10 @@ fn question_ask(
 // list of tools, and says so (`LAST_ASK`). The key goes to the provider in
 // the notes only: a key typed into a line by mistake, or remembered in the
 // record, is starred in both before they go, as in the provider's answer
-// (see `key_hide`).
+// (see `key_hide`). The answer is asked for piece by piece as the model
+// writes it ("stream"), with the tokens it took in its last piece
+// ("include_usage"), and read so as it comes (see "Reading an answer piece by
+// piece" below); an answer that comes whole all the same is read as before.
 fn chat_question_ask(
     interface: &mut Interface,
     card: &mut Card,
@@ -290,14 +302,24 @@ fn chat_question_ask(
         format!(",\"tools\":{}", tools)
     };
     let body = format!(
-        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]{},\"max_tokens\":{},\"stream\":false}}",
+        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]{},\"max_tokens\":{},\"stream\":true,\"stream_options\":{{\"include_usage\":true}}}}",
         json_text(MODEL_NAME),
         json_text(&told),
         json_text(&sent),
         offered,
         LINE_TOKENS
     );
-    match provider_exchange(interface, card, sockets, name_server, key, &body) {
+    let mut stream = Stream::new();
+    let exchanged = provider_exchange(interface, card, sockets, name_server, key, &body, Some(&mut stream));
+    if stream.chunked {
+        let sentence = "no answer came that I could read, because the provider sent its answer in pieces with their lengths in between (\"chunked\"), which it should not for this kind of request";
+        return (String::from(sentence), None, None, Some(sent));
+    }
+    if stream.begun {
+        let (sentence, reply, tokens) = stream_reply(&stream, key);
+        return (sentence, Some(reply), Some(tokens), Some(sent));
+    }
+    match exchanged {
         Err(sentence) => (sentence, None, None, Some(sent)),
         Ok((answer, whole)) => {
             let (sentence, reply) = chat_reply(&answer, whole, key);
@@ -349,7 +371,7 @@ fn app_question_ask(
         json_text(&format!("{}{}", APP_LEAD, wanted)),
         APP_TOKENS
     );
-    match provider_exchange(interface, card, sockets, name_server, key, &body) {
+    match provider_exchange(interface, card, sockets, name_server, key, &body, None) {
         Err(sentence) => (sentence, None, None),
         Ok((answer, whole)) => {
             let (sentence, script) = app_sentence(&answer, whole, key);
@@ -362,6 +384,9 @@ fn app_question_ask(
 // with the key, sent, and the answer collected whole. Gives back the answer
 // and whether the provider said, through the encrypted link, that it had sent
 // everything; or the sentence that says why no answer came that can be read.
+// For a line, `stream` is given: the head of the answer is read as it comes,
+// and when it says that the answer comes piece by piece, the pieces go to
+// `stream` as they come, and nothing is collected (see `Stream` below).
 fn provider_exchange(
     interface: &mut Interface,
     card: &mut Card,
@@ -369,6 +394,7 @@ fn provider_exchange(
     name_server: Option<Ipv4Address>,
     key: &[u8],
     body: &str,
+    mut stream: Option<&mut Stream>,
 ) -> Result<(Vec<u8>, bool), String> {
     // The request, in the web's own language: "POST" hands something in, at
     // the place named behind it. Then come lines of notes: which site is
@@ -392,10 +418,30 @@ fn provider_exchange(
     request.extend_from_slice(b"\r\n\r\n");
     request.extend_from_slice(body.as_bytes());
 
-    // The answer is collected whole, up to the room there is for it.
+    // The answer is collected whole, up to the room there is for it, unless
+    // it is a line's, and its head says that it comes piece by piece.
     let mut answer: Vec<u8> = Vec::new();
     let mut too_long = false;
+    let mut head = HeadReader::new();
+    let mut head_over = false;
     let result = site_exchange(interface, card, sockets, name_server, MODEL_SITE, &request, Waits::one(MODEL_WAIT), &mut |bytes| {
+        if let Some(stream) = stream.as_deref_mut() {
+            if stream.begun {
+                return stream.take(bytes, key);
+            }
+            if !head_over {
+                match head.take(bytes) {
+                    HeadRead::More => {}
+                    HeadRead::Wrong(_) => head_over = true,
+                    HeadRead::Done(found, body_from) => {
+                        head_over = true;
+                        if stream.begins(&found) {
+                            return stream.take(bytes.get(body_from..).unwrap_or(&[]), key);
+                        }
+                    }
+                }
+            }
+        }
         if answer.len() + bytes.len() <= ANSWER_ROOM {
             answer.extend_from_slice(bytes);
         } else {
@@ -406,7 +452,14 @@ fn provider_exchange(
     wipe(&mut request);
 
     match result {
-        Err(reason) => Err(format!("no answer came, because {}", reason)),
+        Err(reason) => {
+            // Something went wrong after the pieces had begun to come: what
+            // came of them stands, and the reason goes with it.
+            if let Some(stream) = stream {
+                stream.trouble = Some(reason.clone());
+            }
+            Err(format!("no answer came, because {}", reason))
+        }
         Ok(_) if too_long => Err(String::from("no answer came that I could read, because the provider's answer is larger than the room for it")),
         Ok(whole) => Ok((answer, whole)),
     }
@@ -677,28 +730,10 @@ fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatRep
     let out_of_room = ending.as_deref() == Some("length");
     let held_back = ending.as_deref() == Some("content_filter");
 
-    // The first tool the model asked for. Its name is cleaned like every word
-    // from the provider. What it gives the tool is JSON, which cleaning would
-    // spoil: it is only held to its bound, with the key hidden in it. A table
-    // past its bound is cut there, and counts as cut off, as everything the
-    // tool is given does when the answer reached its limit of tokens.
-    let tool = json_find_text(body, TOOL_NAME).ok().map(|name| {
-        let mut inputs = json_find_text(body, TOOL_INPUTS).unwrap_or_default().into_bytes();
-        let mut cut_off = out_of_room;
-        if name == "draw_table" {
-            if inputs.len() > TABLE_INPUTS_LONGEST {
-                inputs.truncate(TABLE_INPUTS_LONGEST);
-                cut_off = true;
-            }
-        } else if inputs.len() > TOOL_INPUTS_LONGEST {
-            inputs.clear();
-        }
-        key_hide(&mut inputs, key);
-        // Only signs of the key, which are plain signs, became stars, so the
-        // text is still proper text; a sign that the bound cut in two becomes
-        // the sign for "unknown".
-        ToolCall { name: words_cut(&name, key, TOOL_NAME_LONGEST), inputs: String::from_utf8_lossy(&inputs).into_owned(), cut_off }
-    });
+    // The first tool the model asked for. See `tool_made`.
+    let tool = json_find_text(body, TOOL_NAME)
+        .ok()
+        .map(|name| tool_made(&name, json_find_text(body, TOOL_INPUTS).unwrap_or_default().into_bytes(), out_of_room, key));
     let more = tool.is_some() && json_find_text(body, SECOND_TOOL).is_ok();
 
     // The model's words, without the spaces and line ends before and after.
@@ -709,15 +744,7 @@ fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatRep
     };
 
     let sentence = if words.is_some() || tool.is_some() {
-        if out_of_room {
-            format!("the model's answer was cut off at the limit of {} tokens.{}", LINE_TOKENS, cut_short)
-        } else if held_back {
-            format!("the provider held part of the model's answer back.{}", cut_short)
-        } else if !whole {
-            String::from("the provider's answer did not come whole.")
-        } else {
-            String::new()
-        }
+        ending_said(out_of_room, held_back, whole, cut_short)
     } else {
         match found {
             Ok(_) => empty_sentence(body, out_of_room, held_back, cut_short, LINE_TOKENS),
@@ -725,7 +752,43 @@ fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatRep
             Err(reason) => words_not_found(body, key, reason, cut_short),
         }
     };
-    (sentence, Some(ChatReply { words, tool, more }))
+    (sentence, Some(ChatReply { words, tool, more, broken: false, stream: None }))
+}
+
+// The tool the model asked for, made fit to be checked (see `tools.rs`): its
+// name is cleaned like every word from the provider. What it gives the tool
+// is JSON, which cleaning would spoil: it is only held to its bound, with the
+// key hidden in it. A table past its bound is cut there, and counts as cut
+// off, as everything the tool is given does when the answer reached its limit
+// of tokens (`cut_off`) or broke off.
+fn tool_made(name: &str, mut inputs: Vec<u8>, mut cut_off: bool, key: &[u8]) -> ToolCall {
+    if name == "draw_table" {
+        if inputs.len() > TABLE_INPUTS_LONGEST {
+            inputs.truncate(TABLE_INPUTS_LONGEST);
+            cut_off = true;
+        }
+    } else if inputs.len() > TOOL_INPUTS_LONGEST {
+        inputs.clear();
+    }
+    key_hide(&mut inputs, key);
+    // Only signs of the key, which are plain signs, became stars, so the text
+    // is still proper text; a sign that the bound cut in two becomes the sign
+    // for "unknown".
+    ToolCall { name: words_cut(name, key, TOOL_NAME_LONGEST), inputs: String::from_utf8_lossy(&inputs).into_owned(), cut_off }
+}
+
+// What the kernel says about how an answer to a line with words or a tool in
+// it ended: cut off at the limit, held back, not whole, or nothing.
+fn ending_said(out_of_room: bool, held_back: bool, whole: bool, cut_short: &str) -> String {
+    if out_of_room {
+        format!("the model's answer was cut off at the limit of {} tokens.{}", LINE_TOKENS, cut_short)
+    } else if held_back {
+        format!("the provider held part of the model's answer back.{}", cut_short)
+    } else if !whole {
+        String::from("the provider's answer did not come whole.")
+    } else {
+        String::new()
+    }
 }
 
 // The places in a good answer's body that say how many tokens it took, which
@@ -745,9 +808,15 @@ const TOKENS_THINKING: &[Step<'static>] = &[Step::Name("usage"), Step::Name("com
 // took; nothing for any other answer.
 fn answer_tokens(answer: &[u8]) -> Option<String> {
     let parts = answer_parts(answer).filter(|parts| parts.number == 200)?;
-    let body = parts.body;
+    Some(tokens_said(parts.body))
+}
+
+// The terminal's line about the tokens that `body` says an answer took: a
+// good answer's body, or the piece of an answer that came piece by piece
+// that holds the counts, where they stand in the same places.
+fn tokens_said(body: &[u8]) -> String {
     let (Ok(asked), Ok(answered)) = (json_find_number(body, TOKENS_IN), json_find_number(body, TOKENS_OUT)) else {
-        return Some(String::from("Tokens: the provider did not say how many this answer took"));
+        return String::from("Tokens: the provider did not say how many this answer took");
     };
     let mut line = format!("Tokens: {} in", asked);
     if let Some(repeated) = TOKENS_REPEATED.iter().find_map(|path| json_find_number(body, path).ok()) {
@@ -757,7 +826,7 @@ fn answer_tokens(answer: &[u8]) -> Option<String> {
     if let Ok(thinking) = json_find_number(body, TOKENS_THINKING) {
         line.push_str(&format!(", {} of them thinking", thinking));
     }
-    Some(line)
+    line
 }
 
 // The model's words in the body of a good answer: the text at `WORDS`, or
@@ -783,6 +852,11 @@ fn words_not_found(body: &[u8], key: &[u8], reason: &str, cut_short: &str) -> St
 // the answer gives one. `tokens` is the limit the question was asked with.
 fn empty_sentence(body: &[u8], out_of_room: bool, held_back: bool, cut_short: &str, tokens: usize) -> String {
     let thought = THOUGHTS.iter().any(|path| json_find_text(body, path).map(|text| !text.trim().is_empty()).unwrap_or(false));
+    empty_said(thought, out_of_room, held_back, cut_short, tokens)
+}
+
+// The same, for an answer of which it is known whether the model thought.
+fn empty_said(thought: bool, out_of_room: bool, held_back: bool, cut_short: &str, tokens: usize) -> String {
     let why = if out_of_room && thought {
         format!(", because it spent all of its {} tokens thinking", tokens)
     } else if out_of_room {
@@ -793,6 +867,445 @@ fn empty_sentence(body: &[u8], out_of_room: bool, held_back: bool, cut_short: &s
         String::new()
     };
     format!("the model's answer was empty{}.{}", why, cut_short)
+}
+
+// ---------- Reading an answer piece by piece ----------
+
+// The answer to a line is asked for piece by piece, as the model writes it.
+// It comes as lines of text, from the provider's and the model's maker's
+// documentation (read in November 2026): each piece on a line of its own that
+// begins "data:", followed by JSON, with empty lines between them; the line
+// "data: [DONE]" ends the answer. A line that begins ":" says only that the
+// link is alive (the model's maker sends ": keep-alive" while a question
+// waits), and is passed over, as is any other line. A piece holds a little:
+// at `choices`, the first of them, `delta`, a few of the model's words
+// (`content`), a little of its thinking (`reasoning_content`, or
+// `reasoning`), or a part of a tool it asks for (`tool_calls`, each part with
+// its place in the list of tools at `index`: the first part of a tool names
+// it, the next ones bring pieces of what it gives the tool); the last says
+// how the answer ended (`finish_reason`); and the last before "[DONE]" holds
+// the tokens it took (`usage`), beside the rest or alone, with no choices. A
+// piece with `error` in it says that the provider broke the answer off.
+
+// The most bytes one line of such an answer may take: far more than a piece
+// with a few words, a part of a tool, or the counts, and the notes around
+// them. A longer line stops the reading.
+const PIECE_ROOM: usize = 64 * 1024;
+
+// The most bytes of the model's words that are kept as they come, from the
+// first that is not a space: far more than the signs that are said.
+const WORDS_KEPT: usize = 16 * 1024;
+
+// How many bytes of the beginning of such an answer are kept, to be said
+// when nothing in it can be read.
+const STREAM_BEGINNING: usize = 1024;
+
+// How many parts of tools are looked for in one piece.
+const TOOL_PARTS_READ: usize = 8;
+
+// The places in a piece that are read, as in an answer that comes whole, but
+// at `delta` instead of `message`; how the answer ended stands at `ENDING`,
+// and the counts where `tokens_said` reads them.
+const PIECE_WORDS: &[Step<'static>] = &[Step::Name("choices"), Step::Place(0), Step::Name("delta"), Step::Name("content")];
+const PIECE_FIRST_PIECE: &[Step<'static>] =
+    &[Step::Name("choices"), Step::Place(0), Step::Name("delta"), Step::Name("content"), Step::Place(0), Step::Name("text")];
+const PIECE_THOUGHTS: [&[Step<'static>]; 2] = [
+    &[Step::Name("choices"), Step::Place(0), Step::Name("delta"), Step::Name("reasoning_content")],
+    &[Step::Name("choices"), Step::Place(0), Step::Name("delta"), Step::Name("reasoning")],
+];
+
+// Where a piece that breaks the answer off says why, as a refusal does, and
+// two more places that only say that it does.
+const BREAK_REASON: [&[Step<'static>]; 2] = [&[Step::Name("error"), Step::Name("message")], &[Step::Name("error")]];
+const BREAK_KIND: &[Step<'static>] = &[Step::Name("error"), Step::Name("type")];
+const BREAK_CODE: &[Step<'static>] = &[Step::Name("error"), Step::Name("code")];
+
+// An answer to a line that comes piece by piece: what has come of it so far.
+// The network's task fills it in as the pieces come (`take`), and hands on
+// what of the words can be shown so far (`hand_on`); when the answer is over,
+// `stream_reply` says what came of it.
+struct Stream {
+    // Whether the answer's head said that it comes piece by piece, and
+    // whether it said too that it comes in pieces with their lengths in
+    // between, which is not read.
+    begun: bool,
+    chunked: bool,
+    // The line being collected, and the first bytes of the answer's body.
+    line: Vec<u8>,
+    beginning: Vec<u8>,
+    // How many pieces came, and how many lines that only say that the link
+    // is alive.
+    pieces: usize,
+    keep_alive: usize,
+    // The model's words so far, from the first that is not a space, and
+    // whether it thought.
+    words: String,
+    thought: bool,
+    // The first tool asked for: its place in the list of tools, its name,
+    // and what it gives the tool so far, held to the longest bound and a
+    // byte; and whether the model asked for another one.
+    tool_place: Option<u64>,
+    tool_name: Option<String>,
+    tool_inputs: Vec<u8>,
+    more: bool,
+    // How the answer ended, and the last piece that held the counts.
+    ending: Option<String>,
+    usage: Option<Vec<u8>>,
+    // Whether a piece broke the answer off, and why; whether a line was too
+    // long to read; whether "[DONE]" came; and what went wrong with the link
+    // after the pieces had begun to come.
+    failed: bool,
+    error: Option<String>,
+    too_long: bool,
+    done: bool,
+    trouble: Option<String>,
+    // When the asking began, in ticks of the timer, and when things came,
+    // in ticks from then: the last bytes, the first piece, the first
+    // thinking, the first words, the parts of the tool, "[DONE]".
+    started: u64,
+    last_at: u64,
+    first_at: Option<u64>,
+    thinking_at: Option<u64>,
+    words_at: Option<u64>,
+    tool_from: Option<u64>,
+    tool_to: Option<u64>,
+    done_at: Option<u64>,
+    // What was handed on last: the words that can be shown so far, and
+    // whether the model was thinking before its first word.
+    shown: String,
+    shown_thinking: bool,
+}
+
+impl Stream {
+    fn new() -> Stream {
+        Stream {
+            begun: false,
+            chunked: false,
+            line: Vec::new(),
+            beginning: Vec::new(),
+            pieces: 0,
+            keep_alive: 0,
+            words: String::new(),
+            thought: false,
+            tool_place: None,
+            tool_name: None,
+            tool_inputs: Vec::new(),
+            more: false,
+            ending: None,
+            usage: None,
+            failed: false,
+            error: None,
+            too_long: false,
+            done: false,
+            trouble: None,
+            started: TICKS.load(Ordering::Relaxed),
+            last_at: 0,
+            first_at: None,
+            thinking_at: None,
+            words_at: None,
+            tool_from: None,
+            tool_to: None,
+            done_at: None,
+            shown: String::new(),
+            shown_thinking: false,
+        }
+    }
+
+    // Ticks since the asking began.
+    fn now(&self) -> u64 {
+        TICKS.load(Ordering::Relaxed).saturating_sub(self.started)
+    }
+
+    // Whether the answer whose head is `head` comes piece by piece: a good
+    // answer (200) of the kind "text/event-stream", the provider's word for
+    // it. Any other answer is collected whole, as every answer once was.
+    fn begins(&mut self, head: &Head) -> bool {
+        let piece_by_piece = head.number == 200 && head.content_type.as_deref().is_some_and(|kind| kind.starts_with("text/event-stream"));
+        if piece_by_piece {
+            self.begun = true;
+            self.chunked = head.transfer_coding.is_some();
+        }
+        piece_by_piece
+    }
+
+    // Takes the next bytes of the answer's body, however the pieces are cut,
+    // and hands on what of the words can be shown so far. Says whether more
+    // is wanted: not after "[DONE]", which the link is told, nor after a line
+    // too long to read, nor at all for an answer in pieces with their lengths
+    // in between.
+    fn take(&mut self, bytes: &[u8], key: &[u8]) -> bool {
+        if self.chunked || self.done || self.too_long {
+            return false;
+        }
+        if !bytes.is_empty() {
+            self.last_at = self.now();
+        }
+        let room = STREAM_BEGINNING.saturating_sub(self.beginning.len()).min(bytes.len());
+        self.beginning.extend_from_slice(&bytes[..room]);
+        for byte in bytes {
+            if *byte != b'\n' {
+                if self.line.len() >= PIECE_ROOM {
+                    self.too_long = true;
+                    break;
+                }
+                self.line.push(*byte);
+                continue;
+            }
+            let mut line = core::mem::take(&mut self.line);
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            self.line_read(&line);
+            if self.done {
+                break;
+            }
+        }
+        self.hand_on(key);
+        !self.done && !self.too_long
+    }
+
+    // One whole line of the answer.
+    fn line_read(&mut self, line: &[u8]) {
+        if line.first() == Some(&b':') {
+            self.keep_alive += 1;
+            return;
+        }
+        let Some(data) = line.strip_prefix(b"data:") else {
+            return;
+        };
+        let data = data.strip_prefix(b" ").unwrap_or(data);
+        if data.trim_ascii() == b"[DONE]" {
+            self.done = true;
+            self.done_at = Some(self.now());
+            return;
+        }
+        self.piece_read(data);
+    }
+
+    // One piece: JSON from outside, read with the JSON reader like every
+    // answer. A piece that cannot be read gives nothing.
+    fn piece_read(&mut self, piece: &[u8]) {
+        let now = self.now();
+        self.pieces += 1;
+        self.first_at.get_or_insert(now);
+
+        let reason = BREAK_REASON.iter().find_map(|path| json_find_text(piece, path).ok());
+        if reason.is_some() || json_find_text(piece, BREAK_KIND).is_ok() || json_find_text(piece, BREAK_CODE).is_ok() || json_find_number(piece, BREAK_CODE).is_ok() {
+            self.failed = true;
+            if self.error.is_none() {
+                self.error = reason;
+            }
+            return;
+        }
+
+        if let Ok(ending) = json_find_text(piece, ENDING) {
+            self.ending = Some(ending);
+        }
+        if json_find_number(piece, TOKENS_IN).is_ok() || json_find_number(piece, TOKENS_OUT).is_ok() {
+            self.usage = Some(piece.to_vec());
+        }
+        let words = match json_find_text(piece, PIECE_WORDS) {
+            Err(NOT_A_TEXT) => json_find_text(piece, PIECE_FIRST_PIECE).ok(),
+            found => found.ok(),
+        };
+        if let Some(words) = words {
+            self.words_add(&words, now);
+        }
+        if PIECE_THOUGHTS.iter().any(|path| json_find_text(piece, path).is_ok_and(|text| !text.trim().is_empty())) {
+            self.thought = true;
+            self.thinking_at.get_or_insert(now);
+        }
+
+        // The parts of tools in the piece. Those of the first tool asked for
+        // are put together; of any other, only whether it is there counts.
+        for place in 0..TOOL_PARTS_READ {
+            let index = json_find_number(
+                piece,
+                &[Step::Name("choices"), Step::Place(0), Step::Name("delta"), Step::Name("tool_calls"), Step::Place(place), Step::Name("index")],
+            )
+            .ok();
+            let name = json_find_text(
+                piece,
+                &[
+                    Step::Name("choices"),
+                    Step::Place(0),
+                    Step::Name("delta"),
+                    Step::Name("tool_calls"),
+                    Step::Place(place),
+                    Step::Name("function"),
+                    Step::Name("name"),
+                ],
+            )
+            .ok();
+            let inputs = json_find_text(
+                piece,
+                &[
+                    Step::Name("choices"),
+                    Step::Place(0),
+                    Step::Name("delta"),
+                    Step::Name("tool_calls"),
+                    Step::Place(place),
+                    Step::Name("function"),
+                    Step::Name("arguments"),
+                ],
+            )
+            .ok();
+            if index.is_none() && name.is_none() && inputs.is_none() {
+                break;
+            }
+            let first = *self.tool_place.get_or_insert(index.unwrap_or(0));
+            if index.is_some_and(|index| index != first) {
+                if name.is_some() {
+                    self.more = true;
+                }
+                continue;
+            }
+            if self.tool_name.is_none() {
+                self.tool_name = name;
+            }
+            if let Some(inputs) = inputs {
+                let room = (TABLE_INPUTS_LONGEST + 1).saturating_sub(self.tool_inputs.len()).min(inputs.len());
+                self.tool_inputs.extend_from_slice(&inputs.as_bytes()[..room]);
+            }
+            self.tool_from.get_or_insert(now);
+            self.tool_to = Some(now);
+        }
+    }
+
+    // Adds a few of the model's words, from the first that is not a space.
+    fn words_add(&mut self, piece: &str, now: u64) {
+        let piece = if self.words.is_empty() { piece.trim_start() } else { piece };
+        if piece.is_empty() {
+            return;
+        }
+        self.words_at.get_or_insert(now);
+        let mut room = WORDS_KEPT.saturating_sub(self.words.len()).min(piece.len());
+        while !piece.is_char_boundary(room) {
+            room -= 1;
+        }
+        self.words.push_str(&piece[..room]);
+    }
+
+    // Hands on what of the words can be shown so far, and whether the model
+    // is thinking before its first word, when either changed (see `errand.rs`).
+    fn hand_on(&mut self, key: &[u8]) {
+        let thinking = self.thought && self.words.is_empty();
+        let mut changed = thinking != self.shown_thinking;
+        if self.shown.len() < WORDS_SHOWN {
+            let shown = words_so_far(&self.words, key);
+            if shown != self.shown {
+                self.shown = shown;
+                changed = true;
+            }
+        }
+        if changed {
+            self.shown_thinking = thinking;
+            errand_grow(&self.shown, thinking);
+        }
+    }
+
+    // The terminal's line about how the pieces came: how many, and when,
+    // counted from the asking.
+    fn line_said(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(at) = self.first_at {
+            parts.push(format!("the first after {}", seconds_said(at)));
+        }
+        if let Some(at) = self.thinking_at {
+            parts.push(format!("thinking from {}", seconds_said(at)));
+        }
+        if let Some(at) = self.words_at {
+            parts.push(format!("words from {}", seconds_said(at)));
+        }
+        if let (Some(from), Some(to)) = (self.tool_from, self.tool_to) {
+            parts.push(format!("a tool from {} to {}", seconds_said(from), seconds_said(to)));
+        }
+        if self.keep_alive > 0 {
+            parts.push(format!("{} {} that the link is alive", self.keep_alive, if self.keep_alive == 1 { "line" } else { "lines" }));
+        }
+        parts.push(match self.done_at {
+            Some(at) => format!("the end mark after {}", seconds_said(at)),
+            None => String::from("no end mark"),
+        });
+        let pieces = if self.pieces == 1 { "piece" } else { "pieces" };
+        format!("Stream: {} {} in {}: {}.", self.pieces, pieces, seconds_said(self.last_at), parts.join(", "))
+    }
+}
+
+// A count of ticks as seconds, to the hundredth.
+fn seconds_said(ticks: u64) -> String {
+    format!("{}.{:02} s", ticks / TICKS_PER_SECOND, ticks % TICKS_PER_SECOND * 100 / TICKS_PER_SECOND)
+}
+
+// What of the model's words can be shown while more of them may come:
+// cleaned and with the key hidden, as `words_shown` makes them, but without
+// the last signs, one fewer than the key is long. A piece of the key that a
+// sign shown belongs to then lies whole among the signs that came, and is
+// hidden; a piece that only begins among the last signs waits for the rest.
+fn words_so_far(words: &str, key: &[u8]) -> String {
+    let mut signs = plain_text(words, WORDS_SHOWN.saturating_add(key.len())).into_bytes();
+    key_hide(&mut signs, key);
+    let shown = signs.len().saturating_sub(key.len().saturating_sub(1)).min(WORDS_SHOWN);
+    signs.truncate(shown);
+    // Only plain signs are left, one byte each, so this cannot fail.
+    String::from_utf8_lossy(&signs).into_owned()
+}
+
+// Says what the kernel has to say about an answer to a line that came piece
+// by piece, and gives back what the model answered, as `chat_reply` does for
+// one that came whole, and the terminal's line about its tokens. The answer
+// is whole when "[DONE]" came after no piece that broke it off. It broke off
+// when such a piece came, when the model's maker's word for how it ended
+// says it was stopped ("aborted", "insufficient_system_resource"), when the
+// link went wrong after the pieces had begun or a line was too long to read,
+// and when it ended before the model said how it ended. Then the words that
+// came are said, and why it broke off; a tool is not done, but for a table,
+// whose rows that came whole are drawn (see `chat.rs`); and the line ends.
+fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
+    let ending = stream.ending.as_deref();
+    let out_of_room = ending == Some("length");
+    let held_back = ending == Some("content_filter");
+    let stopped = matches!(ending, Some("aborted" | "insufficient_system_resource"));
+    let whole = stream.done && !stream.failed;
+    let broke = if let Some(reason) = &stream.trouble {
+        Some(format!("the model's answer broke off, because {}", reason))
+    } else if stream.failed {
+        Some(match &stream.error {
+            Some(reason) => format!("the provider broke the model's answer off: \"{}\"", words_shown(reason, key)),
+            None => String::from("the provider broke the model's answer off, and I could not read why"),
+        })
+    } else if stream.too_long {
+        Some(String::from("the model's answer broke off, because a piece of it is larger than the room for it"))
+    } else if stopped {
+        Some(String::from("the provider stopped the model's answer before its end"))
+    } else if !stream.done && ending.is_none() {
+        Some(String::from("the model's answer broke off before it was whole"))
+    } else {
+        None
+    };
+    let broken = broke.is_some();
+
+    let tool = stream.tool_name.as_deref().map(|name| tool_made(name, stream.tool_inputs.clone(), out_of_room || broken, key));
+    let more = tool.is_some() && stream.more;
+    let words = stream.words.trim_end();
+    let words = if words.is_empty() { None } else { Some(words_shown(words, key)) };
+    let cut_short = if whole { "" } else { " Its answer did not come whole." };
+
+    let sentence = if let Some(broke) = broke {
+        let undone = if tool.as_ref().is_some_and(|tool| tool.name != "draw_table") { ", so I did not do what it asked for" } else { "" };
+        format!("{}{}.", broke, undone)
+    } else if words.is_some() || tool.is_some() {
+        ending_said(out_of_room, held_back, whole, cut_short)
+    } else if ending.is_some() {
+        empty_said(stream.thought, out_of_room, held_back, cut_short, LINE_TOKENS)
+    } else {
+        words_not_found(&stream.beginning, key, NOT_THERE, cut_short)
+    };
+    let tokens = match &stream.usage {
+        Some(piece) => tokens_said(piece),
+        None => String::from("Tokens: the provider did not say how many this answer took"),
+    };
+    (sentence, ChatReply { words, tool, more, broken, stream: Some(stream.line_said()) }, tokens)
 }
 
 // ---------- Words from outside ----------

@@ -133,9 +133,9 @@ class Start:
         start_rows = [l for l in lines[begin:hint] if l.startswith("Kernel:")]
         if start_rows != self.chat.start_said:
             problems.append("startup rows %r, meant %r" % (start_rows, self.chat.start_said))
-        # The terminal's lines about the network, about the tokens an answer took and about what the model asked a
-        # tool for are no rows of the chat box.
-        said = [l for l in lines[hint + 2:] if l and not l.startswith(("Network:", "Tokens:", "Tool:"))]
+        # The terminal's lines about the network, about the tokens an answer took, about how its pieces came and
+        # about what the model asked a tool for are no rows of the chat box.
+        said = [l for l in lines[hint + 2:] if l and not l.startswith(("Network:", "Tokens:", "Stream:", "Tool:"))]
         if said != self.chat.said:
             problems.append("the lines said are not as meant")
             print("    meant:", self.chat.said[-5:])
