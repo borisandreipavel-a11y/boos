@@ -30,7 +30,7 @@ BREAKS = {
     # Nothing is said when the model asks for two things.
     "nomore": {"chat.rs": swap("        if more {\n            chat_say(", "        if false {\n            chat_say(")},
     # The key is not hidden in what the model gives a tool.
-    "nokeyhide": {"model.rs": swap("        key_hide(&mut inputs, key);\n", "")},
+    "nokeyhide": {"model.rs": swap("    key_hide(&mut inputs, key);\n", "")},
     # --- Doing the tools ---
     # A kept app asked for is made again instead of being run.
     "remake": {"tools.rs": swap('                Ok((request, script)) => {\n                    chat_say(&format!("I am running the app made for \\"{}\\".", request));\n'
@@ -96,9 +96,37 @@ BREAKS = {
     "tablefaint": {"drawing.rs": swap("    if 2 * (lighter + FLARE) >= 9 * (darker + FLARE) {\n", "    if true {\n")},
     # Another table asked for after the kernel turned one down counts as the same thing again.
     "tablewanted": {"tools.rs": swap('        "draw_table" => drawing_wanted(&call.inputs, call.cut_off),\n', "")},
+    # --- An answer piece by piece ---
+    # "[DONE]" is not taken as the end: every answer that comes piece by piece breaks off.
+    "nodone": {"model.rs": swap("            self.done = true;\n            self.done_at = Some(self.now());\n",
+                                "            self.done_at = Some(self.now());\n")},
+    # The words that come show whole, the last signs, where a piece of the key may begin, not held back.
+    "noholdback": {"model.rs": swap("let shown = signs.len().saturating_sub(key.len().saturating_sub(1)).min(WORDS_SHOWN);",
+                                    "let shown = signs.len().min(WORDS_SHOWN);")},
+    # The key is not starred in the words shown while more may come.
+    "nohidesofar": {"model.rs": swap("    key_hide(&mut signs, key);\n    let shown = signs.len()", "    let shown = signs.len()")},
+    # Only the first part of what the model gives a tool is kept.
+    "firstpart": {"model.rs": swap("            if let Some(inputs) = inputs {\n                let room",
+                                   "            if let Some(inputs) = inputs.filter(|_| self.tool_inputs.is_empty()) {\n                let room")},
+    # Pieces with their lengths in between are read as if they were none.
+    "nochunked": {"model.rs": swap("            self.chunked = head.transfer_coding.is_some();\n", "            self.chunked = false;\n")},
+    # A tool asked for in an answer that broke off is done all the same.
+    "brokendone": {"chat.rs": swap("        if reply.as_ref().is_some_and(|reply| reply.broken) {\n", "        if false {\n")},
+    # The rows of the answer that came in stay when the answer is said.
+    "growstays": {"chat.rs": swap("    growing().clear();\n    unsafe { THINKING = false };\n", "    unsafe { THINKING = false };\n")},
+    # The mark that the model thinks is never shown.
+    "nothinking": {"chat.rs": swap("    let thinking = unsafe { THINKING } && growing.is_empty();\n", "    let thinking = false;\n")},
 }
 
 CATCH = {
+    "nodone": "stream",
+    "noholdback": "stream",
+    "nohidesofar": "stream",
+    "firstpart": "stream",
+    "nochunked": "stream",
+    "brokendone": "stream",
+    "growstays": "stream",
+    "nothinking": "stream",
     "echo": "nokey",
     "nokeycheck": "nokey",
     "nolooktool": "words",

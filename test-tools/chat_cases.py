@@ -170,6 +170,128 @@ def table_cut(name):
     return whole[:at + 1], "\n".join(TABLES[name].split("\n")[:CUT_LINES])
 
 
+# ---------- Answers piece by piece ----------
+
+# A line's request asks for its answer piece by piece (docs/model.md). The stand-in then sends a good answer the way the
+# model's maker documents it: the notes say "text/event-stream" and give no length, and each piece is a line "data: "
+# with a piece of JSON ("chat.completion.chunk", its words, thinking or part of a tool at choices[0].delta), an empty
+# line after it, and "data: [DONE]" at the end. First a piece with the role; then the thinking, then the words, a few
+# signs to a piece; then each tool call, its name in its first part and what it gives the tool in pieces of a few
+# signs; last a piece that says how the answer ended and holds the counts. A behaviour may put ways in front of its name
+# ("hold:words=..."), which change that (STREAM_WAYS).
+STREAM_HEAD = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+WORDS_PIECE, THINKING_PIECE, INPUTS_PIECE = 6, 12, 10
+# "hold": the stand-in holds the answer once this many signs of its words went, until the test lets it go on.
+HOLD_SIGNS = 120
+# The ways: hold after HOLD_SIGNS signs of words, or after the thinking; end the connection in the middle of the words
+# or the tool ("cut"), or send a piece that breaks the answer off there ("error"); end it as the model's maker's
+# "aborted"; the counts in a piece of their own with no choices, as the router's documentation has them
+# ("usagealone"); and lines that only say the link is alive before the first piece ("keepalive").
+STREAM_WAYS = ("hold", "holdthinking", "cut", "error", "aborted", "usagealone", "keepalive")
+BREAK_MESSAGE = "Upstream provider dropped the stream"
+
+
+def stream_ways(kind):
+    """Gives (the ways in front of a behaviour's name, the behaviour without them)."""
+    ways = []
+    while True:
+        first, colon, rest = kind.partition(":")
+        if not colon or first not in STREAM_WAYS:
+            return ways, kind
+        ways.append(first)
+        kind = rest
+
+
+def parts_of(text, size):
+    return [text[at:at + size] for at in range(0, len(text), size)]
+
+
+def stream_pieces(whole, ways=()):
+    """The pieces a good answer to a line (`whole`, as Python's JSON reader reads it) goes in: bytes to send, and the
+    marks "hold" (the stand-in waits there) and "cut" (it ends the connection there). None when `whole` is no good
+    answer whose first choice holds a message: such an answer goes whole."""
+    if not isinstance(whole, dict) or whole.get("object") != "chat.completion":
+        return None
+    choices = whole.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict) or not isinstance(choices[0].get("message"), dict):
+        return None
+    found, ending, usage = choices[0]["message"], choices[0].get("finish_reason"), whole.get("usage")
+    base = {"id": whole.get("id"), "object": "chat.completion.chunk", "created": whole.get("created"), "model": whole.get("model")}
+
+    def piece(delta=None, finish=None, counts=None):
+        one = dict(base)
+        one["choices"] = [] if delta is None else [{"index": 0, "delta": delta, "logprobs": None, "finish_reason": finish}]
+        if counts is not None:
+            one["usage"] = counts
+        return b"data: " + json.dumps(one, separators=(",", ":")).encode() + b"\n\n"
+
+    out = [b": keep-alive\n\n", b": keep-alive\n\n"] if "keepalive" in ways else []
+    out.append(piece({"role": "assistant", "content": ""}))
+    for name in ("reasoning_content", "reasoning"):
+        if isinstance(found.get(name), str):
+            out += [piece({name: part}) for part in parts_of(found[name], THINKING_PIECE)]
+    if "holdthinking" in ways:
+        out.append("hold")
+    body_from = len(out)
+    content = found.get("content")
+    if isinstance(content, str):
+        sent = 0
+        for part in parts_of(content, WORDS_PIECE):
+            out.append(piece({"content": part}))
+            sent += len(part)
+            if "hold" in ways and sent >= HOLD_SIGNS and "hold" not in out:
+                out.append("hold")
+    elif content is not None:
+        out.append(piece({"content": content}))
+    for place, one in enumerate(found.get("tool_calls") or []):
+        function = one.get("function") or {}
+        index = one.get("index", place)
+        first = {"index": index, "id": one.get("id"), "type": one.get("type", "function"), "function": {"name": function.get("name")}}
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            first["function"]["arguments"] = ""
+        out.append(piece({"tool_calls": [first]}))
+        if isinstance(arguments, str):
+            out += [piece({"tool_calls": [{"index": index, "function": {"arguments": part}}]}) for part in parts_of(arguments, INPUTS_PIECE)]
+    body_pieces = len(out) - body_from
+    if "cut" in ways or "error" in ways:
+        # In the middle of the words and the tool.
+        at = body_from + max(1, body_pieces // 2)
+        if "cut" in ways:
+            return out[:at] + ["cut"]
+        breaking = {"error": {"message": BREAK_MESSAGE, "type": "upstream_error", "code": ""}}
+        return out[:at] + [b"data: " + json.dumps(breaking, separators=(",", ":")).encode() + b"\n\n", b"data: [DONE]\n\n"]
+    alone = "usagealone" in ways and usage is not None
+    out.append(piece({"content": ""}, "aborted" if "aborted" in ways else ending, None if alone else usage))
+    if alone:
+        out.append(piece(counts=usage))
+    return out + [b"data: [DONE]\n\n"]
+
+
+def stream_sent(pieces, upto=None):
+    """What the pieces before the mark `upto` (or all) brought: (the model's words, what the first tool was given)."""
+    words, inputs = "", ""
+    for item in pieces:
+        if item == upto:
+            break
+        if not isinstance(item, bytes) or not item.startswith(b"data: {"):
+            continue
+        one = json.loads(item[len(b"data: "):])
+        for choice in one.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if isinstance(delta.get("content"), str):
+                words += delta["content"]
+            for part in delta.get("tool_calls") or []:
+                if part.get("index", 0) == 0:
+                    inputs += (part.get("function") or {}).get("arguments") or ""
+    return words, inputs
+
+
+def stream_body(pieces):
+    """The bytes of all the pieces, without the marks: what the kernel reads behind the notes."""
+    return b"".join(item for item in pieces if isinstance(item, bytes))
+
+
 def answer(kind, line, bearer):
     """Gives (bytes to send, how to end) for a behaviour, or None if `kind` is none of these."""
     name, _, given = kind.partition("=")
@@ -249,4 +371,9 @@ def answer(kind, line, bearer):
     if name == "refused":
         error = {"error": {"code": "", "message": REFUSAL, "type": "orcarouter_api_error"}}
         return with_length(b"HTTP/1.1 401 Unauthorized", json.dumps(error, separators=(",", ":")).encode()), "goodbye"
+    if name == "chunkedstream":
+        # Pieces with their lengths in between, which a server must not send to a request in HTTP/1.0.
+        data = stream_body(stream_pieces(json.loads(body(message("Hello."))), ()))
+        chunked = b"%x\r\n" % len(data) + data + b"\r\n0\r\n\r\n"
+        return STREAM_HEAD.replace(b"Connection: close", b"Transfer-Encoding: chunked\r\nConnection: close") + chunked, "goodbye"
     return None

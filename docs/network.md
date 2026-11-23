@@ -293,7 +293,7 @@ Nothing else is sent: no line names the kernel, the machine or the person. That 
 
 ### The answer's head
 
-`HeadReader` reads the first line and the lines of notes up to the empty line as the pieces arrive, however they are cut, even in the middle of a line. A line ends in byte 10, with or without byte 13 before it. The head may take 16 KB at most; a longer one stops the hop with `its notes are longer than I read`, and an answer that does not begin with `HTTP/` with `its answer does not begin the way an answer on the web does`.
+`HeadReader` reads the first line and the lines of notes up to the empty line as the pieces arrive, however they are cut, even in the middle of a line. The answer to a line typed in the chat box is read with it too, to know whether it comes piece by piece (see "An answer piece by piece" in [model.md](model.md)). A line ends in byte 10, with or without byte 13 before it. The head may take 16 KB at most; a longer one stops the hop with `its notes are longer than I read`, and an answer that does not begin with `HTTP/` with `its answer does not begin the way an answer on the web does`.
 
 It keeps the three digits of the first line and up to 40 signs of the words behind them, and five notes, whose names are told apart without regard to capitals:
 
