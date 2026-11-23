@@ -7,10 +7,12 @@
 //! the newest counts, and the older stay on the disk. The document the frame
 //! shows is the open one: its lines go with every line to the model, so that
 //! it can be changed, and a change is done only to the open document. A panel
-//! on the left lists the documents used last. Only the startup code and the
-//! main loop may call these functions.
-//! Notes: `docs/screen.md` ("Documents"), `docs/tools.md` (`draw_table` and
-//! `open_document`) and `docs/notebook.md`.
+//! on the left lists the documents used last. A table drawn from a kept file
+//! that was opened for the line (see `files.rs`) is a document made from that
+//! file, and its note says which; opening the file again opens it. Only the
+//! startup code and the main loop may call these functions.
+//! Notes: `docs/screen.md` ("Documents"), `docs/tools.md` (`draw_table`,
+//! `open_document` and `open_file`) and `docs/notebook.md`.
 
 use alloc::format;
 use alloc::string::String;
@@ -21,6 +23,7 @@ use crate::drawing::{
     Drawn, NotDrawn, drawing_clear, drawing_document, drawing_fit, drawing_lines_kept, drawing_refused, drawing_room, drawing_said,
     drawing_show, drawing_text,
 };
+use crate::files::{file_opening_forget, file_opening_number};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::look;
 use crate::notebook::{notebook_find, notebook_keep, notebook_names, notebook_ready};
@@ -44,10 +47,15 @@ const NUMBER_MOST: u32 = 999_999_999;
 // The first byte of a note says what form the rest has, so that later forms
 // can say more. Form 1: a byte for the kind of document (1, a table, the only
 // kind so far), the newest version's number in four bytes, lowest first, and
-// the document's name.
+// the document's name. Form 2, for a document made from a kept file (see
+// `files.rs`): the same, with the file's number in four bytes, lowest first,
+// between the version's number and the name. A document made from no file is
+// kept in form 1, as before form 2 existed.
 const NOTE_FORM: u8 = 1;
+const NOTE_FORM_FILE: u8 = 2;
 const KIND_TABLE: u8 = 1;
 const NOTE_HEAD: usize = 6;
+const NOTE_HEAD_FILE: usize = 10;
 
 // The longest name, in signs: a document is named by its title, and the panel
 // of documents shows a name of 45 signs whole behind the "- " in front of it.
@@ -55,13 +63,15 @@ const NAME_MOST: usize = 45;
 
 // A document found in the notebook or kept since the start: its number, the
 // number of its newest version, its name (nothing for a table without a
-// title), and whether that version's lines were found whole. Only documents
-// whose lines are whole are listed; the others still hold on to their number.
+// title), whether that version's lines were found whole, and the number of
+// the kept file it was made from, if it was. Only documents whose lines are
+// whole are listed; the others still hold on to their number.
 struct KeptDocument {
     number: u32,
     version: u32,
     name: String,
     whole: bool,
+    file: Option<u32>,
 }
 
 // The kept documents, the one used last first: kept, changed or opened. Only
@@ -130,17 +140,29 @@ fn name_cleaned(bytes: &[u8]) -> String {
 }
 
 // A note read from the disk, which comes from outside the kernel: the newest
-// version's number and the name, cleaned and cut. Gives nothing for a note of
-// another form or kind, or one that names no version.
-fn note_read(note: &[u8]) -> Option<(u32, String)> {
-    if note.len() < NOTE_HEAD || note[0] != NOTE_FORM || note[1] != KIND_TABLE {
+// version's number, the name, cleaned and cut, and for form 2 the number of
+// the file the document was made from. Gives nothing for a note of another
+// form or kind, or one that names no version or no file.
+fn note_read(note: &[u8]) -> Option<(u32, String, Option<u32>)> {
+    let (head, file) = match note.first() {
+        Some(&NOTE_FORM) => (NOTE_HEAD, None),
+        Some(&NOTE_FORM_FILE) if note.len() >= NOTE_HEAD_FILE => {
+            let file = u32::from_le_bytes([note[6], note[7], note[8], note[9]]);
+            if file == 0 || file > NUMBER_MOST {
+                return None;
+            }
+            (NOTE_HEAD_FILE, Some(file))
+        }
+        _ => return None,
+    };
+    if note.len() < head || note[1] != KIND_TABLE {
         return None;
     }
     let version = u32::from_le_bytes([note[2], note[3], note[4], note[5]]);
     if version == 0 || version > NUMBER_MOST {
         return None;
     }
-    Some((version, name_cleaned(&note[NOTE_HEAD..])))
+    Some((version, name_cleaned(&note[head..]), file))
 }
 
 // The name a document is listed and shown by: its own, or "document 3" for
@@ -181,11 +203,11 @@ pub fn documents_begin() {
             Ok(Some(note)) => note_read(&note),
             _ => None,
         };
-        let Some((version, kept_name)) = read else {
+        let Some((version, kept_name, file)) = read else {
             continue;
         };
         let lines = lines_name(number, version);
-        let document = KeptDocument { number, version, name: kept_name, whole: names.iter().any(|other| *other == lines) };
+        let document = KeptDocument { number, version, name: kept_name, whole: names.iter().any(|other| *other == lines), file };
         if !document.whole {
             trouble.push_str(&format!("Documents: {}: its lines are not whole, so it is left out\r\n", called(&document)));
         }
@@ -310,8 +332,14 @@ pub fn document_draw(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
     }
     let name = drawn.title_written.as_deref().map(|title| name_cleaned(title.as_bytes())).unwrap_or_default();
     let lines = drawing_lines_kept(&text);
-    match version_keep(changes, &name, &lines) {
+    // A new table drawn for a line that a kept file was opened for is made
+    // from that file (see `files.rs`), and its note says so.
+    let from_file = if changes.is_none() { file_opening_number() } else { None };
+    match version_keep(changes, &name, &lines, from_file) {
         Ok(number) => {
+            if from_file.is_some() {
+                file_opening_forget();
+            }
             said.push_str(&match changes {
                 Some(_) => format!(" It is kept as document {}, in place of the one before.", number),
                 None => format!(" It is kept as document {}.", number),
@@ -328,23 +356,25 @@ pub fn document_draw(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
 }
 
 // Keeps a new version of a document: of the kept one with this number, or of
-// a new one, numbered after the highest. Its lines first, read back byte for
-// byte, then the note that names it as the newest. Gives back the document's
-// number, or why it could not be kept; then nothing changed in what counts.
-fn version_keep(changes: Option<u32>, name: &str, lines: &str) -> Result<u32, String> {
+// a new one, numbered after the highest, made from the kept file `from_file`
+// if it was. Its lines first, read back byte for byte, then the note that
+// names it as the newest; a document made from a file keeps saying so in the
+// note of every version. Gives back the document's number, or why it could
+// not be kept; then nothing changed in what counts.
+fn version_keep(changes: Option<u32>, name: &str, lines: &str, from_file: Option<u32>) -> Result<u32, String> {
     if !notebook_ready() {
         return Err(String::from("the notebook cannot be added to"));
     }
     let documents = kept_documents();
-    let (number, version) = match changes.and_then(|number| documents.iter().find(|document| document.number == number)) {
+    let (number, version, file) = match changes.and_then(|number| documents.iter().find(|document| document.number == number)) {
         Some(document) if document.version >= NUMBER_MOST => return Err(String::from("the numbers for its versions have run out")),
-        Some(document) => (document.number, document.version + 1),
+        Some(document) => (document.number, document.version + 1, document.file),
         None => {
             let highest = documents.iter().map(|document| document.number).max().unwrap_or(0);
             if highest >= NUMBER_MOST {
                 return Err(String::from("the numbers for documents have run out"));
             }
-            (highest + 1, 1)
+            (highest + 1, 1, from_file)
         }
     };
 
@@ -357,18 +387,23 @@ fn version_keep(changes: Option<u32>, name: &str, lines: &str) -> Result<u32, St
         Err(reason) => return Err(String::from(reason)),
     }
 
-    // Then the note that names this version as the newest.
-    let mut note = Vec::with_capacity(NOTE_HEAD + name.len());
-    note.push(NOTE_FORM);
+    // Then the note that names this version as the newest: in form 2, with
+    // the file's number, for a document made from a file, and in form 1
+    // otherwise.
+    let mut note = Vec::with_capacity(NOTE_HEAD_FILE + name.len());
+    note.push(if file.is_some() { NOTE_FORM_FILE } else { NOTE_FORM });
     note.push(KIND_TABLE);
     note.extend_from_slice(&version.to_le_bytes());
+    if let Some(file) = file {
+        note.extend_from_slice(&file.to_le_bytes());
+    }
     note.extend_from_slice(name.as_bytes());
     notebook_keep(&note_name(number), &note).map_err(String::from)?;
 
     // The document goes to the top of the list.
     let documents = kept_documents();
     documents.retain(|document| document.number != number);
-    documents.insert(0, KeptDocument { number, version, name: String::from(name), whole: true });
+    documents.insert(0, KeptDocument { number, version, name: String::from(name), whole: true, file });
     serial_print(&format!("Documents: version {} of document {} is kept on the disk\r\n", version, number));
     Ok(number)
 }
@@ -383,6 +418,23 @@ pub fn document_open(asked: u64) -> Result<String, String> {
     let drawn = open_inner(number)?;
     let named = kept_documents().iter().find(|document| document.number == number).map(called).unwrap_or_default();
     Ok(format!("I opened {}{}.", named, drawing_fit(&drawn)))
+}
+
+// The tool `open_file`, for a kept file that a document was made from before:
+// that document is opened, as with `open_document`, instead of sending the
+// file to the model again. Gives nothing when no document whose lines are
+// whole was made from the file; otherwise what the kernel says, or why it
+// could not open the document. The newest such document counts.
+pub fn document_reopen(file: u32) -> Option<Result<String, String>> {
+    let number = kept_documents()
+        .iter()
+        .filter(|document| document.whole && document.file == Some(file))
+        .map(|document| document.number)
+        .max()?;
+    Some(open_inner(number).map(|drawn| {
+        let named = kept_documents().iter().find(|document| document.number == number).map(called).unwrap_or_default();
+        format!("I opened {}, made from file {} before{}.", named, file, drawing_fit(&drawn))
+    }))
 }
 
 // Reads the newest version of a kept document from the disk, draws it, makes

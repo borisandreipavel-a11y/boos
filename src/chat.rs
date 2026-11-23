@@ -19,7 +19,7 @@ use crate::conversation::{
 };
 use crate::documents::{documents_begin, documents_setup, documents_told};
 use crate::errand::{Answer, Errand, errand_ask, errand_grown};
-use crate::files::{download_answer, files_answer, files_asking, files_setup};
+use crate::files::{download_answer, file_opening_forget, file_text_take, files_answer, files_asking, files_setup};
 use crate::keyboard::{BACKSPACE, DELETE_KEY, DOWN_KEY, END_KEY, HOME_KEY, LEFT_KEY, RIGHT_KEY, UP_KEY};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
@@ -686,6 +686,8 @@ pub fn chat_remember(text: &str) {
 // it is an errand for the network's task: the answer comes later, as rows of
 // its own (see `chat_answer`). Gives back the row that says what happens now.
 fn model_ask(said: &str) -> String {
+    // A file opened for an earlier line never goes with this one.
+    file_opening_forget();
     if secret_length() == 0 {
         return String::from("Kernel: I cannot ask the model, because no key is kept. Send the line \"key\" first.");
     }
@@ -714,15 +716,25 @@ fn model_ask(said: &str) -> String {
 // for the last ask. The chat box gets no row for it, and the terminal one
 // line of its own. Nothing is asked when nothing of the line is remembered
 // any more, because everything was forgotten. When the ask cannot go, the
-// kernel says why, and the line ends there.
+// kernel says why, and the line ends there. A file opened for the line (see
+// `files.rs`) goes with this ask only, behind the line in the person's
+// message: it is taken first, whatever comes of the ask, so that it never
+// goes twice, and it is not remembered, since what is remembered of the line
+// is the line as it was first sent.
 fn ask_again(mut asks: Asks) {
+    let made = asks.made + 1;
+    let last = made >= ASKS_MOST;
+    let file = file_text_take(!last);
     let Some((record, done)) = conversation_split() else {
         return;
     };
-    asks.made += 1;
-    let last = asks.made >= ASKS_MOST;
+    asks.made = made;
     let tools = if last { String::new() } else { chat_tools() };
-    match errand_ask(Errand::ChatLine { line: asks.sent.clone(), tools, record, document: documents_told(), done }) {
+    let line = match file {
+        Some(file) => format!("{}{}", asks.sent, file),
+        None => asks.sent.clone(),
+    };
+    match errand_ask(Errand::ChatLine { line, tools, record, document: documents_told(), done }) {
         Ok(()) => {
             conversation_sent();
             let without = if last { ", without tools" } else { "" };

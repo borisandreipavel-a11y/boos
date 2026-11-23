@@ -87,6 +87,10 @@ SUITES = [
     # Documents: tables kept on the disk, opened and changed by a wish, in the stand-in copy.
     dict(name="documents", command=["test_documents.py"], split=True, watches=STAND_IN + DOCUMENTS,
          seconds=dict(keep=120, cut=110, odd=120, broken=70)),
+    # Files opened as documents: a kept CSV file's text to the model once, and the table drawn from it kept as a
+    # document that names the file, in the stand-in copy.
+    dict(name="open file", command=["test_open_file.py"], split=True, watches=STAND_IN + FILES + DOCUMENTS,
+         seconds=dict(open=150, big=150, odd=120)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -134,7 +138,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10, "documents": 11}
+                "intel": 10, "downloads": 10, "documents": 11, "open file": 8}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -357,4 +361,12 @@ CAUGHT_BY = {
     'break documents: numberreused': "doc-odd-2 'fruit please'",
     'break documents: nopanel': 'doc-keep-2 restart',
     'break documents: setupkeepsopen': 'doc-keep-2 setup',
+    'break open file: notforgotten': "of-odd 'open file nine then b'",
+    'break open file: nolink': 'open note of document 2',
+    'break open file: wholefile': "of-big 'open big.csv'",
+    'break open file: cutanywhere': "of-big 'open the long one'",
+    'break open file: drawlast': 'odd request 6',
+    'break open file: anykind': 'big request 1',
+    'break open file: noreopen': "of-open-2 'open b.csv'",
+    'break open file: fileagain': 'odd request 9',
 }
