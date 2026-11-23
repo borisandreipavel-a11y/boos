@@ -1,4 +1,4 @@
-"""Breaks on purpose for the key and the password, each alone, in a copy of the project (copy_break.py). For each:
+"""Breaks on purpose for the key and the password, and for the line typed in the chat box (test_chat_line.py), each alone, in a copy of the project (copy_break.py). For each:
 copy the project's sources afresh, make the break, build, and run the test that should catch it with the copy's
 kernel. The project itself is only read. A break whose old text no longer stands once in its file is reported as not
 made, and the others still run.
@@ -10,6 +10,8 @@ import sys
 
 MEMORY = ["test_key_memory.py"]
 LOCKED = ["test_key.py", "locked"]
+LINE_EDIT = ["test_chat_line.py", "edit"]
+LINE_RESTART = ["test_chat_line.py", "restart"]
 # name: (file in src, old text, new text, the test that should catch it)
 BREAKS = {
     "the typed signs not wiped": ("chat.rs", "            wipe(typed);\n            kernel_rows(&rows);\n", "            kernel_rows(&rows);\n", MEMORY),
@@ -28,6 +30,34 @@ BREAKS = {
     "the question for a new key not used at setup": ("onboarding.rs",
                                                      "    String::from(if setting_up && !locked_key().is_empty() { KEY_QUESTION_AGAIN } else { KEY_QUESTION })",
                                                      "    String::from(if false { KEY_QUESTION_AGAIN } else { KEY_QUESTION })", ["test_key.py", "stays"]),
+    # The line typed in the chat box (docs/chat.md).
+    "line: the 201st sign taken": ("chat.rs", "const CHAT_LINE_LIMIT: usize = 200;", "const CHAT_LINE_LIMIT: usize = 201;", LINE_EDIT),
+    "line: the rows of what was said not made fewer": ("chat.rs",
+        "    let fit = (style.rows as usize).saturating_sub(typing.shown.saturating_sub(1) as usize);\n",
+        "    let fit = style.rows as usize;\n", LINE_EDIT),
+    "line: the rows not painted again when the row being typed grows": ("chat.rs", "    if before == Some(after) && room > 0 {\n",
+        "    if room > 0 {\n", LINE_EDIT),
+    "line: a sign put at the end, not at the place": ("chat.rs", "            line.insert(at, letter as char);\n",
+        "            line.push(letter as char);\n", LINE_EDIT),
+    "line: Delete taking the sign before the place": ("chat.rs", "            chat_line().remove(at);\n",
+        "            chat_line().remove(at.saturating_sub(1));\n", LINE_EDIT),
+    "line: Right not moving the place": ("chat.rs",
+        "        RIGHT_KEY => {\n            if at >= chat_line().len() {\n                return;\n            }\n            chat_at_put(at + 1);\n",
+        "        RIGHT_KEY => {\n            if at >= chat_line().len() {\n                return;\n            }\n", LINE_EDIT),
+    "line: the place shown as a _ over its sign": ("chat.rs",
+        "            screen_rectangle(left, top, sign_width, letter_height, look.chat_person);\n"
+        "            screen_text(left, top, &text[cell..cell + 1], style.text_size, look.chat_typing);\n",
+        "            screen_text(left, top, \"_\", style.text_size, look.chat_person);\n", LINE_EDIT),
+    "line: Left not known behind the mark": ("keyboard.rs", "            LEFT_NUMBER => return Some(LEFT_KEY),\n", "", LINE_EDIT),
+    "line: the new keys typed into a secret": ("chat.rs",
+        "    if !matches!(letter, BACKSPACE | b'\\n' | b' '..=b'~') {\n        return;\n    }\n", "", LINE_EDIT),
+    "line: the line sent not kept for Up": ("chat.rs", "            last_sent_put(said.clone());\n", "", LINE_EDIT),
+    "line: Down losing what was typed": ("chat.rs", "            *chat_line() = typed;\n            chat_at_put(typed_at);\n",
+        "            let _ = (typed, typed_at);\n            chat_line().clear();\n            chat_at_put(0);\n", LINE_EDIT),
+    "line: Up while the kernel asks a question of its own": ("chat.rs", "            if kernel_question() || set_aside_holds() {\n",
+        "            if set_aside_holds() {\n", LINE_RESTART),
+    "line: the kept line not read for Up at a start": ("chat.rs", "            last_sent_put(said);\n", "", LINE_RESTART),
+    "line: the kept line said cut at 50": ("chat.rs", "kept.iter().take(CHAT_LINE_LIMIT)", "kept.iter().take(50)", LINE_RESTART),
 }
 # Known not to be caught (docs/testing.md): what is left in those rooms has been written over by the time of the dump.
 MISSES = {"the locking's own rooms not wiped", "the unlocking's room not wiped"}

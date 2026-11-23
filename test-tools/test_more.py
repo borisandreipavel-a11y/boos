@@ -56,7 +56,7 @@ try:
         sys.exit(1)
     look("1-empty")
 
-    keys("abcdefghij" * 5 + "vwxyz")  # 55 keys, the limit is 50
+    keys("abcdefghij" * 20 + "vwxyz")  # 205 keys, the limit is 200 (three rows being typed)
     look("2-line-at-the-limit")
     keys("\n")
     look("3-long-line-sent")

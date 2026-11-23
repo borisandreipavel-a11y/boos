@@ -1,6 +1,6 @@
 """A model of what the chat box should hold and say with the name question, written from the design (not from
 the kernel's code), on top of picture.Chat. Also the key names QEMU needs for capitals and signs."""
-from picture import Chat, CHAT_LINE_LIMIT, GREETING
+from picture import Chat, CHAT_LINE_LIMIT, DELETE, DOWN, END, GREETING, HOME, LEFT, RIGHT, UP
 
 NAME_LIMIT = 20
 HELLO = "Kernel: hello! I do not know your name yet, so I have one question before we begin."
@@ -51,6 +51,8 @@ class NamedChat(Chat):
             self.asking = True
             start = [HELLO, question(self.person())]
         recall_row = recall(clean_line(last_line)) if last_line is not None else None
+        if last_line is not None:
+            self.last_sent = clean_line(last_line)  # what Up brings back
         if recall_row:
             if self.asking:
                 start.insert(0, recall_row)
@@ -66,10 +68,10 @@ class NamedChat(Chat):
         return self.name or "You"
 
     def line_room(self):
-        limit = NAME_LIMIT if self.asking else CHAT_LINE_LIMIT
-        if self.room is None:
-            return limit
-        return min(limit, max(self.room - 3, 0))
+        return NAME_LIMIT if self.asking else CHAT_LINE_LIMIT
+
+    def kernel_question(self):
+        return self.asking
 
     def answer(self, said):
         self.asking = False
@@ -106,6 +108,7 @@ class NamedChat(Chat):
             line = self.line
             if line == "setup":
                 mine = "%s: setup" % self.person()
+                self.last_sent = line
                 self.asking = True
                 answer = question(self.person())
                 self.said += [mine, answer]
@@ -123,7 +126,8 @@ class NamedChat(Chat):
 PLAIN = "1234567890-=qwertyuiop[]asdfghjkl;'`\\zxcvbnm,./"
 SHIFTED = "!@#$%^&*()_+QWERTYUIOP{}ASDFGHJKL:\"~|ZXCVBNM<>?"
 NAMES = {"-": "minus", "=": "equal", "[": "bracket_left", "]": "bracket_right", ";": "semicolon", "'": "apostrophe",
-         "`": "grave_accent", "\\": "backslash", ",": "comma", ".": "dot", "/": "slash", " ": "spc", "\n": "ret", "\b": "backspace"}
+         "`": "grave_accent", "\\": "backslash", ",": "comma", ".": "dot", "/": "slash", " ": "spc", "\n": "ret", "\b": "backspace",
+         LEFT: "left", RIGHT: "right", HOME: "home", END: "end", UP: "up", DOWN: "down", DELETE: "delete"}
 
 
 def name_of(sign):

@@ -122,6 +122,7 @@ Tests (each prints `FAILURES: none` or what went wrong, or the lines to judge):
 | --- | --- |
 | `boot_count.py <tag>` | A start on a fresh divided disk reaches the prompt with only plain text. `test_secret_keyed.py` makes the same report from its own start |
 | `test_shift.py`, `test_more.py <tag> [shift]` | Typing with and without Shift, long rows, more rows than fit, every sign: every picture. With `shift`, Shift's steps follow the chat box's in the same start |
+| `test_chat_line.py [scenario ...]` | The line typed in the chat box: 200 signs, the row being typed growing upward, the place where the next sign goes moved by the arrows, Home and End, signs put in and taken away there, Up and Down, a long line at 800 by 600, after a restart and while an answer comes in: every picture, and the terminal's rows. Its breaks on purpose are in `run_key_breaks.py` |
 | `test_name3.py` | The name question at the first start and later starts |
 | `test_key.py`, `test_key_memory.py` | The key and the password; the made-up secrets searched for in the machine's memory |
 | `test_secret_keyed.py` | The secret line `key` |

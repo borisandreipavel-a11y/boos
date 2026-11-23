@@ -58,6 +58,10 @@ SUITES = [
     dict(name="secret line", command=["test_secret_keyed.py"], watches=SECRET, seconds=100),
     # The chat box's limits and every sign, then Shift in the same start (test_shift.py's steps).
     dict(name="chat box and shift", command=["test_more.py", "more-shift", "shift"], watches=[], seconds=75),
+    # The line typed in the chat box: 200 signs, the row being typed growing upward, the keys that edit the line, Up
+    # and Down, and a long line typed while an answer comes in (test_chat_line.py).
+    dict(name="chat line", command=["test_chat_line.py"], split=True, watches=STAND_IN,
+         seconds=dict(edit=125, small=85, noscreen=70, restart=75, stream=95)),
     dict(name="model", command=["test_model.py", MODEL_KINDS], env={"DIVIDED_DISK": ""}, watches=STAND_IN + SECRET, seconds=260),
     dict(name="model piece by piece", command=["test_model.py", MODEL_PIECE_KINDS, "pieces"], env={"DIVIDED_DISK": ""},
          watches=STAND_IN + SECRET, seconds=120),
@@ -129,7 +133,7 @@ NO_TEST = [".github/", "lua/", "release/", "run.bat", "run-boot-disk.bat", "test
 WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gitattributes"]
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
-BREAK_COUNTS = {"apps": 17, "try": 10, "key": 11, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
+BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
                 "intel": 10, "downloads": 10, "documents": 11}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -177,6 +181,20 @@ CAUGHT_BY = {
     'break key: no key not noted': 'first terminal/disk',
     'break key: every refusal taken for a wrong password': 'odd-version 1-refused',
     'break key: the question for a new key not used at setup': 'stays 2-key-question-again',
+    'break key: line: the 201st sign taken': 'line-edit 6-200-the-limit',
+    'break key: line: the rows of what was said not made fewer': 'line-edit 3-95-two-rows',
+    'break key: line: the rows not painted again when the row being typed grows': 'line-edit 3-95-two-rows',
+    'break key: line: a sign put at the end, not at the place': 'line-edit 10-changed-below-the-tails',
+    'break key: line: Delete taking the sign before the place': 'line-edit 10-changed-below-the-tails',
+    'break key: line: Right not moving the place': 'line-edit 8-on-a-typed-underscore',
+    'break key: line: the place shown as a _ over its sign': 'line-edit 7-home',
+    'break key: line: Left not known behind the mark': 'line-edit 11-taken-before-the-place',
+    'break key: line: the new keys typed into a secret': 'line-edit 20-stars-stay-five',
+    'break key: line: the line sent not kept for Up': 'line-edit 14-up-brings-it-back',
+    'break key: line: Down losing what was typed': 'line-edit 18-down-the-draft-again',
+    'break key: line: Up while the kernel asks a question of its own': 'line-restart-2 4-up-during-the-name-question',
+    'break key: line: the kept line not read for Up at a start': 'line-restart-2 3-up-brings-it-back',
+    'break key: line: the kept line said cut at 50': 'line-restart-2 2-said-again-whole',
     'break look: the panel not painted again': 'pick-1 1-name-question',
     'break look: the background not painted again': 'pick-1 1-name-question',
     "break look: the panel's text not remembered": 'pick-1 1-name-question',
