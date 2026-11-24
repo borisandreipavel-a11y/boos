@@ -543,7 +543,9 @@ def scenario_forgetting():
     got = [line for line in shown_since(run, shown) if not line.startswith("Tokens:")]
     meant = chat.said[before:]
     report("forgetting setup while an answer is awaited", got == meant, None if got == meant else "got %r, meant %r" % (got, meant))
-    # The rest of `setup`: the name stays (Enter alone), the locked key stays (Enter alone), the first look stays.
+    # The rest of `setup`: the name stays (Enter alone), the provider stays (Enter alone), the locked key stays (Enter
+    # alone), the first look stays.
+    steps("\n", "Enter alone keeps OrcaRouter", "setup asks for the provider")
     steps("\n", "Enter alone keeps the one locked", "setup asks for a key")
     steps("\n", "Kernel: pick a look by number", "setup asks for a look")
     steps("\n", "Type a line and press Enter.", "setup is over")
