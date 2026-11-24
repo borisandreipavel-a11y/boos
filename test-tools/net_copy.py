@@ -7,6 +7,10 @@ real project.
 `roots` names the test authorities (folders under tls/) whose roots are added to the kernel's list; an empty
 list leaves the kernel's own 112. The copy also prints a digest of everything that arrived through the link.
 
+With BOOS_PROVIDER=anthropic, every line of the copy goes to Anthropic (suites.py, "... with Anthropic"): a notebook
+without a word about the provider means Anthropic, and Anthropic's key is kept under OrcaRouter's name, so that the
+disks and the steps of the tests made for OrcaRouter serve as they are.
+
 The copy lies in BOOS_COPIES when that is set (run_tests.py shares one copy among the tests it runs at once), and in
 this checkout's work folder otherwise. It is changed and built in the build turn (turns.py), and the kernel that
 build() gives back is a copy of its own in the test's work folder, so the next build cannot change it."""
@@ -88,6 +92,14 @@ def _build(port, roots, more, redirect):
                     "    let test_roots: &[&[u8]] = &[%s]; // TEST: never in the real project\n" % files +
                     "    for der in test_roots {\n        roots.add(rustls::pki_types::CertificateDer::from(*der)).expect(\"a test root\");\n    }\n    roots\n")
     open(path, "w", newline="").write(code)
+    if os.environ.get("BOOS_PROVIDER") == "anthropic":
+        path = os.path.join(COPY, "src", "onboarding.rs")
+        code = open(path, "rb").read().decode().replace("\r\n", "\n")
+        code = swap(code, "static mut PROVIDER: Provider = Provider::OrcaRouter;\n", "static mut PROVIDER: Provider = Provider::Anthropic; // TEST\n")
+        code = swap(code, "        Ok(Some(kept)) if kept == ANTHROPIC_KEPT => Provider::Anthropic,\n        _ => Provider::OrcaRouter,\n",
+                    "        Ok(Some(kept)) if kept == ORCAROUTER_KEPT => Provider::OrcaRouter, // TEST\n        _ => Provider::Anthropic,\n")
+        code = swap(code, "        Provider::Anthropic => ANTHROPIC_KEY_ENTRY,\n", "        Provider::Anthropic => KEY_ENTRY, // TEST\n")
+        open(path, "w", newline="").write(code)
     if more:
         for name, change in more.items():
             if name in ("page", "interpreter"):

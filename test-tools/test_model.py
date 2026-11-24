@@ -8,7 +8,8 @@ Usage: python test_model.py <behaviour,behaviour,...> [dump] [pieces]
 With `dump`, the machine's memory is searched for the made-up key after the last answer. The stand-in answers whole,
 though a line asks for its answer piece by piece; with `pieces`, it sends a good answer piece by piece, and the rows
 meant are the same.
-Environment: BREAK (a break on purpose from model_breaks.py), RAW (print the raw answer)."""
+Environment: BREAK (a break on purpose from model_breaks.py), RAW (print the raw answer), BOOS_PROVIDER ("anthropic":
+every line goes to Anthropic, in Anthropic's form; see the end of MEANT)."""
 import json
 import os
 import subprocess
@@ -133,6 +134,13 @@ MEANT = {
     "upstream": K("the provider could not answer (502): %s." % W("All upstream providers failed")),
     "upstreambare": K("the provider could not answer (503), and I could not read why."),
 }
+# With BOOS_PROVIDER=anthropic the stand-in copy's kernel sends every line to Anthropic, in Anthropic's form
+# (net_copy.py), and the stand-in answers each behaviour in that form (anthropic_cases.py). The rows meant are the same,
+# but where the provider stops an answer: Anthropic says that its checks stopped it ("refusal"), where OrcaRouter says
+# that it held the answer back ("content_filter").
+if os.environ.get("BOOS_PROVIDER") == "anthropic":
+    MEANT["filtered"] = K("the model's answer was empty, because the provider's checks stopped it.")
+    MEANT["filteredwords"] = M("Hello", "the provider's checks stopped the model's answer.")
 
 
 def press(machine, chat, text):

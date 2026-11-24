@@ -1,14 +1,16 @@
 //! The onboarding: what the kernel asks the person at the machine at a start
 //! where it does not know them yet, and what it asks at every start after
-//! that. It asks two things itself: what to call them, and the key for the model,
-//! which is locked with a password they choose (see `lock.rs`). A key that is
-//! typed is first tried with one question to the model, and asked for again
-//! if the provider does not know it. Both answers are kept in the notebook on
-//! the disk, the name as it was given and the key only locked. The name
-//! stands in front of the person's rows in the chat box, and every later
-//! start greets them by it. A start where a key is locked on the disk asks
-//! for the password, which unlocks it. The line `setup`, sent by itself,
-//! brings the first look back at once and asks both things again. When the
+//! that. It asks three things itself: what to call them, which provider their
+//! lines go to (OrcaRouter or Anthropic), and that provider's key, which is
+//! locked with a password they choose (see `lock.rs`). A key that is typed is
+//! first tried with one question to the model, and asked for again if the
+//! provider does not know it. The answers are kept in the notebook on the
+//! disk, the name as it was given, the provider by its name, and each
+//! provider's key only locked, under a name of its own. The name stands in
+//! front of the person's rows in the chat box, and every later start greets
+//! them by it. A start where the chosen provider's key is locked on the disk
+//! asks for the password, which unlocks it. The line `setup`, sent by itself,
+//! brings the first look back at once and asks all three again. When the
 //! questions about the key are over, the question for the look follows, if
 //! the notebook holds no answer about the look yet, and always after `setup`
 //! (see `look.rs`).
@@ -23,10 +25,12 @@ use alloc::vec::Vec;
 use crate::errand::{Errand, errand_ask};
 use crate::lock::NOT_UNLOCKED;
 use crate::look::{look_due, look_question, look_reset, look_reset_trouble};
-use crate::model::KeyVerdict;
+use crate::model::{KeyVerdict, Provider};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::random::random_number;
-use crate::secret::{password_forget, password_keep, password_same, secret_lock, secret_unlock, trial_forget, trial_keep, trial_take};
+use crate::secret::{
+    password_forget, password_keep, password_same, secret_forget, secret_length, secret_lock, secret_unlock, trial_forget, trial_keep, trial_take,
+};
 
 // The line that, sent by itself, makes the kernel ask its questions again.
 pub const SETUP_WORD: &str = "setup";
@@ -43,25 +47,37 @@ pub const NAME_LIMIT: usize = 20;
 // What stands in front of the person's rows while no name was given.
 const NO_NAME: &str = "You";
 
-// The name under which the locked key is kept in the notebook. An entry that
-// holds no signs means that the question for the key was answered without
-// one, so that later starts do not ask it again.
+// The names under which each provider's locked key is kept in the notebook.
+// An entry that holds no signs means that the question for that key was
+// answered without one, so that later starts do not ask it again. OrcaRouter's
+// keeps the name it had before there was a second provider, so that a disk
+// from then works as it did.
 const KEY_ENTRY: &str = "locked key";
+const ANTHROPIC_KEY_ENTRY: &str = "locked key anthropic";
+
+// The name under which the choice of provider is kept in the notebook, and
+// what it holds: the provider's name in small letters. No entry, or one that
+// holds anything else, means OrcaRouter, the provider of every disk from
+// before the question was asked.
+const PROVIDER_ENTRY: &str = "provider";
+const ORCAROUTER_KEPT: &[u8] = b"orcarouter";
+const ANTHROPIC_KEPT: &[u8] = b"anthropic";
 
 // The fewest signs a password may have. The password is meant to keep out
 // somebody who uses the machine, not somebody who has a copy of the disk
 // (see docs/open-points.md).
 pub const PASSWORD_LEAST: usize = 4;
 
-// What the kernel waits for. While it waits for a name, the next line that
-// is sent is the name. While it waits for a key or a password, what is typed
-// shows as stars, and Enter hands it to `onboarding_secret`. While it waits
-// for the provider's answer to the try of a key (`Trying`), nothing typed is
-// taken.
+// What the kernel waits for. While it waits for a name or for the choice of
+// provider, the next line that is sent is the answer. While it waits for a
+// key or a password, what is typed shows as stars, and Enter hands it to
+// `onboarding_secret`. While it waits for the provider's answer to the try of
+// a key (`Trying`), nothing typed is taken.
 #[derive(Clone, Copy, PartialEq)]
 enum Waiting {
     Nothing,
     Name,
+    Provider,
     Key,
     Trying,
     NewPassword,
@@ -71,15 +87,19 @@ enum Waiting {
 
 // The name that was given (empty while none was); what the kernel waits for;
 // whether the notebook holds a name, and an answer to the question for the
-// key; the locked key it holds (empty if none); and whether the questions are
-// asked again because of `setup`. Nothing protects these against a second
-// task, so only the main loop may touch them.
+// key of the provider in use; the locked key it holds for that provider
+// (empty if none); whether the questions are asked again because of `setup`;
+// the provider the person's lines go to; and whether it was changed by the
+// questions under way. Nothing protects these against a second task, so only
+// the main loop may touch them.
 static mut NAME: String = String::new();
 static mut WAITING: Waiting = Waiting::Nothing;
 static mut NAME_KEPT: bool = false;
 static mut KEY_ANSWERED: bool = false;
 static mut LOCKED: Vec<u8> = Vec::new();
 static mut SETTING_UP: bool = false;
+static mut PROVIDER: Provider = Provider::OrcaRouter;
+static mut SWITCHED: bool = false;
 
 // The words that say that the chat box is free again: at the end of a row, or
 // as a row of their own.
@@ -97,6 +117,12 @@ const KEY_WHY: &str = "Kernel: to ask the model I need your key. I lock it with 
 const KEY_QUESTION: &str = "Kernel: type the key and press Enter. It shows as stars. Enter alone goes on without a key.";
 const KEY_QUESTION_AGAIN: &str = "Kernel: type a new key and press Enter. Enter alone keeps the one locked on the disk.";
 const PASSWORD_QUESTION: &str = "Kernel: type your password and press Enter to unlock the key. Enter alone goes on without it.";
+const ANTHROPIC_PASSWORD_QUESTION: &str = "Kernel: type your password and press Enter to unlock the Anthropic key. Enter alone goes on without it.";
+
+// The question for the provider, which names each one's site: choosing one
+// is the person's yes to the kernel's asking that site, which it does at
+// once, to try the key typed next.
+const PROVIDER_QUESTION: &str = "Kernel: your lines go to 1 OrcaRouter (api.orcarouter.ai) or 2 Anthropic (api.anthropic.com).";
 
 // What the kernel says about the try of a key, when the provider's answer
 // does not say whether the key is right, and while the try is under way.
@@ -134,6 +160,7 @@ fn finish(mut rows: Vec<String>) -> Vec<String> {
     unsafe {
         WAITING = Waiting::Nothing;
         SETTING_UP = false;
+        SWITCHED = false;
     }
     let mut trouble = look_reset_trouble();
     if look_due(setting_up) {
@@ -171,10 +198,32 @@ pub fn person_name() -> String {
     if given.is_empty() { String::from(NO_NAME) } else { given.clone() }
 }
 
-// Whether the kernel waits for a name. While it does, the next line that is
-// sent is that name.
+// Whether the kernel waits for a name or for the choice of provider. While it
+// does, the next line that is sent is the answer.
 pub fn onboarding_asking() -> bool {
-    waiting() == Waiting::Name
+    matches!(waiting(), Waiting::Name | Waiting::Provider)
+}
+
+// The provider the person's lines go to: the one chosen at the onboarding,
+// or OrcaRouter if none was. A key typed after the line `key` belongs to it.
+pub fn provider_in_use() -> Provider {
+    unsafe { PROVIDER }
+}
+
+// The provider the notebook holds, read from the disk.
+fn provider_kept() -> Provider {
+    match notebook_find(PROVIDER_ENTRY) {
+        Ok(Some(kept)) if kept == ANTHROPIC_KEPT => Provider::Anthropic,
+        _ => Provider::OrcaRouter,
+    }
+}
+
+// The name under which the provider in use keeps its locked key.
+fn key_entry() -> &'static str {
+    match provider_in_use() {
+        Provider::OrcaRouter => KEY_ENTRY,
+        Provider::Anthropic => ANTHROPIC_KEY_ENTRY,
+    }
 }
 
 // Whether the kernel waits for a key or a password, or for the answer to the
@@ -220,7 +269,7 @@ enum KeyKept {
 }
 
 fn key_kept() -> KeyKept {
-    match notebook_find(KEY_ENTRY) {
+    match notebook_find(key_entry()) {
         Ok(Some(locked)) if !locked.is_empty() => KeyKept::Locked(locked),
         Ok(Some(_)) => KeyKept::NoKey,
         Ok(None) => KeyKept::Nothing,
@@ -245,8 +294,10 @@ fn more_follows() -> bool {
 // notebook holds a name, a greeting by it, and then what it asks about the
 // key; if it holds none, the question for the name. Gives back nothing when
 // there is nothing to say: no name was kept, none could be, and no key is
-// locked on the disk.
+// locked on the disk. The provider the notebook holds is the one in use from
+// here on.
 pub fn onboarding_begin() -> Vec<String> {
+    unsafe { PROVIDER = provider_kept() };
     match notebook_find(NAME_ENTRY) {
         Ok(Some(kept)) => {
             *name() = name_clean(&kept);
@@ -291,11 +342,13 @@ fn then_key(mut rows: Vec<String>) -> Vec<String> {
 }
 
 // What the kernel asks about the key, after the name. At a start: the
-// password if a key is locked on the disk, nothing if the notebook says that
-// no key is wanted, and otherwise the key. After `setup`: the key. A key is
-// asked for only if it can be locked and kept: the notebook can be added to,
-// and the machine can make random numbers. When nothing is asked about the
-// key, the question for the look may follow (see `finish`).
+// password if the provider in use has a key locked on the disk, nothing if
+// the notebook says that no key is wanted for it, and otherwise the key. After
+// `setup`: the key. A key is asked for only if it can be locked and kept: the
+// notebook can be added to, and the machine can make random numbers; and
+// whenever the key is asked for, the question for the provider comes first,
+// since the key belongs to the provider chosen. When nothing is asked about
+// the key, the question for the look may follow (see `finish`).
 fn key_rows() -> Vec<String> {
     let setting_up = unsafe { SETTING_UP };
     let mut rows = Vec::new();
@@ -305,7 +358,7 @@ fn key_rows() -> Vec<String> {
             unsafe { KEY_ANSWERED = true };
             if !setting_up {
                 wait_for(Waiting::Password);
-                rows.push(String::from(PASSWORD_QUESTION));
+                rows.push(password_question());
                 return rows;
             }
         }
@@ -326,7 +379,45 @@ fn key_rows() -> Vec<String> {
         rows.push(String::from("Kernel: send \"key\" for a key that lasts until the machine is switched off."));
         return finish(rows);
     }
+    wait_for(Waiting::Provider);
+    rows.extend(provider_question());
+    rows
+}
+
+// The question for the provider: which one, by number, and that Enter alone
+// keeps the one in use.
+fn provider_question() -> Vec<String> {
+    vec![
+        String::from(PROVIDER_QUESTION),
+        format!("Kernel: type 1 or 2 and press Enter. Enter alone keeps {}.", provider_in_use().named()),
+    ]
+}
+
+// Takes the answer to the question for the provider: 1, 2, or nothing, which
+// keeps the one in use. The choice is kept in the notebook when it differs
+// from what the notebook holds. Gives back what the kernel says to it, and the
+// question for the key of the provider chosen.
+fn provider_answer(line: &str) -> Vec<String> {
+    let chosen = match line.trim() {
+        "" => provider_in_use(),
+        "1" => Provider::OrcaRouter,
+        "2" => Provider::Anthropic,
+        _ => return vec![format!("Kernel: that is not 1 or 2. Type 1 or 2, or Enter alone to keep {}.", provider_in_use().named())],
+    };
+    let mut said = format!("Kernel: your lines go to {}.", chosen.named());
+    if chosen != provider_kept() {
+        let kept = match chosen {
+            Provider::OrcaRouter => ORCAROUTER_KEPT,
+            Provider::Anthropic => ANTHROPIC_KEPT,
+        };
+        if let Err(reason) = notebook_keep(PROVIDER_ENTRY, kept) {
+            said = format!("Kernel: your lines go to {}, but I could not keep that, because {}, so it lasts only until the machine is switched off.", chosen.named(), reason);
+        }
+    }
+    provider_use(chosen);
+    let mut rows = vec![said];
     wait_for(Waiting::Key);
+    let setting_up = unsafe { SETTING_UP };
     if !(setting_up && !locked_key().is_empty()) {
         rows.push(String::from(KEY_WHY));
     }
@@ -334,11 +425,42 @@ fn key_rows() -> Vec<String> {
     rows
 }
 
+// The provider chosen becomes the one in use. When it is another than before,
+// the key in memory, which belongs to the one before, is wiped at once, so
+// that it can never go to the new one's site. What the notebook holds about
+// the chosen provider's key is read again.
+fn provider_use(chosen: Provider) {
+    if chosen != provider_in_use() {
+        secret_forget();
+        unsafe {
+            PROVIDER = chosen;
+            SWITCHED = true;
+        }
+    }
+    let (locked, answered) = match key_kept() {
+        KeyKept::Locked(locked) => (locked, true),
+        KeyKept::NoKey => (Vec::new(), true),
+        KeyKept::Nothing | KeyKept::Unreadable(_) => (Vec::new(), false),
+    };
+    *locked_key() = locked;
+    unsafe { KEY_ANSWERED = answered };
+}
+
 // The question for the key: after `setup` with a key locked on the disk,
 // Enter alone keeps that one; otherwise it goes on without a key.
 fn key_question() -> String {
     let setting_up = unsafe { SETTING_UP };
     String::from(if setting_up && !locked_key().is_empty() { KEY_QUESTION_AGAIN } else { KEY_QUESTION })
+}
+
+// The question for the password that unlocks the key locked on the disk for
+// the provider in use. OrcaRouter's says "the key", as it did before there was
+// a second provider.
+fn password_question() -> String {
+    String::from(match provider_in_use() {
+        Provider::OrcaRouter => PASSWORD_QUESTION,
+        Provider::Anthropic => ANTHROPIC_PASSWORD_QUESTION,
+    })
 }
 
 // The row that asks for a password to lock the key with.
@@ -357,10 +479,14 @@ pub fn onboarding_again() -> String {
     question()
 }
 
-// Takes the answer to the question for the name: the line that was sent,
-// which may be empty. Keeps it in the notebook, and gives back what the
-// kernel says to it, and what it asks next about the key.
+// Takes the answer to the question for the name, or for the provider: the
+// line that was sent, which may be empty. Keeps the name in the notebook, and
+// gives back what the kernel says to it, and what it asks next about the
+// provider and the key.
 pub fn onboarding_answer(line: &str) -> Vec<String> {
+    if waiting() == Waiting::Provider {
+        return provider_answer(line);
+    }
     wait_for(Waiting::Nothing);
 
     // Spaces at either end do not count, and a line of nothing else is no
@@ -406,27 +532,34 @@ pub fn onboarding_secret(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String>
         Waiting::NewPassword => new_password(typed),
         Waiting::SamePassword => same_password(typed, say),
         Waiting::Password => password_answer(typed, say),
-        Waiting::Nothing | Waiting::Name => Vec::new(),
+        Waiting::Nothing | Waiting::Name | Waiting::Provider => Vec::new(),
     }
 }
 
 // The answer to the question for the key. A key that is typed is tried with
-// the model's one fixed question (`model_tell`): it waits apart from the key
-// kept before (see `secret.rs`), and the network's task asks the model with
-// it. Its answer comes later, to `onboarding_tried`. A key that cannot be tried now
-// is kept all the same, and a password to lock it with is asked for. Enter
-// alone keeps a key that is locked on the disk as it is, or else notes that
-// no key is wanted.
+// the model's one fixed question (`model_tell`), at the site of the provider
+// chosen: it waits apart from the key kept before (see `secret.rs`), and the
+// network's task asks the model with it. Its answer comes later, to
+// `onboarding_tried`. A key that cannot be tried now is kept all the same, and
+// a password to lock it with is asked for. Enter alone keeps a key that is
+// locked on the disk for the provider chosen as it is, or else notes that no
+// key is wanted. When the provider was changed just before, the key in memory
+// was wiped, so the locked key is unlocked with its password at once, as at a
+// start, for the person's lines to go on without a restart.
 fn key_answer(typed: &[u8]) -> Vec<String> {
     if typed.is_empty() {
         if !locked_key().is_empty() {
+            if unsafe { SWITCHED } && secret_length() == 0 {
+                wait_for(Waiting::Password);
+                return vec![password_question()];
+            }
             return finish(vec![String::from("Kernel: the key locked on the disk stays as it was. Type a line and press Enter.")]);
         }
         let mut rows = vec![String::from("Kernel: then no key is kept. Send \"setup\" to give one later. Type a line and press Enter.")];
         rows.extend(no_key_noted());
         return finish(rows);
     }
-    let taken = trial_keep(typed);
+    let taken = trial_keep(typed, provider_in_use());
     let signs = if taken == 1 { "sign" } else { "signs" };
     match errand_ask(Errand::KeyTry) {
         Ok(()) => {
@@ -488,7 +621,7 @@ fn no_key_noted() -> Vec<String> {
     if unsafe { KEY_ANSWERED } {
         return Vec::new();
     }
-    match notebook_keep(KEY_ENTRY, &[]) {
+    match notebook_keep(key_entry(), &[]) {
         Ok(()) => {
             unsafe { KEY_ANSWERED = true };
             Vec::new()
@@ -542,7 +675,7 @@ fn same_password(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
     let locked = secret_lock();
     password_forget();
     let rows = match locked {
-        Ok(locked) => match notebook_keep(KEY_ENTRY, &locked) {
+        Ok(locked) => match notebook_keep(key_entry(), &locked) {
             Ok(()) => {
                 *locked_key() = locked;
                 unsafe { KEY_ANSWERED = true };
@@ -567,7 +700,7 @@ fn password_answer(typed: &[u8], say: &mut dyn FnMut(&str)) -> Vec<String> {
         return finish(vec![String::from("Kernel: going on without the key. Send \"setup\" to lock a new one. Type a line and press Enter.")]);
     }
     say("Kernel: unlocking the key. This takes a second or two.");
-    match secret_unlock(typed, locked_key()) {
+    match secret_unlock(typed, locked_key(), provider_in_use()) {
         Ok(_) => finish(vec![String::from("Kernel: the key is unlocked, so your lines go to the model. Type a line and press Enter.")]),
         Err(reason) if reason == NOT_UNLOCKED => vec![
             String::from("Kernel: the key could not be unlocked: the password is wrong, or the locked key was changed."),

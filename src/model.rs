@@ -7,10 +7,13 @@
 //! `apps.rs`); or the one fixed question, with which a key typed at the
 //! onboarding is tried. The provider wants a key with every question, which
 //! is the secret that the person at the machine typed. This is the one file
-//! that may borrow that secret, and it sends it to one site only, over an
-//! encrypted link. The answer to a line is asked for piece by piece, as the
-//! model writes it, and what of its words has come is handed on as it comes
-//! (see `errand.rs`); every other answer is collected whole.
+//! that may borrow that secret, and it sends it only to the site of the
+//! provider it belongs to, over an encrypted link. There are two providers,
+//! OrcaRouter and Anthropic, one in use at a time (see `onboarding.rs`); each
+//! has a form of its own for the question and the answer. The answer to a
+//! line is asked for piece by piece, as the model writes it, and what of its
+//! words has come is handed on as it comes (see `errand.rs`); every other
+//! answer is collected whole.
 //! Notes: `docs/model.md`, `docs/tools.md`, `docs/apps.md`.
 
 use alloc::format;
@@ -25,18 +28,59 @@ use smoltcp::wire::Ipv4Address;
 use crate::apps::{APP_INSTRUCTIONS, APP_LEAD, app_script};
 use crate::errand::errand_grow;
 use crate::json::{NOT_A_TEXT, NOT_THERE, Step, json_find_number, json_find_text, json_text};
-use crate::tools::{AGAIN_LEAD, CHAT_INSTRUCTIONS, LAST_ASK, RECORD_LEAD};
+use crate::tools::{AGAIN_LEAD, CHAT_INSTRUCTIONS, LAST_ASK, RECORD_LEAD, tools_anthropic};
 use crate::network::Card;
 use crate::page::{Head, HeadRead, HeadReader, Waits, plain_text, site_exchange};
 use crate::secret::{SECRET_LIMIT, secret_lend, trial_lend, wipe};
 use crate::timer::{TICKS, TICKS_PER_SECOND};
 
-// The provider's site, and the place on it where questions go.
+// The first provider's site, and the place on it where questions go.
 pub const MODEL_SITE: &str = "api.orcarouter.ai";
 const MODEL_PATH: &str = "/v1/chat/completions";
 
-// The model that is asked, by the name the provider knows it by.
+// The model that is asked there, by the name the provider knows it by.
 const MODEL_NAME: &str = "deepseek/deepseek-v4.1-flash-1017";
+
+// The second provider, Anthropic: its site, the place on it where questions
+// go, the model that is asked there, and the version of its form of question
+// and answer, which every question must name (from its documentation, read
+// in November 2026).
+pub const ANTHROPIC_SITE: &str = "api.anthropic.com";
+const ANTHROPIC_PATH: &str = "/v1/messages";
+const ANTHROPIC_MODEL: &str = "claude-haiku-5-5";
+const ANTHROPIC_VERSION: &str = "2026-10-21";
+
+// The providers the kernel can ask. Each has a site, a form of question and of
+// answer, and a key of its own; one is in use at a time, and a key goes only
+// to the site of the provider it belongs to (see `secret.rs`).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Provider {
+    // OrcaRouter, which passes questions on to many models, in the form many
+    // providers share ("chat completions").
+    OrcaRouter,
+    // Anthropic, which makes the model it is asked about, in a form of its own
+    // ("messages").
+    Anthropic,
+}
+
+impl Provider {
+    // The provider's site: where its questions go, and the name its
+    // certificate must be made out to.
+    pub fn site(self) -> &'static str {
+        match self {
+            Provider::OrcaRouter => MODEL_SITE,
+            Provider::Anthropic => ANTHROPIC_SITE,
+        }
+    }
+
+    // The provider's name, as the kernel says it.
+    pub fn named(self) -> &'static str {
+        match self {
+            Provider::OrcaRouter => "OrcaRouter",
+            Provider::Anthropic => "Anthropic",
+        }
+    }
+}
 
 // The one fixed question, with which a key typed at the onboarding is tried.
 pub const QUESTION: &str = "Say hello in five words.";
@@ -144,13 +188,15 @@ pub fn model_tell(
     // copy serves the whole asking: it goes into the request, and it is what
     // is looked for in the answer afterwards. Borrowing is short that way,
     // and a new key typed while the answer is awaited changes nothing about
-    // this asking. The room is wiped before this function ends.
+    // this asking. The provider the key belongs to comes with it, in the same
+    // moment, and decides where the question goes and in which form. The room
+    // is wiped before this function ends.
     let mut key_room = [0u8; SECRET_LIMIT];
-    let key_length = key_copy(trying, &mut key_room);
+    let (provider, key_length) = key_copy(trying, &mut key_room);
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), KeyVerdict::NotTold)
     } else {
-        question_ask(interface, card, sockets, name_server, &key_room[..key_length])
+        question_ask(interface, card, sockets, name_server, provider, &key_room[..key_length])
     };
     wipe(&mut key_room);
     told
@@ -184,11 +230,11 @@ pub fn model_chat(
     done: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
-    let key_length = key_copy(false, &mut key_room);
+    let (provider, key_length) = key_copy(false, &mut key_room);
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), None, None, None)
     } else {
-        chat_question_ask(interface, card, sockets, name_server, &key_room[..key_length], line, tools, record, document, done)
+        chat_question_ask(interface, card, sockets, name_server, provider, &key_room[..key_length], line, tools, record, document, done)
     };
     wipe(&mut key_room);
     told
@@ -211,22 +257,25 @@ pub fn model_app(
     wanted: &str,
 ) -> (String, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
-    let key_length = key_copy(false, &mut key_room);
+    let (provider, key_length) = key_copy(false, &mut key_room);
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), None, None)
     } else {
-        app_question_ask(interface, card, sockets, name_server, &key_room[..key_length], wanted)
+        app_question_ask(interface, card, sockets, name_server, provider, &key_room[..key_length], wanted)
     };
     wipe(&mut key_room);
     told
 }
 
-// Borrows the key into `room`, a room of the caller's own, and says how many
-// signs it has: none when no key is kept. With `trying`, the key is the one
-// being tried at the onboarding. The caller wipes the room when it is done.
-fn key_copy(trying: bool, room: &mut [u8; SECRET_LIMIT]) -> usize {
+// Borrows the key into `room`, a room of the caller's own, and says which
+// provider it belongs to and how many signs it has: none when no key is kept.
+// With `trying`, the key is the one being tried at the onboarding. The caller
+// wipes the room when it is done.
+fn key_copy(trying: bool, room: &mut [u8; SECRET_LIMIT]) -> (Provider, usize) {
     let mut length = 0;
-    let mut borrower = |key: &[u8]| {
+    let mut owner = Provider::OrcaRouter;
+    let mut borrower = |provider: Provider, key: &[u8]| {
+        owner = provider;
         length = key.len().min(SECRET_LIMIT);
         room[..length].copy_from_slice(&key[..length]);
     };
@@ -235,7 +284,7 @@ fn key_copy(trying: bool, room: &mut [u8; SECRET_LIMIT]) -> usize {
     } else {
         secret_lend(&KeyPass(()), &mut borrower);
     }
-    length
+    (owner, length)
 }
 
 // The fixed question, with the key in hand.
@@ -244,21 +293,31 @@ fn question_ask(
     card: &mut Card,
     sockets: &mut SocketSet,
     name_server: Option<Ipv4Address>,
+    provider: Provider,
     key: &[u8],
 ) -> (String, KeyVerdict) {
     // What is asked, the JSON way. `json_text` puts each text in quotes and
     // takes care of signs that have a meaning of their own in JSON.
     // `"stream":false` asks for the whole answer in one piece, not word by
-    // word as it is written.
-    let body = format!(
-        "{{\"model\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
-        json_text(MODEL_NAME),
-        json_text(QUESTION),
-        ANSWER_TOKENS
-    );
-    match provider_exchange(interface, card, sockets, name_server, key, &body, None) {
+    // word as it is written. Anthropic's form names the longest answer first;
+    // the question is the same.
+    let body = match provider {
+        Provider::OrcaRouter => format!(
+            "{{\"model\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
+            json_text(MODEL_NAME),
+            json_text(QUESTION),
+            ANSWER_TOKENS
+        ),
+        Provider::Anthropic => format!(
+            "{{\"model\":{},\"max_tokens\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}],\"stream\":false}}",
+            json_text(ANTHROPIC_MODEL),
+            ANSWER_TOKENS,
+            json_text(QUESTION)
+        ),
+    };
+    match provider_exchange(interface, card, sockets, name_server, provider, key, &body, None) {
         Err(sentence) => (sentence, KeyVerdict::NotTold),
-        Ok((answer, whole)) => answer_sentence(&answer, whole, key),
+        Ok((answer, whole)) => answer_sentence(provider, &answer, whole, key),
     }
 }
 
@@ -278,11 +337,16 @@ fn question_ask(
 // writes it ("stream"), with the tokens it took in its last piece
 // ("include_usage"), and read so as it comes (see "Reading an answer piece by
 // piece" below); an answer that comes whole all the same is read as before.
+// Anthropic's form holds the same texts in other places: the instruction text
+// is its own part ("system") beside one message, the line; each tool is
+// written in its form (`tools_anthropic`); and its answer always comes with the
+// tokens it took.
 fn chat_question_ask(
     interface: &mut Interface,
     card: &mut Card,
     sockets: &mut SocketSet,
     name_server: Option<Ipv4Address>,
+    provider: Provider,
     key: &[u8],
     line: &str,
     tools: &str,
@@ -305,22 +369,44 @@ fn chat_question_ask(
         told.push_str(AGAIN_LEAD);
         told.push_str(&key_starred(done, key));
     }
+    let tools = match provider {
+        Provider::OrcaRouter => Some(String::from(tools)),
+        Provider::Anthropic if tools.is_empty() => Some(String::new()),
+        Provider::Anthropic => tools_anthropic(tools),
+    };
+    // The list of tools is the kernel's own, written by `chat_tools`; one that
+    // cannot be put into Anthropic's form is a mistake in the kernel, and is
+    // said as such rather than sent.
+    let Some(tools) = tools else {
+        let sentence = "no answer came, because I could not put the list of tools into the provider's form";
+        return (String::from(sentence), None, None, Some(sent));
+    };
     let offered = if tools.is_empty() {
         told.push_str(LAST_ASK);
         String::new()
     } else {
         format!(",\"tools\":{}", tools)
     };
-    let body = format!(
-        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]{},\"max_tokens\":{},\"stream\":true,\"stream_options\":{{\"include_usage\":true}}}}",
-        json_text(MODEL_NAME),
-        json_text(&told),
-        json_text(&sent),
-        offered,
-        LINE_TOKENS
-    );
-    let mut stream = Stream::new();
-    let exchanged = provider_exchange(interface, card, sockets, name_server, key, &body, Some(&mut stream));
+    let body = match provider {
+        Provider::OrcaRouter => format!(
+            "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}]{},\"max_tokens\":{},\"stream\":true,\"stream_options\":{{\"include_usage\":true}}}}",
+            json_text(MODEL_NAME),
+            json_text(&told),
+            json_text(&sent),
+            offered,
+            LINE_TOKENS
+        ),
+        Provider::Anthropic => format!(
+            "{{\"model\":{},\"max_tokens\":{},\"system\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}]{},\"stream\":true}}",
+            json_text(ANTHROPIC_MODEL),
+            LINE_TOKENS,
+            json_text(&told),
+            json_text(&sent),
+            offered
+        ),
+    };
+    let mut stream = Stream::new(provider);
+    let exchanged = provider_exchange(interface, card, sockets, name_server, provider, key, &body, Some(&mut stream));
     if stream.chunked {
         let sentence = "no answer came that I could read, because the provider sent its answer in pieces with their lengths in between (\"chunked\"), which it should not for this kind of request";
         return (String::from(sentence), None, None, Some(sent));
@@ -332,8 +418,8 @@ fn chat_question_ask(
     match exchanged {
         Err(sentence) => (sentence, None, None, Some(sent)),
         Ok((answer, whole)) => {
-            let (sentence, reply) = chat_reply(&answer, whole, key);
-            (sentence, reply, answer_tokens(&answer), Some(sent))
+            let (sentence, reply) = chat_reply(provider, &answer, whole, key);
+            (sentence, reply, answer_tokens(provider, &answer), Some(sent))
         }
     }
 }
@@ -356,7 +442,7 @@ fn key_starred(text: &str, key: &[u8]) -> String {
 // together. The key is borrowed as for a question, and wiped after.
 pub fn key_starred_kept(text: &str) -> String {
     let mut key_room = [0u8; SECRET_LIMIT];
-    let key_length = key_copy(false, &mut key_room);
+    let (_, key_length) = key_copy(false, &mut key_room);
     let starred = key_starred(text, &key_room[..key_length]);
     wipe(&mut key_room);
     starred
@@ -371,21 +457,31 @@ fn app_question_ask(
     card: &mut Card,
     sockets: &mut SocketSet,
     name_server: Option<Ipv4Address>,
+    provider: Provider,
     key: &[u8],
     wanted: &str,
 ) -> (String, Option<String>, Option<String>) {
-    let body = format!(
-        "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
-        json_text(MODEL_NAME),
-        json_text(APP_INSTRUCTIONS),
-        json_text(&format!("{}{}", APP_LEAD, wanted)),
-        APP_TOKENS
-    );
-    match provider_exchange(interface, card, sockets, name_server, key, &body, None) {
+    let body = match provider {
+        Provider::OrcaRouter => format!(
+            "{{\"model\":{},\"messages\":[{{\"role\":\"system\",\"content\":{}}},{{\"role\":\"user\",\"content\":{}}}],\"max_tokens\":{},\"stream\":false}}",
+            json_text(MODEL_NAME),
+            json_text(APP_INSTRUCTIONS),
+            json_text(&format!("{}{}", APP_LEAD, wanted)),
+            APP_TOKENS
+        ),
+        Provider::Anthropic => format!(
+            "{{\"model\":{},\"max_tokens\":{},\"system\":{},\"messages\":[{{\"role\":\"user\",\"content\":{}}}],\"stream\":false}}",
+            json_text(ANTHROPIC_MODEL),
+            APP_TOKENS,
+            json_text(APP_INSTRUCTIONS),
+            json_text(&format!("{}{}", APP_LEAD, wanted))
+        ),
+    };
+    match provider_exchange(interface, card, sockets, name_server, provider, key, &body, None) {
         Err(sentence) => (sentence, None, None),
         Ok((answer, whole)) => {
-            let (sentence, script) = app_sentence(&answer, whole, key);
-            (sentence, script, answer_tokens(&answer))
+            let (sentence, script) = app_sentence(provider, &answer, whole, key);
+            (sentence, script, answer_tokens(provider, &answer))
         }
     }
 }
@@ -402,6 +498,7 @@ fn provider_exchange(
     card: &mut Card,
     sockets: &mut SocketSet,
     name_server: Option<Ipv4Address>,
+    provider: Provider,
     key: &[u8],
     body: &str,
     mut stream: Option<&mut Stream>,
@@ -410,13 +507,24 @@ fn provider_exchange(
     // the place named behind it. Then come lines of notes: which site is
     // meant, what form the body has, how many bytes long it is, that the
     // connection may be closed after the answer, and the key. An empty line
-    // ends the notes, and the body follows.
-    let head = format!(
-        "POST {} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAuthorization: Bearer ",
-        MODEL_PATH,
-        MODEL_SITE,
-        body.len()
-    );
+    // ends the notes, and the body follows. OrcaRouter takes the key in the
+    // note `Authorization`; Anthropic in a note of its own, `x-api-key`, after
+    // the version of its form, which every question to it must name.
+    let head = match provider {
+        Provider::OrcaRouter => format!(
+            "POST {} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nAuthorization: Bearer ",
+            MODEL_PATH,
+            MODEL_SITE,
+            body.len()
+        ),
+        Provider::Anthropic => format!(
+            "POST {} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nanthropic-version: {}\r\nx-api-key: ",
+            ANTHROPIC_PATH,
+            ANTHROPIC_SITE,
+            body.len(),
+            ANTHROPIC_VERSION
+        ),
+    };
 
     // The request holds the key, so it is put together in a room that is
     // large enough from the start: a list that has to grow moves, and would
@@ -434,7 +542,7 @@ fn provider_exchange(
     let mut too_long = false;
     let mut head = HeadReader::new();
     let mut head_over = false;
-    let result = site_exchange(interface, card, sockets, name_server, MODEL_SITE, &request, Waits::one(MODEL_WAIT), &mut |bytes| {
+    let result = site_exchange(interface, card, sockets, name_server, provider.site(), &request, Waits::one(MODEL_WAIT), &mut |bytes| {
         if let Some(stream) = stream.as_deref_mut() {
             if stream.begun {
                 return stream.take(bytes, key);
@@ -540,8 +648,10 @@ fn answer_parts(answer: &[u8]) -> Option<Parts<'_>> {
 // Says in one sentence what the provider's answer holds, and how the
 // provider took the key. `whole` says whether the provider said, through the
 // encrypted link, that it had sent everything. `key` is the key that went
-// with the question: it is kept out of the words that are passed on.
-fn answer_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, KeyVerdict) {
+// with the question: it is kept out of the words that are passed on. A good
+// answer is read in its provider's form; a refusal is read the same way for
+// both, since both put their reason at `error`, `message`.
+fn answer_sentence(provider: Provider, answer: &[u8], whole: bool, key: &[u8]) -> (String, KeyVerdict) {
     if answer.is_empty() {
         return ("no answer came, because the provider sent nothing".into(), KeyVerdict::NotTold);
     }
@@ -554,7 +664,11 @@ fn answer_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, KeyVerdic
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
 
     if parts.number == 200 {
-        return (model_sentence(parts.body, key, cut_short), KeyVerdict::Works);
+        let sentence = match provider {
+            Provider::OrcaRouter => model_sentence(parts.body, key, cut_short),
+            Provider::Anthropic => anthropic_sentence(parts.body, key, cut_short),
+        };
+        return (sentence, KeyVerdict::Works);
     }
 
     // Any other number means the question was not answered. A number from
@@ -645,12 +759,15 @@ fn model_sentence(body: &[u8], key: &[u8], cut_short: &str) -> String {
 // and accepts, and in which the key is hidden like in every other word from
 // the provider. Any answer but a good one (the number 200) is said exactly as
 // for the fixed question.
-fn app_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<String>) {
+fn app_sentence(provider: Provider, answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<String>) {
     let Some(parts) = answer_parts(answer).filter(|parts| parts.number == 200) else {
-        return (answer_sentence(answer, whole, key).0, None);
+        return (answer_sentence(provider, answer, whole, key).0, None);
     };
     let body = parts.body;
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
+    if provider == Provider::Anthropic {
+        return anthropic_app_sentence(body, key, cut_short);
+    }
 
     // How the answer ended, read as for the fixed question.
     let ending = json_find_text(body, ENDING).ok();
@@ -671,23 +788,28 @@ fn app_sentence(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<Strin
         Ok(words) if !words.is_empty() && held_back => {
             (format!("the provider held part of the model's app back, so it is not whole.{}", cut_short), None)
         }
-        Ok(words) if !words.is_empty() => match app_script(words) {
-            Ok(script) => {
-                let mut signs = script.into_bytes();
-                key_hide(&mut signs, key);
-                // Only signs of the key, which are plain signs, became stars,
-                // so the text is still proper text.
-                let script = String::from_utf8_lossy(&signs).into_owned();
-                let lines = script.lines().count();
-                let sentence =
-                    format!("the model wrote an app of {} {}. It is shown in the terminal.{}", lines, if lines == 1 { "line" } else { "lines" }, cut_short);
-                (sentence, Some(script))
-            }
-            Err(reason) => (format!("the model's answer is no app, because {}.{}", reason, cut_short), None),
-        },
+        Ok(words) if !words.is_empty() => app_taken(words, key, cut_short),
         Ok(_) => (empty_sentence(body, out_of_room, held_back, cut_short, APP_TOKENS), None),
         Err(NOT_A_TEXT | NOT_THERE) if ending.is_some() => (empty_sentence(body, out_of_room, held_back, cut_short, APP_TOKENS), None),
         Err(reason) => (words_not_found(body, key, reason, cut_short), None),
+    }
+}
+
+// The model's words in a whole answer to the request for an app, taken as a
+// script if `app_script` in `apps.rs` accepts it, with the key hidden in it.
+fn app_taken(words: &str, key: &[u8], cut_short: &str) -> (String, Option<String>) {
+    match app_script(words) {
+        Ok(script) => {
+            let mut signs = script.into_bytes();
+            key_hide(&mut signs, key);
+            // Only signs of the key, which are plain signs, became stars, so
+            // the text is still proper text.
+            let script = String::from_utf8_lossy(&signs).into_owned();
+            let lines = script.lines().count();
+            let sentence = format!("the model wrote an app of {} {}. It is shown in the terminal.{}", lines, if lines == 1 { "line" } else { "lines" }, cut_short);
+            (sentence, Some(script))
+        }
+        Err(reason) => (format!("the model's answer is no app, because {}.{}", reason, cut_short), None),
     }
 }
 
@@ -728,12 +850,15 @@ const TABLE_INPUTS_LONGEST: usize = 4096;
 // with neither words nor a tool in it is said as for the fixed question. Any
 // answer but a good one (the number 200) is said exactly as for the fixed
 // question, and holds nothing from the model.
-fn chat_reply(answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatReply>) {
+fn chat_reply(provider: Provider, answer: &[u8], whole: bool, key: &[u8]) -> (String, Option<ChatReply>) {
     let Some(parts) = answer_parts(answer).filter(|parts| parts.number == 200) else {
-        return (answer_sentence(answer, whole, key).0, None);
+        return (answer_sentence(provider, answer, whole, key).0, None);
     };
     let body = parts.body;
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
+    if provider == Provider::Anthropic {
+        return anthropic_chat_reply(body, whole, key, cut_short);
+    }
 
     // How the answer ended, read as for the fixed question.
     let ending = json_find_text(body, ENDING).ok();
@@ -816,9 +941,12 @@ const TOKENS_THINKING: &[Step<'static>] = &[Step::Name("usage"), Step::Name("com
 
 // The terminal's line about how many tokens a good answer (the number 200)
 // took; nothing for any other answer.
-fn answer_tokens(answer: &[u8]) -> Option<String> {
+fn answer_tokens(provider: Provider, answer: &[u8]) -> Option<String> {
     let parts = answer_parts(answer).filter(|parts| parts.number == 200)?;
-    Some(tokens_said(parts.body))
+    Some(match provider {
+        Provider::OrcaRouter => tokens_said(parts.body),
+        Provider::Anthropic => anthropic_tokens_said(Some((parts.body, false)), Some(parts.body)),
+    })
 }
 
 // The terminal's line about the tokens that `body` says an answer took: a
@@ -879,6 +1007,208 @@ fn empty_said(thought: bool, out_of_room: bool, held_back: bool, cut_short: &str
     format!("the model's answer was empty{}.{}", why, cut_short)
 }
 
+// ---------- Anthropic's answers ----------
+
+// A good answer in Anthropic's form (from its documentation, read in November
+// 2026) holds a list of blocks at `content`, in the order the model wrote
+// them: its thinking (`thinking`, whose text is left empty unless asked for,
+// or `redacted_thinking`), its words (`text`, at `text`), and the tools it asks
+// for (`tool_use`, with the tool's name at `name` and what it gives the tool at
+// `input`, as JSON of its own). How it ended stands at `stop_reason`:
+// `end_turn` and `tool_use` are ordinary ends; `max_tokens` is the limit of
+// tokens; `model_context_window_exceeded` means the question and the answer
+// grew larger than the model takes; `refusal` means the provider's checks
+// stopped the answer. The counts stand at `usage`. Blocks are read by their
+// kind, never by their place: thinking comes first.
+const STOP_REASON: &[Step<'static>] = &[Step::Name("stop_reason")];
+
+// How many blocks of an answer are looked at: far more than a model writes.
+const BLOCKS_READ: usize = 16;
+
+// What the kernel says when an answer of Anthropic's reached the model's
+// context (`model_context_window_exceeded`), and when the provider's checks
+// stopped it (`refusal`).
+const WINDOW_WHY: &str = "because the question and the answer grew larger than the model takes";
+const CHECKS_WHY: &str = "the provider's checks stopped";
+
+// What the blocks of a good answer of Anthropic's hold: the words of its text
+// blocks, in order; whether it had a text block at all; whether the model
+// thought; the name of the first tool it asked for and how many it asked for;
+// and why a block could not be read, if one could not.
+struct Blocks {
+    words: String,
+    text: bool,
+    thought: bool,
+    tool: Option<String>,
+    tools: usize,
+    trouble: Option<&'static str>,
+}
+
+fn anthropic_blocks(body: &[u8]) -> Blocks {
+    let mut blocks = Blocks { words: String::new(), text: false, thought: false, tool: None, tools: 0, trouble: None };
+    for place in 0..BLOCKS_READ {
+        let kind = json_find_text(body, &[Step::Name("content"), Step::Place(place), Step::Name("type")]);
+        match kind.as_deref() {
+            Ok("text") => match json_find_text(body, &[Step::Name("content"), Step::Place(place), Step::Name("text")]) {
+                Ok(words) => {
+                    blocks.words.push_str(&words);
+                    blocks.text = true;
+                }
+                Err(reason) => {
+                    blocks.trouble = Some(reason);
+                    break;
+                }
+            },
+            Ok("thinking" | "redacted_thinking") => blocks.thought = true,
+            Ok("tool_use") => {
+                blocks.tools += 1;
+                if blocks.tool.is_none() {
+                    blocks.tool = json_find_text(body, &[Step::Name("content"), Step::Place(place), Step::Name("name")]).ok();
+                }
+            }
+            // A kind of block the kernel does not know is passed over.
+            Ok(_) => {}
+            Err(reason) if *reason == NOT_THERE => break,
+            Err(reason) => {
+                blocks.trouble = Some(reason);
+                break;
+            }
+        }
+    }
+    blocks
+}
+
+// The sentence for the answer of Anthropic's to the fixed question, as
+// `model_sentence` makes it for OrcaRouter's. An answer with no words counts as
+// empty only if it says how it ended, which is read with the check that the
+// rest of the answer closes properly, as for OrcaRouter's.
+fn anthropic_sentence(body: &[u8], key: &[u8], cut_short: &str) -> String {
+    let ending = json_find_text(body, STOP_REASON).ok();
+    let blocks = anthropic_blocks(body);
+    let words = blocks.words.trim();
+    if blocks.text && !words.is_empty() {
+        let said = words_shown(words, key);
+        return match ending.as_deref() {
+            Some("max_tokens") => format!("the model answered \"{}\", but it was cut off at the limit of {} tokens.{}", said, ANSWER_TOKENS, cut_short),
+            Some("model_context_window_exceeded") => format!("the model answered \"{}\", but it was cut off, {}.{}", said, WINDOW_WHY, cut_short),
+            Some("refusal") => format!("the model answered \"{}\", but {} it.{}", said, CHECKS_WHY, cut_short),
+            _ => format!("the model answered \"{}\".{}", said, cut_short),
+        };
+    }
+    if let Some(reason) = blocks.trouble {
+        return words_not_found(body, key, reason, cut_short);
+    }
+    if ending.is_none() {
+        return words_not_found(body, key, NOT_THERE, cut_short);
+    }
+    anthropic_empty(ending.as_deref(), blocks.thought, cut_short, ANSWER_TOKENS)
+}
+
+// The sentence for a good answer of Anthropic's with no words. `tokens` is the
+// limit the question was asked with.
+fn anthropic_empty(ending: Option<&str>, thought: bool, cut_short: &str, tokens: usize) -> String {
+    match ending {
+        Some("max_tokens") => empty_said(thought, true, false, cut_short, tokens),
+        Some("model_context_window_exceeded") => format!("the model's answer was empty, {}.{}", WINDOW_WHY, cut_short),
+        Some("refusal") => format!("the model's answer was empty, because {} it.{}", CHECKS_WHY, cut_short),
+        _ => empty_said(thought, false, false, cut_short, tokens),
+    }
+}
+
+// The sentence for the answer of Anthropic's to the request for an app, and
+// the script, as `app_sentence` makes them for OrcaRouter's: a script that was
+// cut off, or stopped by the provider's checks, is not whole, and is not taken.
+fn anthropic_app_sentence(body: &[u8], key: &[u8], cut_short: &str) -> (String, Option<String>) {
+    let ending = json_find_text(body, STOP_REASON).ok();
+    let blocks = anthropic_blocks(body);
+    let words = blocks.words.trim();
+    if blocks.text && !words.is_empty() {
+        return match ending.as_deref() {
+            Some("max_tokens") => (format!("the model's app was cut off at the limit of {} tokens, so it is not whole.{}", APP_TOKENS, cut_short), None),
+            Some("model_context_window_exceeded") => (format!("the model's app was cut off, {}, so it is not whole.{}", WINDOW_WHY, cut_short), None),
+            Some("refusal") => (format!("{} the model's app, so it is not whole.{}", CHECKS_WHY, cut_short), None),
+            _ => app_taken(words, key, cut_short),
+        };
+    }
+    if let Some(reason) = blocks.trouble {
+        return (words_not_found(body, key, reason, cut_short), None);
+    }
+    if ending.is_none() {
+        return (words_not_found(body, key, NOT_THERE, cut_short), None);
+    }
+    (anthropic_empty(ending.as_deref(), blocks.thought, cut_short, APP_TOKENS), None)
+}
+
+// The answer of Anthropic's to a line when it came whole, though it was asked
+// for piece by piece: its words are read. A tool asked for in it is not done:
+// what the model gives a tool stands there as JSON of its own, which the
+// kernel's reader does not hand out as a text, and the provider sends a
+// line's answer piece by piece, as it is asked to, where it comes as a text.
+fn anthropic_chat_reply(body: &[u8], whole: bool, key: &[u8], cut_short: &str) -> (String, Option<ChatReply>) {
+    let ending = json_find_text(body, STOP_REASON).ok();
+    let blocks = anthropic_blocks(body);
+    let trimmed = blocks.words.trim();
+    let words = if blocks.text && !trimmed.is_empty() { Some(words_shown(trimmed, key)) } else { None };
+    let sentence = if blocks.tools > 0 {
+        format!("the provider sent its answer whole, and a tool asked for in such an answer is not read.{}", cut_short)
+    } else if words.is_some() {
+        match ending.as_deref() {
+            Some("max_tokens") => ending_said(true, false, whole, cut_short),
+            Some("model_context_window_exceeded") => format!("the model's answer was cut off, {}.{}", WINDOW_WHY, cut_short),
+            Some("refusal") => format!("{} the model's answer.{}", CHECKS_WHY, cut_short),
+            _ => ending_said(false, false, whole, cut_short),
+        }
+    } else if let Some(reason) = blocks.trouble {
+        words_not_found(body, key, reason, cut_short)
+    } else if ending.is_none() {
+        words_not_found(body, key, NOT_THERE, cut_short)
+    } else {
+        anthropic_empty(ending.as_deref(), blocks.thought, cut_short, LINE_TOKENS)
+    };
+    (sentence, Some(ChatReply { words, tool: None, more: false, broken: false, stream: None }))
+}
+
+// The terminal's line about the tokens an answer of Anthropic's took, in the
+// same words as `tokens_said`. The counts of the question stand in `asked`, at
+// `usage` in an answer that came whole, or at `message`, `usage` in the first
+// piece of one that came piece by piece (`in_message`): those Anthropic counted
+// afresh (`input_tokens`), and those it read from, or wrote to, what it kept
+// from an earlier question (`cache_read_input_tokens`,
+// `cache_creation_input_tokens`), which together are all of the question's;
+// those read back count as repeated. The counts of the answer stand at `usage`
+// in `answered`: `output_tokens`, and of them `output_tokens_details`,
+// `thinking_tokens`.
+fn anthropic_tokens_said(asked: Option<(&[u8], bool)>, answered: Option<&[u8]>) -> String {
+    let asked_count = |name: &str| -> Option<u64> {
+        let (json, in_message) = asked?;
+        if in_message {
+            json_find_number(json, &[Step::Name("message"), Step::Name("usage"), Step::Name(name)]).ok()
+        } else {
+            json_find_number(json, &[Step::Name("usage"), Step::Name(name)]).ok()
+        }
+    };
+    let fresh = asked_count("input_tokens");
+    let out = answered.and_then(|json| json_find_number(json, &[Step::Name("usage"), Step::Name("output_tokens")]).ok());
+    let (Some(fresh), Some(out)) = (fresh, out) else {
+        return String::from("Tokens: the provider did not say how many this answer took");
+    };
+    let read = asked_count("cache_read_input_tokens");
+    let written = asked_count("cache_creation_input_tokens").unwrap_or(0);
+    let all = fresh.saturating_add(read.unwrap_or(0)).saturating_add(written);
+    let mut line = format!("Tokens: {} in", all);
+    if let Some(read) = read {
+        line.push_str(&format!(", {} of them repeated", read));
+    }
+    line.push_str(&format!("; {} out", out));
+    let thinking = answered.and_then(|json| {
+        json_find_number(json, &[Step::Name("usage"), Step::Name("output_tokens_details"), Step::Name("thinking_tokens")]).ok()
+    });
+    if let Some(thinking) = thinking {
+        line.push_str(&format!(", {} of them thinking", thinking));
+    }
+    line
+}
+
 // ---------- Reading an answer piece by piece ----------
 
 // The answer to a line is asked for piece by piece, as the model writes it.
@@ -896,6 +1226,19 @@ fn empty_said(thought: bool, out_of_room: bool, held_back: bool, cut_short: &str
 // how the answer ended (`finish_reason`); and the last before "[DONE]" holds
 // the tokens it took (`usage`), beside the rest or alone, with no choices. A
 // piece with `error` in it says that the provider broke the answer off.
+//
+// Anthropic's answer comes in the same lines, with a line `event:` before each
+// piece that names it; the piece names itself too, at `type`, and that is what
+// is read (its documentation, read in November 2026). `message_start` holds the
+// counts of the question; each block of the answer (see "Anthropic's answers"
+// above) comes as `content_block_start`, which says its kind (and a tool's
+// name), then `content_block_delta`s, which bring a little of it (`text_delta`,
+// a few words at `text`; `thinking_delta`; `input_json_delta`, a piece of what
+// the model gives a tool, at `partial_json`), then `content_block_stop`;
+// `message_delta` says how it ended and holds the counts of the answer so far;
+// and `message_stop` ends it, where OrcaRouter's ends at "[DONE]". `ping` only
+// says that the link is alive, `error` breaks the answer off, and a piece of a
+// kind not named here is passed over: Anthropic may add kinds.
 
 // The most bytes one line of such an answer may take: far more than a piece
 // with a few words, a part of a tool, or the counts, and the notes around
@@ -935,6 +1278,8 @@ const BREAK_CODE: &[Step<'static>] = &[Step::Name("error"), Step::Name("code")];
 // what of the words can be shown so far (`hand_on`); when the answer is over,
 // `stream_reply` says what came of it.
 struct Stream {
+    // The provider whose form the pieces have.
+    provider: Provider,
     // Whether the answer's head said that it comes piece by piece, and
     // whether it said too that it comes in pieces with their lengths in
     // between, which is not read.
@@ -958,9 +1303,15 @@ struct Stream {
     tool_name: Option<String>,
     tool_inputs: Vec<u8>,
     more: bool,
-    // How the answer ended, and the last piece that held the counts.
+    // How the answer ended, and the last piece that held the counts; for
+    // Anthropic's, also the first piece, which holds those of the question,
+    // and whether the answer reached the model's context or was stopped by the
+    // provider's checks.
     ending: Option<String>,
     usage: Option<Vec<u8>>,
+    usage_first: Option<Vec<u8>>,
+    window: bool,
+    checks: bool,
     // Whether a piece broke the answer off, and why; whether a line was too
     // long to read; whether "[DONE]" came; and what went wrong with the link
     // after the pieces had begun to come.
@@ -987,8 +1338,9 @@ struct Stream {
 }
 
 impl Stream {
-    fn new() -> Stream {
+    fn new(provider: Provider) -> Stream {
         Stream {
+            provider,
             begun: false,
             chunked: false,
             line: Vec::new(),
@@ -1003,6 +1355,9 @@ impl Stream {
             more: false,
             ending: None,
             usage: None,
+            usage_first: None,
+            window: false,
+            checks: false,
             failed: false,
             error: None,
             too_long: false,
@@ -1084,6 +1439,10 @@ impl Stream {
             return;
         };
         let data = data.strip_prefix(b" ").unwrap_or(data);
+        if self.provider == Provider::Anthropic {
+            self.anthropic_piece_read(data);
+            return;
+        }
         if data.trim_ascii() == b"[DONE]" {
             self.done = true;
             self.done_at = Some(self.now());
@@ -1182,6 +1541,97 @@ impl Stream {
         }
     }
 
+    // One piece of an answer of Anthropic's: JSON from outside, read with the
+    // JSON reader like every answer, by the kind it names at `type`. A piece
+    // that cannot be read, or of a kind not named here, gives nothing.
+    fn anthropic_piece_read(&mut self, piece: &[u8]) {
+        let now = self.now();
+        let kind = json_find_text(piece, &[Step::Name("type")]).unwrap_or_default();
+        // A piece that only says that the link is alive is counted as such,
+        // as OrcaRouter's lines that begin ":" are, and not as a piece.
+        if kind == "ping" {
+            self.keep_alive += 1;
+            return;
+        }
+        self.pieces += 1;
+        self.first_at.get_or_insert(now);
+        let index = json_find_number(piece, &[Step::Name("index")]).ok();
+        match kind.as_str() {
+            "message_start" => {
+                if json_find_number(piece, &[Step::Name("message"), Step::Name("usage"), Step::Name("input_tokens")]).is_ok() {
+                    self.usage_first = Some(piece.to_vec());
+                }
+            }
+            "content_block_start" => {
+                let block = json_find_text(piece, &[Step::Name("content_block"), Step::Name("type")]).unwrap_or_default();
+                match block.as_str() {
+                    "thinking" | "redacted_thinking" => {
+                        self.thought = true;
+                        self.thinking_at.get_or_insert(now);
+                    }
+                    // The first tool asked for is put together; of any other,
+                    // only that it is there counts. Its block holds an empty
+                    // place for what it gives the tool, which comes in the
+                    // pieces that follow.
+                    "tool_use" if self.tool_place.is_none() => {
+                        self.tool_place = Some(index.unwrap_or(0));
+                        self.tool_name = json_find_text(piece, &[Step::Name("content_block"), Step::Name("name")]).ok();
+                        self.tool_from.get_or_insert(now);
+                        self.tool_to = Some(now);
+                    }
+                    "tool_use" => self.more = true,
+                    _ => {}
+                }
+            }
+            "content_block_delta" => {
+                let delta = json_find_text(piece, &[Step::Name("delta"), Step::Name("type")]).unwrap_or_default();
+                match delta.as_str() {
+                    "text_delta" => {
+                        if let Ok(words) = json_find_text(piece, &[Step::Name("delta"), Step::Name("text")]) {
+                            self.words_add(&words, now);
+                        }
+                    }
+                    "thinking_delta" => {
+                        self.thought = true;
+                        self.thinking_at.get_or_insert(now);
+                    }
+                    "input_json_delta" if self.tool_place.is_some() && index == self.tool_place => {
+                        if let Ok(inputs) = json_find_text(piece, &[Step::Name("delta"), Step::Name("partial_json")]) {
+                            let room = (TABLE_INPUTS_LONGEST + 1).saturating_sub(self.tool_inputs.len()).min(inputs.len());
+                            self.tool_inputs.extend_from_slice(&inputs.as_bytes()[..room]);
+                        }
+                        self.tool_to = Some(now);
+                    }
+                    _ => {}
+                }
+            }
+            "message_delta" => {
+                // How it ended, in the words the rest of this file reads: the
+                // limit of tokens is OrcaRouter's "length"; the model's
+                // context and the provider's checks are noted apart.
+                if let Ok(reason) = json_find_text(piece, &[Step::Name("delta"), Step::Name("stop_reason")]) {
+                    self.window = reason == "model_context_window_exceeded";
+                    self.checks = reason == "refusal";
+                    self.ending = Some(if reason == "max_tokens" { String::from("length") } else { reason });
+                }
+                if json_find_number(piece, &[Step::Name("usage"), Step::Name("output_tokens")]).is_ok() {
+                    self.usage = Some(piece.to_vec());
+                }
+            }
+            "message_stop" => {
+                self.done = true;
+                self.done_at = Some(now);
+            }
+            "error" => {
+                self.failed = true;
+                if self.error.is_none() {
+                    self.error = json_find_text(piece, &[Step::Name("error"), Step::Name("message")]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Adds a few of the model's words, from the first that is not a space.
     fn words_add(&mut self, piece: &str, now: u64) {
         let piece = if self.words.is_empty() { piece.trim_start() } else { piece };
@@ -1271,11 +1721,17 @@ fn words_so_far(words: &str, key: &[u8]) -> String {
 // and when it ended before the model said how it ended. Then the words that
 // came are said, and why it broke off; a tool is not done, but for a table,
 // whose rows that came whole are drawn (see `chat.rs`); and the line ends.
+// Anthropic's answer is whole when `message_stop` came after no `error`. When
+// its end says that the provider's checks stopped it, its words are said, and
+// no tool is done, a table included: those checks can stop the answer in the
+// middle of what the model gives a tool (its documentation says never to do
+// the tools of such an answer). When it reached the model's context, it is
+// read as one cut off at the limit, with a sentence of its own.
 fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
     let ending = stream.ending.as_deref();
-    let out_of_room = ending == Some("length");
-    let held_back = ending == Some("content_filter");
-    let stopped = matches!(ending, Some("aborted" | "insufficient_system_resource"));
+    let out_of_room = ending == Some("length") || stream.window;
+    let held_back = ending == Some("content_filter") && stream.provider == Provider::OrcaRouter;
+    let stopped = matches!(ending, Some("aborted" | "insufficient_system_resource")) && stream.provider == Provider::OrcaRouter;
     let whole = stream.done && !stream.failed;
     let broke = if let Some(reason) = &stream.trouble {
         Some(format!("the model's answer broke off, because {}", reason))
@@ -1294,8 +1750,13 @@ fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
         None
     };
     let broken = broke.is_some();
+    let checked = stream.checks && !broken;
 
-    let tool = stream.tool_name.as_deref().map(|name| tool_made(name, stream.tool_inputs.clone(), out_of_room || broken, key));
+    let tool = if checked {
+        None
+    } else {
+        stream.tool_name.as_deref().map(|name| tool_made(name, stream.tool_inputs.clone(), out_of_room || broken, key))
+    };
     let more = tool.is_some() && stream.more;
     let words = stream.words.trim_end();
     let words = if words.is_empty() { None } else { Some(words_shown(words, key)) };
@@ -1304,6 +1765,13 @@ fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
     let sentence = if let Some(broke) = broke {
         let undone = if tool.as_ref().is_some_and(|tool| tool.name != "draw_table") { ", so I did not do what it asked for" } else { "" };
         format!("{}{}.", broke, undone)
+    } else if checked {
+        let undone = if stream.tool_name.is_some() { ", so I did not do what it asked for" } else { "" };
+        format!("{} the model's answer{}.{}", CHECKS_WHY, undone, cut_short)
+    } else if stream.window && (words.is_some() || tool.is_some()) {
+        format!("the model's answer was cut off, {}.{}", WINDOW_WHY, cut_short)
+    } else if stream.window {
+        format!("the model's answer was empty, {}.{}", WINDOW_WHY, cut_short)
     } else if words.is_some() || tool.is_some() {
         ending_said(out_of_room, held_back, whole, cut_short)
     } else if ending.is_some() {
@@ -1311,9 +1779,10 @@ fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
     } else {
         words_not_found(&stream.beginning, key, NOT_THERE, cut_short)
     };
-    let tokens = match &stream.usage {
-        Some(piece) => tokens_said(piece),
-        None => String::from("Tokens: the provider did not say how many this answer took"),
+    let tokens = match (stream.provider, &stream.usage) {
+        (Provider::OrcaRouter, Some(piece)) => tokens_said(piece),
+        (Provider::Anthropic, _) => anthropic_tokens_said(stream.usage_first.as_deref().map(|piece| (piece, true)), stream.usage.as_deref()),
+        (Provider::OrcaRouter, None) => String::from("Tokens: the provider did not say how many this answer took"),
     };
     (sentence, ChatReply { words, tool, more, broken, stream: Some(stream.line_said()) }, tokens)
 }

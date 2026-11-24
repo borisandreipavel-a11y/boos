@@ -62,7 +62,8 @@ Made-up key only.
             table's whole rows drawn, the line ending there; an answer in pieces with their lengths in between.
 
 Usage: python test_chat_tools.py [scenario ...]        (with none: all)
-Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane)."""
+Environment: BREAK (a break on purpose, chat_tools_breaks.py), BOOS_PORT_BASE (47300 for this lane), BOOS_PROVIDER
+("anthropic": every line goes to Anthropic, in Anthropic's form; see ANTHROPIC)."""
 import copy
 import json
 import os
@@ -70,6 +71,7 @@ import time
 
 os.environ["DIVIDED_DISK"] = ""
 
+import anthropic_cases
 import app_cases
 import chat_cases
 from app_cases import clean, hide
@@ -87,6 +89,10 @@ from lockref import lock
 from test_apps_kept import (KEY, SCRIPT, Run, answer_row, answered_disk, failures, give_key, report, run_row)
 
 SHOWN = ("You:", "Kernel:", "Model:", "Tokens:", "Apps:")
+# With BOOS_PROVIDER=anthropic the stand-in copy's kernel sends every line to Anthropic, in Anthropic's form
+# (net_copy.py), and the stand-in answers in that form with the same words, tools and counts (anthropic_cases.py). The
+# rows meant are the same, but for the few that only one of the two forms can bring about.
+ANTHROPIC = os.environ.get("BOOS_PROVIDER") == "anthropic"
 # Another made-up key, which shares no six signs with KEY, given in the middle of a scenario.
 OTHER_KEY = "pk-test-QUILL/Rm6Hv9Tc3Wd8Yn2Lf5=="
 # The check of JSON at startup, with its six checks of whole numbers (docs/json.md).
@@ -241,8 +247,9 @@ def scenario_words():
     exchange(run, chat, "my key", [model_row("Your key is " + KEY + ", I think.", KEY), chat_cases.TOKENS_LINE])
     exchange(run, chat, "refuse me", [refused_row(chat_cases.REFUSAL)])
     # Sent piece by piece, as a line asks for it: what is said is how the pieces begin.
-    beginning = words_cut(chat_cases.stream_body(chat_cases.stream_pieces(json.loads(chat_cases.body({"role": "assistant"}, None)))).decode(),
-                          KEY, 160)
+    empty = json.loads(chat_cases.body({"role": "assistant"}, None))
+    pieces = anthropic_cases.events(*anthropic_cases.message_of(empty)) if ANTHROPIC else chat_cases.stream_pieces(empty)
+    beginning = words_cut(chat_cases.stream_body(pieces).decode(), KEY, 160)
     nothing = ("Kernel: the provider answered, but I could not find the model's words in its answer, because it has no such part. "
                'It begins "%s".' % beginning)
     exchange(run, chat, "nothing", [nothing, chat_cases.TOKENS_LINE])
@@ -1132,6 +1139,8 @@ BROKE = "Kernel: the model's answer broke off before it was whole."
 BROKE_UNDONE = "Kernel: the model's answer broke off before it was whole, so I did not do what it asked for."
 BROKE_BY = 'Kernel: the provider broke the model\'s answer off: "%s".' % chat_cases.BREAK_MESSAGE
 STOPPED = "Kernel: the provider stopped the model's answer before its end."
+# Anthropic's form has no "aborted": its stand-in ends such an answer with Anthropic's own error (anthropic_cases.events).
+OVERLOADED = 'Kernel: the provider broke the model\'s answer off: "%s".' % anthropic_cases.OVERLOADED["error"]["message"]
 CHUNKED = ('Kernel: no answer came that I could read, because the provider sent its answer in pieces with their lengths in '
            'between ("chunked"), which it should not for this kind of request')
 
@@ -1263,7 +1272,7 @@ def scenario_stream():
     exchange(run, chat, line, ([model_row(came)] if came.strip() else []) + [BROKE_BY, none])
     lines.append(line)
     line = "stop short"
-    exchange(run, chat, line, [model_row("Five words of hello here."), STOPPED, t])
+    exchange(run, chat, line, [model_row("Five words of hello here.")] + ([OVERLOADED, none] if ANTHROPIC else [STOPPED, t]))
     lines.append(line)
 
     # A tool whose call broke off is not done, and the line ends there.

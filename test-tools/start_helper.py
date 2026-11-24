@@ -46,8 +46,11 @@ class Start:
         if network and not self.m.wait_for(b"Network: this machine was given the address", 60):
             print(tag, "NO ADDRESS")
             failures.append(tag + " address")
-        # A test about other things answers the question for a look with Enter alone (see keyed_model.py).
+        # A test about other things answers the question for a look, or for the provider, with Enter alone (see
+        # keyed_model.py).
         if getattr(chat, "auto_look", False) and getattr(chat, "look_asking", False):
+            self.keys("\n")
+        elif getattr(chat, "auto_provider", False) and getattr(chat, "waiting", None) == "provider":
             self.keys("\n")
 
     def mark(self):
@@ -79,9 +82,13 @@ class Start:
             # Keys with Shift are four key numbers each and pile up inside QEMU when sent quickly.
             time.sleep(pause + (0.05 if name_of(sign).startswith("shift-") else 0))
             asking = getattr(self.chat, "look_asking", False)
+            choosing = getattr(self.chat, "waiting", None) == "provider"
             self.chat.key(sign)
-            # The question for a look has just appeared: a test about other things answers it with Enter alone.
+            # The question for a look, or for the provider, has just appeared: a test about other things answers it
+            # with Enter alone, which keeps the look, or the provider.
             if getattr(self.chat, "auto_look", False) and self.chat.look_asking and not asking:
+                self.keys("\n", pause)
+            elif getattr(self.chat, "auto_provider", False) and getattr(self.chat, "waiting", None) == "provider" and not choosing:
                 self.keys("\n", pause)
 
     def wait(self, seconds):

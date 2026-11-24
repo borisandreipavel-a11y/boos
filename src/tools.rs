@@ -365,6 +365,101 @@ pub fn chat_tools() -> String {
     tools
 }
 
+// The list of tools that `chat_tools` made, in Anthropic's form (from its
+// documentation, read in November 2026). `chat_tools` writes every tool as
+// {"type":"function","function":{"name":...,"description":...,"parameters":{...}}},
+// the form OrcaRouter takes. Anthropic takes the same name, sentence and
+// schema, without the wrapper around them, and with the schema called
+// "input_schema": {"name":...,"description":...,"input_schema":{...}}. Gives
+// nothing if the list is not in the form `chat_tools` writes.
+pub fn tools_anthropic(tools: &str) -> Option<String> {
+    const WRAPPER: &str = "{\"type\":\"function\",\"function\":";
+    const SCHEMA: &str = "\"parameters\":";
+    let inside = tools.strip_prefix('[')?.strip_suffix(']')?;
+    let mut written = String::from("[");
+    for (place, tool) in json_parts(inside)?.into_iter().enumerate() {
+        let inner = tool.strip_prefix(WRAPPER)?.strip_suffix('}')?;
+        let schema_at = json_key_place(inner, SCHEMA)?;
+        if place > 0 {
+            written.push(',');
+        }
+        written.push_str(&inner[..schema_at]);
+        written.push_str("\"input_schema\":");
+        written.push_str(&inner[schema_at + SCHEMA.len()..]);
+    }
+    written.push(']');
+    Some(written)
+}
+
+// The things in a JSON list, given without its brackets, each as it is
+// written: the list is cut at the commas that stand outside every text and
+// every set or list inside it. Gives nothing for an unbalanced list.
+fn json_parts(inside: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    if inside.is_empty() {
+        return Some(parts);
+    }
+    let mut depth = 0usize;
+    let mut in_text = false;
+    let mut escaped = false;
+    let mut from = 0;
+    for (place, sign) in inside.bytes().enumerate() {
+        if in_text {
+            if escaped {
+                escaped = false;
+            } else if sign == b'\\' {
+                escaped = true;
+            } else if sign == b'"' {
+                in_text = false;
+            }
+            continue;
+        }
+        match sign {
+            b'"' => in_text = true,
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth = depth.checked_sub(1)?,
+            b',' if depth == 0 => {
+                parts.push(&inside[from..place]);
+                from = place + 1;
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 || in_text {
+        return None;
+    }
+    parts.push(&inside[from..]);
+    Some(parts)
+}
+
+// Where `key` (a name in quotes and its colon) stands among the names of the
+// set that `set` is, not inside a text or inside a set or list within it.
+fn json_key_place(set: &str, key: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_text = false;
+    let mut escaped = false;
+    for (place, sign) in set.bytes().enumerate() {
+        if in_text {
+            if escaped {
+                escaped = false;
+            } else if sign == b'\\' {
+                escaped = true;
+            } else if sign == b'"' {
+                in_text = false;
+            }
+            continue;
+        }
+        match sign {
+            b'"' if depth == 1 && set[place..].starts_with(key) => return Some(place),
+            b'"' => in_text = true,
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    None
+}
+
 // What came of a tool the model asked for, as far as the line it answers is
 // concerned: whether it needs the model, which is then asked about the line
 // again, with what came of it (see `chat.rs`). Each tool says which.

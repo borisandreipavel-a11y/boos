@@ -26,7 +26,7 @@ use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
 use crate::onboarding::{
     NAME_LIMIT, SETUP_WORD, onboarding_again, onboarding_answer, onboarding_asking, onboarding_begin, onboarding_secret, onboarding_tried,
-    onboarding_trying, onboarding_waiting, onboarding_wants_secret, person_name,
+    onboarding_trying, onboarding_waiting, onboarding_wants_secret, person_name, provider_in_use,
 };
 use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
 use crate::secret::{SECRET_LIMIT, secret_keep, secret_length, wipe};
@@ -1179,7 +1179,9 @@ fn secret_key(letter: u8) {
                 String::from("Kernel: no secret was taken.")
             } else {
                 let replaced = secret_length() > 0;
-                let taken = secret_keep(&typed[..signs]);
+                // The key belongs to the provider in use when it is typed: a
+                // `setup` that changes the provider wipes it.
+                let taken = secret_keep(&typed[..signs], provider_in_use());
                 wipe(typed);
                 format!(
                     "Kernel: I took a secret of {} {}. It is kept in memory only.{}",

@@ -12,7 +12,7 @@ def nowipe(text):
 
 
 # The end of model_tell, the question's path: model_app has a room of its own, ended the same way.
-TELL_END = "        question_ask(interface, card, sockets, name_server, &key_room[..key_length])\n    };\n"
+TELL_END = "        question_ask(interface, card, sockets, name_server, provider, &key_room[..key_length])\n    };\n"
 
 
 def nowipe_copy(text):
@@ -29,7 +29,7 @@ def cutfirst(text):
 
 
 def length(text):
-    return swap(text, "        MODEL_SITE,\n        body.len()\n", "        MODEL_SITE,\n        body.len() - 1 // BREAK\n")
+    return swap(text, "            MODEL_SITE,\n            body.len()\n", "            MODEL_SITE,\n            body.len() - 1 // BREAK\n")
 
 
 def path(text):
@@ -50,7 +50,7 @@ def nokeycheck(text):
 
 def othername(text):
     # The request goes to the provider's machine, but the link is told to expect another site's certificate.
-    return swap(text, "    let result = site_exchange(interface, card, sockets, name_server, MODEL_SITE, &request,", "    let result = site_exchange(interface, card, sockets, name_server, \"other.example\", &request,")
+    return swap(text, "    let result = site_exchange(interface, card, sockets, name_server, provider.site(), &request,", "    let result = site_exchange(interface, card, sockets, name_server, \"other.example\", &request,")
 
 
 def stack_tasks(text):

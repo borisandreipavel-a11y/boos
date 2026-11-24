@@ -29,7 +29,16 @@ A request that asks for its answer piece by piece ("stream": true, as a line's d
 above piece by piece (chat_cases.stream_pieces), unless the last argument is "whole": then it gets it whole, as a
 provider that does not send pieces would. Ways in front of a line's behaviour change how the pieces go
 (chat_cases.STREAM_WAYS): "hold:words=..." holds the answer after its first words, and goes on when a file named as
-the log with ".go" behind it appears; the stand-in says it holds by writing the file named as the log with ".held"."""
+the log with ".go" behind it appears; the stand-in says it holds by writing the file named as the log with ".held".
+
+A POST to /v1/messages is a question in Anthropic's form (docs/model.md, "Anthropic"; anthropic_cases.py). It is
+answered with the same behaviours, each turned into Anthropic's form (anthropic_cases.whole and .streamed), and a
+behaviour that begins "a:" is one of anthropic_cases.special's. The log notes, for every POST, the provider whose form
+it has ("provider"), the name the link was asked for and the request's Host, which note carried the key ("key note"),
+and for Anthropic's the version note and the body as it was sent ("sent body"). Its "body" is the same request in
+OrcaRouter's form (anthropic_cases.back), and "key came as" is written as for OrcaRouter, only when the request is
+right in Anthropic's form in every way ("anthropic form right": the body, the version, the site, no other key note), so
+that a test written for either form reads both the same."""
 import json
 import os
 import socket
@@ -38,6 +47,7 @@ import sys
 import time
 
 # The answers to a request for an app, which test_app.py shares (in this folder), and those to a line.
+import anthropic_cases
 import app_cases
 import chat_cases
 import download_cases
@@ -388,6 +398,10 @@ with open(log_path, "a") as log:
                     body += piece
                 note["body bytes"] = len(body)
                 note["length note right"] = len(body) == length
+                anthropic = lines[0].startswith("POST " + anthropic_cases.PATH + " ")
+                note["provider"] = "anthropic" if anthropic else "orcarouter"
+                note["host"] = notes.get("host")
+                note["key note"] = next((name for name in ("authorization", "x-api-key") if name in notes), None)
                 parsed = None
                 try:
                     parsed = json.loads(body.decode())
@@ -398,11 +412,37 @@ with open(log_path, "a") as log:
                 except ValueError as problem:
                     note["body as meant"] = False
                     note["body problem"] = str(problem)
-                bearer = notes.get("authorization", "")
-                note["key came as"] = bearer
-                bearer = bearer[len("Bearer "):] if bearer.startswith("Bearer ") else ""
-                answer, ending = choose(parsed, bearer, note)
-                pieces = streamed(parsed, answer, note.get("ways", []))
+                if anthropic:
+                    sent = parsed
+                    note["sent body"] = sent
+                    note["version note"] = notes.get("anthropic-version")
+                    parsed, problem = anthropic_cases.back(sent)
+                    if problem:
+                        note["anthropic form problem"] = problem
+                    note["anthropic form right"] = (parsed is not None and note["key note"] == "x-api-key" and "authorization" not in notes
+                                                    and note["version note"] == anthropic_cases.VERSION
+                                                    and note["host"] == anthropic_cases.SITE and note["name asked for"] == anthropic_cases.SITE)
+                    note["body"] = parsed
+                    note["body as meant"] = parsed == MEANT
+                    bearer = notes.get("x-api-key", "")
+                    note["key came as"] = ("Bearer " + bearer) if note["anthropic form right"] else "x-api-key " + bearer
+                    if behaviours and behaviours[0].startswith("a:"):
+                        kind = behaviours.pop(0)
+                        note["behaviour"] = kind
+                        pieces, ending = anthropic_cases.special(kind), "goodbye"
+                        if pieces is None:
+                            raise SystemExit("unknown behaviour " + kind)
+                    else:
+                        answer, ending = choose(parsed, bearer, note)
+                        pieces = anthropic_cases.streamed(sent, answer, note.get("ways", []), WHOLE)
+                        if pieces is None:
+                            answer = anthropic_cases.whole(answer)
+                else:
+                    bearer = notes.get("authorization", "")
+                    note["key came as"] = bearer
+                    bearer = bearer[len("Bearer "):] if bearer.startswith("Bearer ") else ""
+                    answer, ending = choose(parsed, bearer, note)
+                    pieces = streamed(parsed, answer, note.get("ways", []))
                 if pieces is not None:
                     note["piece by piece"] = True
                     ending = stream_send(link, pieces, note)
