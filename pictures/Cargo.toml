@@ -1,0 +1,13 @@
+[package]
+name = "pictures"
+version = "0.1.0"
+edition = "2024"
+
+# Code of this project's own, written for the kernel: it turns a picture file
+# into dots, shrunk to fit a room on the screen. So far it reads PNG pictures,
+# with the unpacking they need. It is a crate of its own only so that it is
+# built to run fast, like the outside crates and password-key/; see the
+# kernel's Cargo.toml and docs/pictures.md.
+
+# It uses no other crate.
+[dependencies]
