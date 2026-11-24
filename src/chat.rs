@@ -74,6 +74,19 @@ fn asks_put(asks: Asks) {
     unsafe { ASKS = Some(asks) };
 }
 
+// While a tool the model asked for is done for a line's ask, which ask that
+// was (its count); nothing otherwise, such as for a tool done after `setup`
+// ended the asks.
+static mut ASK_DOING: Option<usize> = None;
+
+// Whether the ask that a tool being done would lead to is the line's last,
+// which offers no tools, or there is none, because no ask of a line is under
+// way. A PDF is not opened then (see `files.rs`): nothing could be kept from
+// it.
+pub fn chat_next_ask_last() -> bool {
+    unsafe { ASK_DOING }.is_none_or(|made| made + 1 >= ASKS_MOST)
+}
+
 // The name under which the last line that was sent is kept in the notebook
 // on the disk, so that it is still known after the machine was switched off.
 const LAST_LINE: &str = "last line";
@@ -698,6 +711,7 @@ fn model_ask(said: &str) -> String {
         record: conversation_record(),
         document: documents_told(),
         done: String::new(),
+        pdf: String::new(),
     }) {
         Ok(()) => {
             conversation_sent();
@@ -719,9 +733,10 @@ fn model_ask(said: &str) -> String {
 // any more, because everything was forgotten. When the ask cannot go, the
 // kernel says why, and the line ends there. A file opened for the line (see
 // `files.rs`) goes with this ask only, behind the line in the person's
-// message: it is taken first, whatever comes of the ask, so that it never
-// goes twice, and it is not remembered, since what is remembered of the line
-// is the line as it was first sent.
+// message, and a PDF before it, as Anthropic's document: it is taken first,
+// whatever comes of the ask, so that it never goes twice, and it is not
+// remembered, since what is remembered of the line is the line as it was
+// first sent.
 fn ask_again(mut asks: Asks) {
     let made = asks.made + 1;
     let last = made >= ASKS_MOST;
@@ -731,11 +746,11 @@ fn ask_again(mut asks: Asks) {
     };
     asks.made = made;
     let tools = if last { String::new() } else { chat_tools() };
-    let line = match file {
-        Some(file) => format!("{}{}", asks.sent, file),
-        None => asks.sent.clone(),
+    let (line, pdf) = match file {
+        Some((file, pdf)) => (format!("{}{}", asks.sent, file), pdf.unwrap_or_default()),
+        None => (asks.sent.clone(), String::new()),
     };
-    match errand_ask(Errand::ChatLine { line, tools, record, document: documents_told(), done }) {
+    match errand_ask(Errand::ChatLine { line, tools, record, document: documents_told(), done, pdf }) {
         Ok(()) => {
             conversation_sent();
             let without = if last { ", without tools" } else { "" };
@@ -847,7 +862,10 @@ pub fn chat_answer(answer: Answer) {
             ToolDone::Back
         } else {
             asks.wanted.push(wanted);
-            tool_do(call)
+            unsafe { ASK_DOING = Some(asks.made) };
+            let outcome = tool_do(call);
+            unsafe { ASK_DOING = None };
+            outcome
         };
         // A second tool that was not done goes back too.
         match outcome {

@@ -101,6 +101,12 @@ SUITES = [
          seconds=dict(write=190, cut=160, odd=130, broken=75, nodocs=45)),
     dict(name="text documents with Anthropic", command=["test_text_documents.py"], split=["write", "cut"],
          env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + DOCUMENTS, seconds=dict(write=190, cut=160)),
+    # PDFs opened as documents of text: a kept PDF goes to Anthropic by its address at the person's yes, and the model
+    # writes it as a document, in the stand-in copy; every line in Anthropic's form, but `orca`, with OrcaRouter.
+    dict(name="pdf documents", command=["test_pdf_documents.py"], split=["open", "no", "refused", "wait"],
+         env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + FILES + DOCUMENTS, seconds=dict(open=130, no=200, refused=70, wait=140)),
+    dict(name="pdf documents with OrcaRouter", command=["test_pdf_documents.py"], split=["orca"], watches=STAND_IN + FILES + DOCUMENTS,
+         seconds=dict(orca=50)),
     # Anthropic as a second provider: the question for the provider, each provider's key, and Anthropic's form, in the
     # stand-in copy, whose stand-in answers Anthropic's form too (anthropic_cases.py).
     dict(name="anthropic", command=["test_anthropic.py"], split=True, watches=STAND_IN + SECRET,
@@ -164,7 +170,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16}
+                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16, "pdf": 11}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -426,4 +432,15 @@ CAUGHT_BY = {
     'break text documents: smallbound': "text-cut 'a very long one'",
     'break text documents: streambound': "text-cut 'a very long one'",
     'break text documents: brokennotdrawn': "text-broken 'add the moons'",
+    'break pdf: noisyes': "pdf-no answer 'no'",
+    'break pdf: nosite': "pdf-open 'open the report'",
+    'break pdf: orcaopens': "pdf-orca 'open the pdf'",
+    'break pdf: orcalists': 'orca request 1',
+    'break pdf: anyaddress': "pdf-no 'open the other one'",
+    'break pdf: lateopens': "pdf-no 'open it in the end'",
+    'break pdf: reopensends': "pdf-open 'open the report again'",
+    'break pdf: nodocument': 'open request 3',
+    'break pdf: drawpdf': 'open request 3',
+    'break pdf: csvsentence': 'open request 2',
+    'break pdf: shortwait': "pdf-wait answer 'yes'",
 }

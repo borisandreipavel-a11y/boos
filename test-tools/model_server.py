@@ -207,11 +207,15 @@ def answer_for(kind, bearer):
 
 
 def the_line(parsed):
-    """The text of the last message from the person, or None."""
+    """The text of the last message from the person, or None; of a message in parts (a PDF and a text, as
+    anthropic_cases.back writes it), its text."""
     try:
-        return [m["content"] for m in parsed["messages"] if m.get("role") == "user"][-1]
+        found = [m["content"] for m in parsed["messages"] if m.get("role") == "user"][-1]
     except (KeyError, IndexError, TypeError):
         return None
+    if isinstance(found, list):
+        return "".join(part["text"] for part in found if isinstance(part, dict) and isinstance(part.get("text"), str))
+    return found
 
 
 def the_instructions(parsed):

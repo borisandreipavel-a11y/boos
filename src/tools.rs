@@ -17,11 +17,13 @@ use alloc::vec::Vec;
 use crate::app_inputs::{Input, inputs_listed, inputs_read, inputs_wanted, values_read, values_said, values_wanted};
 use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
-use crate::chat::{chat_remember, chat_say};
+use crate::chat::{chat_next_ask_last, chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::documents::{document_draw, document_open, document_reopen, document_written, documents_listed, documents_usable, documents_wanted};
 use crate::drawing::{drawing_room, drawing_table, drawing_wanted, writing_room, writing_wanted};
-use crate::files::{download_start, file_open_start, files_listed, files_openable, files_usable, remove_ask};
+use crate::files::{
+    download_start, file_is_pdf, file_open_start, files_listed, files_open_pdf, files_openable, files_usable, pdf_open_ask, remove_ask,
+};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
 use crate::model::ToolCall;
@@ -313,14 +315,26 @@ fn remove_file_tool(files: &[(u32, String)]) -> String {
 // The tool that opens a kept CSV file as a document: the kernel reads the
 // file and sends its text to the model once, with the next ask about the line,
 // and the model draws it as a table, which is kept as a document (see
-// `files.rs` and `documents.rs`). It lists the files that can be opened, by
-// number, name, kind and size, the one kept last first.
-fn open_file_tool(files: &[(u32, String)]) -> String {
-    let mut told = String::from(concat!(
-        "Opens one of the kept CSV files as a table: its text, at most its first 64 KB, is sent to you once, with the next ask, ",
-        "and you then draw it with draw_table as a new table, which is kept as a document; ",
-        "a file opened before opens its table again. The kept CSV files, by number: "
-    ));
+// `files.rs` and `documents.rs`). While a PDF can be opened too (`pdf`, only
+// while Anthropic is the provider), its sentence says what comes of that: the
+// PDF goes whole with the next ask, at the person's yes, and the model writes
+// it as a document of text and tables. It lists the files that can be opened,
+// by number, name, kind and size, the one kept last first.
+fn open_file_tool(files: &[(u32, String)], pdf: bool) -> String {
+    let mut told = String::from(if pdf {
+        concat!(
+            "Opens one of the kept files as a document. A CSV file's text, at most its first 64 KB, is sent to you once, with the next ask, ",
+            "and you then draw it with draw_table as a new table. A PDF is sent to you whole, with the next ask, once the person says yes to its price, ",
+            "and you then write it with write_document as a new document of text and tables. ",
+            "Either is kept as a document; a file opened before opens its document again. The kept files that open, by number: "
+        )
+    } else {
+        concat!(
+            "Opens one of the kept CSV files as a table: its text, at most its first 64 KB, is sent to you once, with the next ask, ",
+            "and you then draw it with draw_table as a new table, which is kept as a document; ",
+            "a file opened before opens its table again. The kept CSV files, by number: "
+        )
+    });
     let mut numbers = String::new();
     for (place, (number, file)) in files.iter().enumerate() {
         if place > 0 {
@@ -353,10 +367,12 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `draw_table` while
 // the screen has room for a table, `write_document` with it where documents
-// can be kept, and `open_document` while any document is kept; `download_file` while files can be kept, `remove_file` while any
-// file is kept, and `open_file` while a CSV file is kept where documents can
-// be kept; `turn_page` while the panel of apps has more than one page;
-// `forget` while anything that was said is remembered.
+// can be kept, and `open_document` while any document is kept;
+// `download_file` while files can be kept, `remove_file` while any file is
+// kept, and `open_file` while a CSV file is kept where documents can be kept,
+// or a PDF while Anthropic is the provider; `turn_page` while the panel of
+// apps has more than one page; `forget` while anything that was said is
+// remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
     tools.push_str(MAKE_APP);
@@ -391,7 +407,7 @@ pub fn chat_tools() -> String {
         let openable = if documents_usable() { files_openable() } else { Vec::new() };
         if !openable.is_empty() {
             tools.push(',');
-            tools.push_str(&open_file_tool(&openable));
+            tools.push_str(&open_file_tool(&openable, files_open_pdf()));
         }
     }
     let (pages, shown) = apps_pages();
@@ -645,6 +661,10 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             Some(number) => {
                 let kept = files_openable().iter().any(|(file, _)| u64::from(*file) == number);
                 let reopened = if kept { u32::try_from(number).ok().and_then(document_reopen) } else { None };
+                // A PDF goes only at the person's yes (see `files.rs`).
+                if reopened.is_none() && file_is_pdf(number) {
+                    return pdf_open_ask(number, chat_next_ask_last());
+                }
                 match reopened.unwrap_or_else(|| file_open_start(number)) {
                     Ok(said) => {
                         chat_say(&said);
