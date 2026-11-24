@@ -159,7 +159,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ### Anthropic
 
-- **No good answer from the real Anthropic has been seen.** Its site took a link and a request in the kernel's form, with no key, from a computer set to offer only what the kernel offers, and then the kernel's own link and try, with a made-up key, which it turned down as a key it does not know (see "Anthropic" in [model.md](model.md)). A good answer, and whether its answers come piece by piece to an `HTTP/1.0` request, as OrcaRouter's did, wait for a person's run. If they come only at the end, the words show all at once and the rest works as before.
+- **The real Anthropic has been seen in one person's run only:** the key worked, a line's answer came piece by piece to the kernel's `HTTP/1.0` request, as OrcaRouter's does, a table was drawn and a dice app made (see "Anthropic as a second provider" in [testing.md](testing.md)). What came in those answers was not watched: whether the model thought, the counts, the times.
 - **A tool in an answer of Anthropic's that came whole is not done,** only said: what the model gives a tool stands there as JSON of its own, which the JSON reader does not hand out as a text. A line's answer is asked for piece by piece, where it comes as a text.
 - **What of a tool's input arrives when an answer reaches its limit** was not seen: Anthropic holds each part of a tool's input back until it is whole and checked. So a table cut off at the limit may bring none of its rows, where OrcaRouter's brings its whole rows.
 - **The provider's checks (`refusal`) keep a tool from being done,** even a table whose rows came whole, since such an answer may stop in the middle of what the model gives a tool.
