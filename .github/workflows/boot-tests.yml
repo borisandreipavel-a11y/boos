@@ -5,8 +5,8 @@
 #   merged with master as master is when the run starts. A pull request that changes this file gets the whole set,
 #   since the runner's table boots nothing for a change under .github/;
 # - after each change that lands on master, the whole set: every suite and every break on purpose.
-# The jobs are spread over five of GitHub's computers at once, each running one share of them (run_tests.py
-# --share N/5); the job "boot" is the one check for all five, green only when all five are.
+# The jobs are spread over six of GitHub's computers at once, each running one share of them (run_tests.py
+# --share N/6); the job "boot" is the one check for all six, green only when all six are.
 # See docs/testing.md, "Boot tests on GitHub".
 #
 # QEMU comes from the installer for 64-bit Windows that qemu.org names (qemu.weilnetz.de), version 11.1.0. The
@@ -35,16 +35,16 @@ concurrency:
 
 jobs:
   share:
-    name: boot ${{ matrix.share }} of 5
+    name: boot ${{ matrix.share }} of 6
     runs-on: windows-latest
-    # About one and a half times what the slowest share of the whole set is worked out to take on five computers
-    # (about 55 minutes); what a pull request needs is the whole set at most.
+    # About one and a half times what the slowest share of the whole set is worked out to take on six computers
+    # (about 58 minutes); what a pull request needs is the whole set at most.
     timeout-minutes: 90
     strategy:
-      # A share that fails does not stop the other four: their results are wanted too.
+      # A share that fails does not stop the other five: their results are wanted too.
       fail-fast: false
       matrix:
-        share: [1, 2, 3, 4, 5]
+        share: [1, 2, 3, 4, 5, 6]
     env:
       QEMU_INSTALLER: qemu-w64-setup-20260811.exe
       QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
@@ -78,7 +78,7 @@ jobs:
           Write-Output $hash
           if ($hash -cne $env:QEMU_SHA512) { exit 1 }
 
-      # The five computers may all try to keep it at once; one is enough, so a refused save is no failure.
+      # The six computers may all try to keep it at once; one is enough, so a refused save is no failure.
       - name: Keep the installer for later runs
         if: steps.kept.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -132,7 +132,7 @@ jobs:
       - name: Boot the kernel and run this share of the tests
         env:
           BOOS_TEST_WORK: ${{ runner.temp }}\boos-tests
-          SHARE: ${{ matrix.share }}/5
+          SHARE: ${{ matrix.share }}/6
         run: |
           if ($env:GITHUB_EVENT_NAME -ne "pull_request") {
             Write-Output "A change on master: the whole set."
@@ -178,17 +178,17 @@ jobs:
             !${{ runner.temp }}\boos-tests\**\*.efi
           if-no-files-found: ignore
 
-  # The one check for the whole run: it waits for the five shares, also when one failed, and is green only when
-  # all five passed.
+  # The one check for the whole run: it waits for the six shares, also when one failed, and is green only when
+  # all six passed.
   boot:
     needs: share
     if: always()
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - name: See that all five shares passed
+      - name: See that all six shares passed
         env:
           SHARES: ${{ needs.share.result }}
         run: |
-          Write-Output "The five shares together: $env:SHARES"
+          Write-Output "The six shares together: $env:SHARES"
           if ($env:SHARES -ne "success") { exit 1 }
