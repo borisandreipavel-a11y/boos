@@ -1,0 +1,142 @@
+png g1 13 7
+shrunk g1 5 5 5 3
+raw g1
+png g2i 9 5
+png g4 17 3
+png g8key 33 9
+png g16key 5 7
+png rgb8 31 17
+shrunk rgb8 10 10 10 5
+shrunk rgb8 31 5 9 5
+shrunk rgb8 3 17 3 2
+shrunk rgb8 1 1 1 1
+raw rgb8
+png rgb16key 7 9
+png p1 19 4
+png p2t 10 6
+png p4 23 11
+raw p4
+png p8t 40 30
+shrunk p8t 17 9 12 9
+raw p8t
+png ga8 12 12
+png ga16 6 6
+shrunk ga16 4 4 4 4
+png rgba8i 29 13
+shrunk rgba8i 10 10 10 4
+raw rgba8i
+png rgba16 9 4
+png one 1 1
+png three 3 3
+png stored 50 40
+png fixed 64 32
+png huff 40 40
+png rle 40 40
+png win9 64 64
+png parts 20 10
+png extras 16 16
+png big 160 120
+shrunk big 64 64 64 48
+shrunk big 100 30 40 30
+png filter0 24 8
+png filter1 24 8
+png filter2 24 8
+png filter3 24 8
+png filter4 24 8
+zlib z-empty 0 0
+zlib z-one 1 3904355907
+zlib z-text 200000 798539168
+zlib z-fixed 100000 1313938524
+zlib z-huff 80000 712984875
+zlib z-rle 205632 2181543890
+zlib z-stored 70000 280848940
+zlib z-far 96000 1699540397
+zlib z-win9 60000 250354750
+zlib z-sync 50000 2619196362
+zlib z-level1 100000 1313938524
+file g1.png 0 86
+file g1.rgba 86 364
+file g1-5x5.rgba 450 60
+file g1.raw 510 21
+file g2i.png 531 92
+file g2i.rgba 623 180
+file g4.png 803 98
+file g4.rgba 901 204
+file g8key.png 1105 388
+file g8key.rgba 1493 1188
+file g16key.png 2681 159
+file g16key.rgba 2840 140
+file rgb8.png 2980 1666
+file rgb8.rgba 4646 2108
+file rgb8-10x10.rgba 6754 200
+file rgb8-31x5.rgba 6954 180
+file rgb8-3x17.rgba 7134 24
+file rgb8-1x1.rgba 7158 4
+file rgb8.raw 7162 1598
+file rgb16key.png 8760 473
+file rgb16key.rgba 9233 252
+file p1.png 9485 99
+file p1.rgba 9584 304
+file p2t.png 9888 128
+file p2t.rgba 10016 240
+file p4.png 10256 271
+file p4.rgba 10527 1012
+file p4.raw 11539 143
+file p8t.png 11682 2022
+file p8t.rgba 13704 4800
+file p8t-17x9.rgba 18504 432
+file p8t.raw 18936 1230
+file ga8.png 20166 368
+file ga8.rgba 20534 576
+file ga16.png 21110 218
+file ga16.rgba 21328 144
+file ga16-4x4.rgba 21472 64
+file rgba8i.png 21536 1602
+file rgba8i.rgba 23138 1508
+file rgba8i-10x10.rgba 24646 160
+file rgba8i.raw 24806 1534
+file rgba16.png 26340 360
+file rgba16.rgba 26700 144
+file one.png 26844 69
+file one.rgba 26913 4
+file three.png 26917 108
+file three.rgba 27025 36
+file stored.png 27061 6108
+file stored.rgba 33169 8000
+file fixed.png 41169 4362
+file fixed.rgba 45531 8192
+file huff.png 53723 4908
+file huff.rgba 58631 6400
+file rle.png 65031 1060
+file rle.rgba 66091 6400
+file win9.png 72491 5164
+file win9.rgba 77655 16384
+file parts.png 94039 5834
+file parts.rgba 99873 800
+file extras.png 100673 992
+file extras.rgba 101665 1024
+file big.png 102689 7072
+file big.rgba 109761 76800
+file big-64x64.rgba 186561 12288
+file big-100x30.rgba 198849 4800
+file filter0.png 203649 652
+file filter0.rgba 204301 768
+file filter1.png 205069 652
+file filter1.rgba 205721 768
+file filter2.png 206489 652
+file filter2.rgba 207141 768
+file filter3.png 207909 652
+file filter3.rgba 208561 768
+file filter4.png 209329 652
+file filter4.rgba 209981 768
+file z-empty.zlib 210749 8
+file z-one.zlib 210757 9
+file z-text.zlib 210766 55143
+file z-fixed.zlib 265909 35545
+file z-huff.zlib 301454 61215
+file z-rle.zlib 362669 2674
+file z-stored.zlib 365343 70016
+file z-far.zlib 435359 32767
+file z-win9.zlib 468126 23768
+file z-sync.zlib 491894 14297
+file z-level1.zlib 506191 33919

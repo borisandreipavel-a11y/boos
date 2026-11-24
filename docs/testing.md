@@ -1390,6 +1390,16 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 - **On GitHub, the pull request's first run,** on four computers under the faster checks (the suites the change needs, its own breaks on purpose and the first of each list), 30 to 39 minutes each: 149 suites' jobs as meant, and two not, both tests that press their own keys and did not know the provider question. `secret line` (`test_secret_keyed.py`) answered a fresh start's questions with three Enters: the one meant for the key answered the provider, and the secret was then typed into the question for a look, where the search of memory found it loose. `chat tools forgetting` waited, after `setup` and the name, for the question for the key, and its next line went to the question for a look. Both now answer the provider question with Enter alone; run again here, both as meant. 34 breaks on purpose, every one caught at its recorded check: the fifteen of this change, seven of the eight aimed again (the eighth, `nowipe_copy`, a known miss whose own line did not change, was not picked), and the first of each other list.
 - **Not verified here:** what came in each of that run's answers (thinking, the counts, the time); what of a held part of a tool's inputs arrives when an answer reaches its limit; a thinking block whose text is not left empty; a `redacted_thinking` block, and the endings `pause_turn` and `stop_sequence`, which are taken as ordinary ends and were never seen; the whole set, which runs on GitHub.
 
+**The pictures crate**
+
+`pictures/` (see [pictures.md](pictures.md)), code of the project's own that turns a PNG file into dots, shrunk to fit a room. The kernel does not use it yet. Its tests run on the computer the project is built on, not in QEMU. Checked on 2026-11-24:
+
+- `python test_pictures.py`: 17 tests and the count of memory passed; clippy, with every warning an error, gave none; the build for `x86_64-unknown-uefi` gave no warning.
+- `python test_pictures.py --cross-check`: 106 PNG pictures that come with Python, Git and QEMU, read by the crate and by a second reader written apart from it in Python, every dot the same. None of them was interlaced, of 16 bits, a grey of 2 or 4 bits, a palette of 1 or 2 bits, or had a see-through grey or colour; those are checked against the second reader only.
+- `python run_picture_breaks.py`: 17 of 17 breaks on purpose caught, three of them after the tests were made to see them (see [pictures.md](pictures.md), "How it is tested").
+- Memory, counted while reading: a head that says 30,000 by 30,000 dots took nothing; a picture of 3000 by 2000 shown at 554 by 369 held at most 973,421 bytes, 817,704 of them the shown picture.
+- **Not verified:** how long a reading takes where the kernel runs; a picture made by another program of the kinds named above.
+
 **The split into files**
 
 - Every line of code in the old single file appears unchanged in the new files; only `pub`, `mod` and `use` were added and comments changed.
@@ -1461,6 +1471,7 @@ The cases were made by a script, kept in two files of bytes, and read in by a te
 ## The build check on GitHub
 
 - `.github/workflows/build.yml` has GitHub build the interpreter and the kernel on one of its Windows computers, with the same Rust as the computer the kernel is made on, for every pull request into `master` and for every change that lands there. It runs `test-tools/build_all.py`, which also sees that the kernel holds the interpreter just built, and sees that every script in `test-tools/` can be read. It boots nothing. Its first run, on the pull request that brought it in, passed in about two minutes: Rust 1.100.0 in use, both builds without warnings, the kernel holding the interpreter just built. The built files differ a little in size from those of the computer the kernel is made on, because they carry the building computer's folder names.
+- After the builds it adds clippy to its Rust and runs `test-tools/test_pictures.py`: the pictures crate's own tests, clippy and a build for the kernel's target (see "The pictures crate" above). So a mistake there fails this check, which every pull request must pass.
 - A run uses the copy of that file in the commit it checks; for a pull request that is a trial merge into `master`, so a pull request from a branch without the file should be checked with `master`'s copy (read from GitHub's documentation; that first run did check out the trial merge, but its branch had the file). A pull request whose merge has a conflict gets no run until the conflict is sorted out.
 
 ## Boot tests on GitHub

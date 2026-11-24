@@ -1,0 +1,3 @@
+# The test pictures and streams are bytes, not text: git must never change
+# their line ends (core.autocrlf), or the dots and check values would differ.
+* -text

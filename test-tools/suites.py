@@ -39,6 +39,10 @@ APPS = ["src/apps.rs"]
 SECRET = ["src/secret.rs"]  # a key or a password typed and kept
 FILES = ["src/files.rs", "src/download.rs", "src/notebook.rs", "src/parts.rs", "src/disk.rs", "src/tls.rs"]  # files from the web, kept
 DOCUMENTS = ["src/documents.rs", "src/drawing.rs", "src/notebook.rs"]  # tables kept as documents
+# The pictures crate (pictures/) and its test data: only its own two entries go through them.
+PICTURES = ["pictures/Cargo.toml", "pictures/src/lib.rs", "pictures/src/check.rs", "pictures/src/png.rs",
+            "pictures/src/shrink.rs", "pictures/src/unpack.rs", "pictures/src/tests.rs", "pictures/tests/memory.rs",
+            "pictures/test-data/cases.txt", "pictures/test-data/cases.bin"]
 
 SUITES = [
     dict(name="app", command=["test_app.py", APP_KINDS, "dump"], watches=STAND_IN + APPS + SECRET, seconds=420),
@@ -128,6 +132,11 @@ SUITES = [
          watches=STAND_IN + SECRET, seconds=260),
     dict(name="chat tools on the Intel card", command=["test_chat_tools.py"], split=["words", "dice", "odd"],
          env={"BOOS_NETWORK_CARD": "e1000"}, watches=STAND_IN + APPS, seconds=dict(words=80, dice=70, odd=130)),
+    # The pictures crate (pictures/, docs/pictures.md), code of the project's own that turns a picture file into
+    # dots: its tests, run by cargo on this computer, not in QEMU (test_pictures.py), and its breaks on purpose, each
+    # in a copy of the crate, as one job through their own list (run_picture_breaks.py). Neither boots anything.
+    dict(name="pictures", command=["test_pictures.py"], watches=PICTURES, seconds=150),
+    dict(name="pictures breaks", command=["run_picture_breaks.py"], watches=PICTURES, seconds=420),
 ]
 
 # Scripts named test_*.py or run_*_breaks.py that are no entry of their own, and why.

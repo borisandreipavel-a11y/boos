@@ -1,7 +1,8 @@
 # The build check. GitHub runs it on one of its own Windows computers for every pull request into master,
 # and again when a change lands on master. It builds the interpreter for Lua and then the kernel, the way
 # run.bat does, and sees that the kernel holds the interpreter it just built (test-tools/build_all.py).
-# It does not boot the kernel. See docs/testing.md, "The build check on GitHub".
+# Then it runs the pictures crate's own tests. It does not boot the kernel. See docs/testing.md, "The build
+# check on GitHub".
 
 name: Build
 
@@ -42,3 +43,12 @@ jobs:
 
       - name: The test tools can be read
         run: python -m compileall -q test-tools
+
+      # The pictures crate's own tests (docs/pictures.md): built and run as a program on this computer, not in
+      # QEMU, then clippy, with every warning an error, and a build for the kernel's target. Rust's smallest set
+      # leaves clippy out, so it is added here.
+      - name: Add clippy
+        run: rustup component add clippy --toolchain 1.100.0
+
+      - name: The pictures crate's own tests
+        run: python test-tools/test_pictures.py
