@@ -1,7 +1,7 @@
 """Documents of text and tables (docs/tools.md `write_document`), for test_text_documents.py: the stand-in's answers
 about them, in the shape of document_cases.py, whose chain hands it every behaviour no other file knows (through
-open_file_cases.py); and the documents these answers write. Every text is made up. Nothing runs when this file is
-imported.
+open_file_cases.py), and that hands on what it does not know itself to picture_document_cases.py; and the documents
+these answers write. Every text is made up. Nothing runs when this file is imported.
 
 Behaviours: "write=guide:0" asks for write_document with the document "guide" of DOCUMENTS behind the line "document 0"
 (any number); "writebare=fruit" with the document alone, without such a line; "writecut=moons:1" with the document
@@ -160,4 +160,6 @@ def answer(kind, line, bearer):
         return asked({"text": "title Wrong\ntext The lines are under another name."})
     if name == "writeempty":
         return asked({"lines": EMPTY})
-    return None
+    # The behaviours for pictures in documents are picture_document_cases.py's.
+    import picture_document_cases
+    return picture_document_cases.answer(kind, line, bearer)

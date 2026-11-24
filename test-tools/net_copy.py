@@ -34,7 +34,7 @@ def swap(text, old, new, count=1):
 def fresh():
     """Brings the copy's sources up to date with the project's; keeps the copy's build folder."""
     os.makedirs(COPY, exist_ok=True)
-    for name in ["src", "vendor", ".cargo", "interpreter", "password-key"]:
+    for name in ["src", "vendor", ".cargo", "interpreter", "password-key", "pictures"]:
         target = os.path.join(COPY, name)
         if name == "interpreter":
             shutil.rmtree(os.path.join(target, "src"), ignore_errors=True)

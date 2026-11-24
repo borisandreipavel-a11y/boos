@@ -44,6 +44,13 @@ wasmi = { version = "=1.1.0", default-features = false }
 # docs/lock.md.
 password-key = { path = "password-key" }
 
+# Code of this project's own that reads picture files (PNG) and shrinks them
+# to fit the frame beside the panel of apps. It is kept in a crate of its own,
+# in the folder pictures/, for the same reason as password-key/: so that it is
+# built like the outside crates, to run fast. It uses no other crate. See
+# docs/pictures.md.
+pictures = { path = "pictures" }
+
 # Seven crates are not fetched from the internet. Cargo is told to use the
 # copies kept in vendor/ instead, which need no helper program at build time.
 # See vendor/README.md.
@@ -58,12 +65,12 @@ libm = { path = "vendor/libm" }
 
 # Every crate other than the kernel itself is built to run fast (the
 # compiler takes more time over it and makes quicker code): the outside
-# crates, and the one crate of this project's own in password-key/. The
-# kernel's own code is still built the plain way, which builds quickly and is
-# the easiest to follow when something goes wrong. The other crates do the
-# heavy work: the arithmetic of encryption, carrying out apps step by step,
-# and the rounds that turn a password into a key. Built plain they were many
-# times slower. The checks that stop on a number too large for its type stay
-# switched on for all of it.
+# crates, and the two crates of this project's own, in password-key/ and
+# pictures/. The kernel's own code is still built the plain way, which builds
+# quickly and is the easiest to follow when something goes wrong. The other
+# crates do the heavy work: the arithmetic of encryption, carrying out apps
+# step by step, the rounds that turn a password into a key, and reading
+# pictures. Built plain they were many times slower. The checks that stop on
+# a number too large for its type stay switched on for all of it.
 [profile.dev.package."*"]
 opt-level = 2

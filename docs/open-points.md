@@ -36,8 +36,19 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **What a file holds is not looked at by the kernel** beyond its first bytes. Only a CSV file can be opened as a document (`open_file`, see [tools.md](tools.md)), and the model reads it, not the kernel: its text goes to the provider, once, when it is opened. A PDF, a Word or an Excel file and plain text cannot be opened yet; Word, Excel and PDF are packed, and the kernel has no way of unpacking them.
 - **Only a file's first 64 KB go to the model,** cut behind a line end: the rest of a longer file is not seen, and a part further on cannot be asked for yet. A file whose first line is longer is not opened.
 - **Nothing checks the table the model draws from a file against the file:** a value it left out or changed looks right. The table holds 50 rows at most, so that a change by a wish still fits; how a real rewrite fits is known only from a run with the real model.
-- **A kept file's check value is not checked again** after it was written, not even when it is opened, since that would take a pass over the whole file.
+- **A kept file's check value is not checked again** after it was written, not even when it is opened, since that would take a pass over the whole file. A PNG picture has check values of its own, which are checked whenever it is shown.
 - **A file opened before opens its document again;** reading the file afresh, for a new table from the same file, is not offered. A file's text goes to the model when it is opened, and the person is not asked first.
+
+## Pictures
+
+- **PNG only.** JPEG, most of the photos on the web, comes next, then the pictures inside PDFs; GIF and WebP are not planned. A JPEG or GIF is not kept at all today. See [pictures.md](pictures.md).
+- **A picture is read whole, in the main loop,** when its document is written, opened or changed: the machine waits meanwhile, at the limit of 9,000,000 dots some 5 s for the slowest kind (measured in QEMU), up to some 20 s for a document of four such pictures. Nothing shows that it is busy. Keys typed meanwhile wait.
+- **The limits** (9,000,000 dots, 16,384 on a side, 4,000,000 interlaced) were set from times measured in QEMU; how long a real PC takes was not measured. A larger picture is turned down, not read at a smaller size.
+- **Colours are shown as they are written:** gamma, colour profiles and the colour of the screen it was made on are not applied; 16-bit colours keep their high byte. A picture is shrunk by averaging, never enlarged, and stands at the left of the page.
+- **The model never sees a picture:** it knows a picture's file, name and size, and the document's lines, nothing of what it shows, so it cannot describe it or write a caption from it.
+- **Whether the real model picks `open_file` when asked to show a picture** was not tried: only the tool's words lead it there. The stand-in asks for it by name.
+- **A picture document keeps the line, not the dots:** a removed file leaves `picture of file 3: it was removed` in its place, and a document that names another file's number than meant shows that file.
+- **The breaks on purpose** of pictures in documents are each caught by a scenario; painting while the kernel's lines cover the screen has no break, since nothing paints a picture then that is not painted again after.
 
 ## Network
 
@@ -335,8 +346,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## The screen
 
-- **Only filled rectangles and single lines of text can be drawn.** There are no lines or pictures. An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).
-- **A table and a document of text and tables are the only things the model can have drawn,** one at a time, in one frame beside the panel of apps (see "The table" and "A document of text" in [screen.md](screen.md)); a document of text only where documents can be kept, its tables in the look's colours, its pages turned by keys. Neither holds a picture.
+- **Only filled rectangles, single lines of text and kept PNG pictures can be drawn.** There are no lines, and a picture only in a document, in the frame (see "Pictures" in [screen.md](screen.md)). An app cannot draw; it can only have one text shown in the kernel's box (see "The box"). See [screen.md](screen.md).
+- **A table and a document of text and tables are the only things the model can have drawn,** one at a time, in one frame beside the panel of apps (see "The table" and "A document of text" in [screen.md](screen.md)); a document of text only where documents can be kept, its tables in the look's colours, its pages turned by keys. A document of text may hold up to four kept PNG pictures; a table holds none.
 - **A table, where a notebook can be added to,** is kept as a document and can be opened and changed again (see "Documents" below); elsewhere it is kept in memory only, a new table takes the place of the one before, it is gone when the machine is switched off, and the model does not see what it holds after the line that drew it. At most 6 columns and the rows that fit (the head and 14 on a screen of 1280 by 800) are drawn, cells are cut to their columns, and only plain signs show; a letter with an accent shows as a dot.
 - **On a screen narrower than 1000 dots there is no table,** and the tool is not offered. What room a real PC's screen or VirtualBox's gives is not known; a screen of 1024 by 768 dots was worked out (a frame of 324 by 448, the head and 13 rows, 19 signs across with 6 columns) and not tried.
 - **Only a table's letters are checked against their background.** The lines and the backgrounds the model picks may be any colour, also one hard to tell from the frame or the screen.
@@ -365,7 +376,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Documents
 
-- **Two kinds of document: a table, and a document of text and tables.** A chart or a picture would be a kind of its own (the note has a byte for the kind). See "Documents" in [screen.md](screen.md).
+- **Two kinds of document: a table, and a document of text and tables,** which may hold pictures. A chart would be a kind of its own (the note has a byte for the kind). See "Documents" in [screen.md](screen.md).
 - **A kernel from before documents of text** leaves them out at a start without a word, and by its code (read, not tried) could give the number of one to a new table of its own, whose note would then take the old one's place; the lines of the document of text stay on the disk, out of reach.
 - **A change is the whole document written again by the model.** The answer shares its 4,000 tokens with the model's thinking, so the longer a document, the likelier a change is cut off; a change cut off leaves the document as it was, so a long one may not be changeable by a wish at all. A document of text of 8 KB is some 2,000 tokens, half of the answer's limit. How much the real model thinks before a change is not known. Changes by keys, without the model, are still to come.
 - **The pages of a document of text are turned by keys only,** Page Down and Page Up. The model is not told which page is shown, and cannot turn one; a page is laid out for the screen in use, so the same document has other pages on another screen.

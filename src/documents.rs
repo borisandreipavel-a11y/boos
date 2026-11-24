@@ -22,8 +22,8 @@ use alloc::vec::Vec;
 use crate::chat::chat_box_place;
 use crate::drawing::{
     Drawn, NotDrawn, Written, drawing_clear, drawing_document, drawing_fit, drawing_lines_kept, drawing_refused, drawing_room, drawing_said,
-    drawing_show, drawing_text, writing_document, writing_lines_kept, writing_pages, writing_refused, writing_said, writing_show,
-    writing_text,
+    drawing_show, drawing_text, writing_document, writing_laid, writing_lines_kept, writing_pages, writing_put, writing_refused, writing_said,
+    writing_show, writing_text,
 };
 use crate::files::{file_opening_forget, file_opening_number};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -536,6 +536,47 @@ pub fn document_reopen(file: u32) -> Option<Result<String, String>> {
         let named = kept_documents().iter().find(|document| document.number == number).map(called).unwrap_or_default();
         format!("I opened {}, made from file {} before{}.", named, file, opened.fit())
     }))
+}
+
+// The tool `open_file` for a kept PNG picture: a picture opened before opens
+// the newest document made from it, as any file does (`document_reopen`).
+// Otherwise the picture is shown in the frame as a new document of text of
+// its own, its title the file's name and its one block the line `picture`
+// with the file's number, kept as made from that file (form 2 of the note),
+// and the open document from then on. Nothing of the picture goes to the
+// model. Gives back what the kernel says, or, when the picture cannot be
+// shown, why: then nothing is kept, and the frame and the open document stay
+// as they were.
+pub fn document_of_picture(file: u32, name: &str) -> Result<String, String> {
+    if let Some(reopened) = document_reopen(file) {
+        return reopened;
+    }
+    let lines = format!("title {}\npicture {}", name, file);
+    let laid = match writing_laid(&lines) {
+        Ok(laid) => laid,
+        Err(NotDrawn::NoRoom) => return Err(String::from("the model asked to open a picture, but this screen has no room for one.")),
+        Err(NotDrawn::Empty) => return Err(format!("I could not open file {}, \"{}\".", file, name)),
+    };
+    if let Some((_, why)) = laid.written.pictures_not_shown.first() {
+        return Err(format!("I did not open file {}, \"{}\", because {}.", file, name, why));
+    }
+    let written = writing_put(laid);
+    let size = match written.pictures.first() {
+        Some((_, width, height)) => format!(", a PNG picture of {} by {} dots", width, height),
+        None => String::new(),
+    };
+    let said = match version_keep(Kind::Text, None, &name_cleaned(name.as_bytes()), &lines, Some(file)) {
+        Ok(number) => {
+            open_put(Some(OpenDocument { number, lines }));
+            format!("I opened file {}, \"{}\"{}, as document {}.", file, name, size, number)
+        }
+        Err(reason) => {
+            open_put(None);
+            format!("I showed file {}, \"{}\"{}, but I could not keep it as a document, because {}.", file, name, size, reason)
+        }
+    };
+    documents_panel_again();
+    Ok(said)
 }
 
 // Reads the newest version of a kept document from the disk, draws it by its

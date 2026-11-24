@@ -19,7 +19,7 @@ COPY = os.path.join(RUNS, "lines-copy")
 def fresh():
     """Brings the copy's sources up to date with the project's; keeps its build folder and its vendor folder."""
     os.makedirs(COPY, exist_ok=True)
-    for name in ["src", ".cargo", "password-key", "vendor"]:
+    for name in ["src", ".cargo", "password-key", "pictures", "vendor"]:
         target = os.path.join(COPY, name)
         if name == "vendor" and os.path.exists(target):
             continue
