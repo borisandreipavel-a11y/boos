@@ -7,6 +7,7 @@ import re
 
 import documents_model
 import table_model
+import text_document_model
 from app_cases import clean, hide
 from conversation_model import FORGOT  # noqa: F401 (the row the tool `forget` gets, for the tests)
 from keyed_model import ORDER, KeyedChat
@@ -145,7 +146,8 @@ FORGET = {"type": "function", "function": {"name": "forget",
 
 def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), documents=()):
     """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
-    `draw_table` if the screen (width, height), or None for none, has room for a table, `download_file` unless `files`
+    `draw_table` if the screen (width, height), or None for none, has room for a table, and `write_document` with it
+    where documents can be kept, `download_file` unless `files`
     is None (no room for files, as on a disk that is not divided), `remove_file` for the kept files in `files`
     ((number, words), the one kept last first), `open_file` for the CSV files among them where documents can be kept,
     and `forget` if anything said is remembered. `documents`: the kept
@@ -166,6 +168,8 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), d
         table = documents_model.draw_table_tool(*screen)
     if table:
         tools.append(table)
+        if documents is not None:
+            tools.append(text_document_model.tool_meant(*screen))
         if documents:
             tools.append(documents_model.open_document_tool(documents))
     if files is not None:

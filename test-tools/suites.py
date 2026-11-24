@@ -95,6 +95,12 @@ SUITES = [
     # document that names the file, in the stand-in copy.
     dict(name="open file", command=["test_open_file.py"], split=True, watches=STAND_IN + FILES + DOCUMENTS,
          seconds=dict(open=150, big=150, odd=120)),
+    # Documents of text and tables: written, laid out in pages, turned with Page Down and Page Up, kept, opened and
+    # changed by a wish, in the stand-in copy; the main flow and the cut-off ones with Anthropic's form too.
+    dict(name="text documents", command=["test_text_documents.py"], split=True, watches=STAND_IN + DOCUMENTS,
+         seconds=dict(write=190, cut=160, odd=130, broken=75, nodocs=45)),
+    dict(name="text documents with Anthropic", command=["test_text_documents.py"], split=["write", "cut"],
+         env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + DOCUMENTS, seconds=dict(write=190, cut=160)),
     # Anthropic as a second provider: the question for the provider, each provider's key, and Anthropic's form, in the
     # stand-in copy, whose stand-in answers Anthropic's form too (anthropic_cases.py).
     dict(name="anthropic", command=["test_anthropic.py"], split=True, watches=STAND_IN + SECRET,
@@ -158,7 +164,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15}
+                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -404,4 +410,20 @@ CAUGHT_BY = {
     'break anthropic: checkstool': 'events checks after words',
     'break anthropic: toolpieces': "events a tool's inputs in pieces",
     'break anthropic: nothinking': 'events all of it thinking',
+    'break text documents: pagenotturned': 'text-write page-2',
+    'break text documents: pagepastend': 'text-write typing-last-page',
+    'break text documents: nomark': 'text-write guide',
+    'break text documents: titlenotcut': "text-odd 'the odd one'",
+    'break text documents: nogap': "text-write 'write me a short guide t'",
+    'break text documents: noheadagain': 'text-odd odd-3',
+    'break text documents: wordsnotcut': 'text-odd odd-1',
+    'break text documents: repaintnotext': 'text-odd night',
+    'break text documents: linesdocumentkept': 'write request 2',
+    'break text documents: keptastable': 'write note of document 1',
+    'break text documents: textnotfound': 'write restart the lines about documents',
+    'break text documents: toldastable': 'write request 2',
+    'break text documents: notool': 'write request 1',
+    'break text documents: smallbound': "text-cut 'a very long one'",
+    'break text documents: streambound': "text-cut 'a very long one'",
+    'break text documents: brokennotdrawn': "text-broken 'add the moons'",
 }

@@ -6,8 +6,8 @@ from apps_kept_breaks import swap
 BREAKS = {
     # --- Changing a document ---
     # A change that did not come whole is drawn and kept all the same.
-    "cutchangekept": {"documents.rs": swap("        if !whole {\n            return Err(format!(\"the new table for document",
-                                           "        if false {\n            return Err(format!(\"the new table for document")},
+    "cutchangekept": {"documents.rs": swap("        if !whole {\n            return Err(match kind {\n",
+                                           "        if false {\n            return Err(match kind {\n")},
     # A change for a document that is not open is made all the same, from lines the model has not seen.
     "closedchanged": {"documents.rs": swap("        if open_number() != Some(number) {\n            open_inner(number)?;\n",
                                            "        if false {\n            open_inner(number)?;\n")},
@@ -18,8 +18,8 @@ BREAKS = {
     "nolines": {"model.rs": swap("    if !document.is_empty() {\n        told.push_str(&key_starred(document, key));\n",
                                  "    if false {\n        told.push_str(&key_starred(document, key));\n")},
     # A change asked for again once the kernel opened its document counts as the same thing again for the line.
-    "wantedwithoutopen": {"tools.rs": swap("    let given = if call.name == \"draw_table\" { given.map(documents_wanted) } else { given };\n",
-                                           "    let given = if false { given.map(documents_wanted) } else { given };\n")},
+    "wantedwithoutopen": {"tools.rs": swap("    let given = given.map(|text| documents_wanted(&call.name, text));\n",
+                                           "    let given = given.map(|text| documents_wanted(\"\", text));\n")},
     # Opening a document ends the line, so the model never sees its lines in it.
     "openends": {"tools.rs": swap("            Some(number) => match document_open(number) {\n                Ok(said) => {\n                    chat_say(&said);\n"
                                   "                    return ToolDone::Back;\n",

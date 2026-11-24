@@ -1,5 +1,6 @@
-//! Documents: tables the model described, kept on the disk as their
-//! descriptions, so that they can be opened and changed again by a wish.
+//! Documents: tables the model described, and documents of text and tables
+//! it wrote, kept on the disk as their lines, so that they can be opened and
+//! changed again by a wish.
 //! Where documents can be kept (a notebook that can be added to, and a screen
 //! with room for the frame of a table), every table that is drawn is kept at
 //! once as a document: its lines as the model wrote them, under a number, and
@@ -20,8 +21,9 @@ use alloc::vec::Vec;
 
 use crate::chat::chat_box_place;
 use crate::drawing::{
-    Drawn, NotDrawn, drawing_clear, drawing_document, drawing_fit, drawing_lines_kept, drawing_refused, drawing_room, drawing_said,
-    drawing_show, drawing_text,
+    Drawn, NotDrawn, Written, drawing_clear, drawing_document, drawing_fit, drawing_lines_kept, drawing_refused, drawing_room, drawing_said,
+    drawing_show, drawing_text, writing_document, writing_lines_kept, writing_pages, writing_refused, writing_said, writing_show,
+    writing_text,
 };
 use crate::files::{file_opening_forget, file_opening_number};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -45,17 +47,62 @@ const NUMBER_DIGITS_MOST: usize = 9;
 const NUMBER_MOST: u32 = 999_999_999;
 
 // The first byte of a note says what form the rest has, so that later forms
-// can say more. Form 1: a byte for the kind of document (1, a table, the only
-// kind so far), the newest version's number in four bytes, lowest first, and
-// the document's name. Form 2, for a document made from a kept file (see
-// `files.rs`): the same, with the file's number in four bytes, lowest first,
-// between the version's number and the name. A document made from no file is
-// kept in form 1, as before form 2 existed.
+// can say more. Form 1: a byte for the kind of document (1, a table, written
+// with `draw_table`; 2, a document of text and tables, written with
+// `write_document`), the newest version's number in four bytes, lowest
+// first, and the document's name. Form 2, for a document made from a kept
+// file (see `files.rs`): the same, with the file's number in four bytes,
+// lowest first, between the version's number and the name. A document made
+// from no file is kept in form 1, as before form 2 existed. The kind is the
+// newest version's: a change written with the other tool changes it.
 const NOTE_FORM: u8 = 1;
 const NOTE_FORM_FILE: u8 = 2;
 const KIND_TABLE: u8 = 1;
+const KIND_TEXT: u8 = 2;
 const NOTE_HEAD: usize = 6;
 const NOTE_HEAD_FILE: usize = 10;
+
+// The kind of a document: what its lines are read and drawn as.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Table,
+    Text,
+}
+
+impl Kind {
+    fn byte(self) -> u8 {
+        match self {
+            Kind::Table => KIND_TABLE,
+            Kind::Text => KIND_TEXT,
+        }
+    }
+
+    fn of_byte(byte: u8) -> Option<Kind> {
+        match byte {
+            KIND_TABLE => Some(Kind::Table),
+            KIND_TEXT => Some(Kind::Text),
+            _ => None,
+        }
+    }
+}
+
+// What came of drawing a kept document in the frame: a table, or a document
+// of text laid out in pages.
+enum Opened {
+    Table(Drawn),
+    Text(Written),
+}
+
+impl Opened {
+    // What the kernel says behind "I opened ...": rows or columns that did
+    // not fit, for a table; the pages, for a document of text.
+    fn fit(&self) -> String {
+        match self {
+            Opened::Table(drawn) => drawing_fit(drawn),
+            Opened::Text(written) => writing_pages(written),
+        }
+    }
+}
 
 // The longest name, in signs: a document is named by its title, and the panel
 // of documents shows a name of 45 signs whole behind the "- " in front of it.
@@ -63,15 +110,16 @@ const NAME_MOST: usize = 45;
 
 // A document found in the notebook or kept since the start: its number, the
 // number of its newest version, its name (nothing for a table without a
-// title), whether that version's lines were found whole, and the number of
-// the kept file it was made from, if it was. Only documents whose lines are
-// whole are listed; the others still hold on to their number.
+// title), whether that version's lines were found whole, the number of the
+// kept file it was made from, if it was, and its kind. Only documents whose
+// lines are whole are listed; the others still hold on to their number.
 struct KeptDocument {
     number: u32,
     version: u32,
     name: String,
     whole: bool,
     file: Option<u32>,
+    kind: Kind,
 }
 
 // The kept documents, the one used last first: kept, changed or opened. Only
@@ -140,10 +188,10 @@ fn name_cleaned(bytes: &[u8]) -> String {
 }
 
 // A note read from the disk, which comes from outside the kernel: the newest
-// version's number, the name, cleaned and cut, and for form 2 the number of
-// the file the document was made from. Gives nothing for a note of another
-// form or kind, or one that names no version or no file.
-fn note_read(note: &[u8]) -> Option<(u32, String, Option<u32>)> {
+// version's number, the name, cleaned and cut, for form 2 the number of the
+// file the document was made from, and the kind. Gives nothing for a note of
+// another form or kind, or one that names no version or no file.
+fn note_read(note: &[u8]) -> Option<(u32, String, Option<u32>, Kind)> {
     let (head, file) = match note.first() {
         Some(&NOTE_FORM) => (NOTE_HEAD, None),
         Some(&NOTE_FORM_FILE) if note.len() >= NOTE_HEAD_FILE => {
@@ -155,14 +203,15 @@ fn note_read(note: &[u8]) -> Option<(u32, String, Option<u32>)> {
         }
         _ => return None,
     };
-    if note.len() < head || note[1] != KIND_TABLE {
+    if note.len() < head {
         return None;
     }
+    let kind = Kind::of_byte(note[1])?;
     let version = u32::from_le_bytes([note[2], note[3], note[4], note[5]]);
     if version == 0 || version > NUMBER_MOST {
         return None;
     }
-    Some((version, name_cleaned(&note[head..]), file))
+    Some((version, name_cleaned(&note[head..]), file, kind))
 }
 
 // The name a document is listed and shown by: its own, or "document 3" for
@@ -203,11 +252,11 @@ pub fn documents_begin() {
             Ok(Some(note)) => note_read(&note),
             _ => None,
         };
-        let Some((version, kept_name, file)) = read else {
+        let Some((version, kept_name, file, kind)) = read else {
             continue;
         };
         let lines = lines_name(number, version);
-        let document = KeptDocument { number, version, name: kept_name, whole: names.iter().any(|other| *other == lines), file };
+        let document = KeptDocument { number, version, name: kept_name, whole: names.iter().any(|other| *other == lines), file, kind };
         if !document.whole {
             trouble.push_str(&format!("Documents: {}: its lines are not whole, so it is left out\r\n", called(&document)));
         }
@@ -260,24 +309,37 @@ pub fn documents_told() -> String {
         return String::new();
     };
     let named = called(document);
+    let kind = document.kind;
     let open = open_take();
     let lines = open.as_ref().map(|open| open.lines.clone()).unwrap_or_default();
     open_put(open);
-    format!(
-        "\n\nThe document open on the screen is {}. To change it, write its whole table again with draw_table, beginning with the line document {}. Its lines now:\n{}",
-        named, number, lines
-    )
+    match kind {
+        Kind::Table => format!(
+            "\n\nThe document open on the screen is {}. To change it, write its whole table again with draw_table, beginning with the line document {}. Its lines now:\n{}",
+            named, number, lines
+        ),
+        Kind::Text => format!(
+            "\n\nThe document open on the screen is {}, a document of text and tables. To change it, write it whole again with write_document, beginning with the line document {}. Its lines now:\n{}",
+            named, number, lines
+        ),
+    }
 }
 
-// What the model asked for with `draw_table`, as `tool_wanted` in `tools.rs`
-// compares it so that nothing is done twice for one line: the table's text as
-// the kernel reads it, and for a change of a kept document, which document
-// was open when it was asked for. So a change that was not done because its
-// document was not open, and whose document the kernel opened instead, may
-// be asked for again once it is open; a new table asked for again is the same
-// thing again, and is not kept twice.
-pub fn documents_wanted(text: String) -> String {
-    match drawing_document(&text) {
+// What the model asked for with `draw_table` or `write_document`, as
+// `tool_wanted` in `tools.rs` compares it so that nothing is done twice for
+// one line: the text as the kernel reads it, and for a change of a kept
+// document, which document was open when it was asked for. So a change that
+// was not done because its document was not open, and whose document the
+// kernel opened instead, may be asked for again once it is open; a new
+// document asked for again is the same thing again, and is not kept twice.
+// What any other tool was asked for is given back as it is.
+pub fn documents_wanted(tool: &str, text: String) -> String {
+    let asked = match tool {
+        "draw_table" => drawing_document(&text),
+        "write_document" => writing_document(&text),
+        _ => return text,
+    };
+    match asked {
         Some(asked) if asked > 0 => format!("{}\nwhile open: {}", text, open_number().unwrap_or(0)),
         _ => text,
     }
@@ -288,19 +350,40 @@ fn kept_number(asked: u64) -> Option<u32> {
     kept_documents().iter().find(|document| document.whole && u64::from(document.number) == asked).map(|document| document.number)
 }
 
-// The tool `draw_table` where documents can be kept. Reads the table the model
-// described in what it gave the tool. A table whose `document` line names a
-// kept document changes it, and only the open one: another is opened instead,
-// and the model is asked again with its lines. A change that did not come
-// whole is not drawn, and the document stays as it was. Any other table is a
-// new document: one that did not come whole is drawn as far as it came, but
-// not kept. A table drawn whole, or with rows or columns that did not fit, is
-// kept with all of its lines, and is the open document from then on. Gives
-// back what the kernel says, and whether the table was drawn whole, or what
-// it says when it turned the model's request down.
+// The tool `draw_table` where documents can be kept: a table.
 pub fn document_draw(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
-    let (text, whole) = drawing_text(inputs, cut_off)?;
-    let changes = match drawing_document(&text) {
+    document_made(Kind::Table, inputs, cut_off)
+}
+
+// The tool `write_document`: a document of text and tables. It is offered
+// only where documents can be kept (see `tools.rs`).
+pub fn document_written(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
+    if !documents_usable() {
+        return Err(String::from("the model asked to write a document, but documents cannot be kept on this machine."));
+    }
+    document_made(Kind::Text, inputs, cut_off)
+}
+
+// A document drawn or written by the model. Reads what the model gave the
+// tool. Lines whose `document` line names a kept document change it, and
+// only the open one: another is opened instead, and the model is asked again
+// with its lines. A change that did not come whole is not drawn, and the
+// document stays as it was. Anything else is a new document: one that did
+// not come whole is drawn as far as it came, but not kept. A document drawn
+// whole, or with rows or columns that did not fit, is kept with all of its
+// lines, as the tool's kind, and is the open document from then on. Gives
+// back what the kernel says, and whether it was drawn whole, or what it says
+// when it turned the model's request down.
+fn document_made(kind: Kind, inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
+    let (text, whole) = match kind {
+        Kind::Table => drawing_text(inputs, cut_off)?,
+        Kind::Text => writing_text(inputs, cut_off)?,
+    };
+    let asked = match kind {
+        Kind::Table => drawing_document(&text),
+        Kind::Text => writing_document(&text),
+    };
+    let changes = match asked {
         Some(asked) if asked > 0 => match kept_number(asked) {
             Some(number) => Some(number),
             None => return Err(format!("the model asked to change document {}, but no kept document has that number.", asked)),
@@ -312,7 +395,10 @@ pub fn document_draw(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
         // document is open: an answer that broke off ends the line, so the
         // model would not see the lines of a document opened for it.
         if !whole {
-            return Err(format!("the new table for document {} was cut off, so I left the document as it was.", number));
+            return Err(match kind {
+                Kind::Table => format!("the new table for document {} was cut off, so I left the document as it was.", number),
+                Kind::Text => format!("the new lines for document {} were cut off, so I left the document as it was.", number),
+            });
         }
         if open_number() != Some(number) {
             open_inner(number)?;
@@ -322,20 +408,35 @@ pub fn document_draw(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
             ));
         }
     }
-    let drawn = drawing_show(&text).map_err(|not| drawing_refused(not, whole))?;
-    let mut said = drawing_said(&drawn, whole);
+    let (mut said, drawn_whole, title_written) = match kind {
+        Kind::Table => {
+            let drawn = drawing_show(&text).map_err(|not| drawing_refused(not, whole))?;
+            let said = drawing_said(&drawn, whole);
+            let drawn_whole = drawn.whole();
+            (said, drawn_whole, drawn.title_written)
+        }
+        Kind::Text => {
+            let written = writing_show(&text).map_err(|not| writing_refused(not, whole))?;
+            let said = writing_said(&written, whole);
+            let written_whole = written.whole();
+            (said, written_whole, written.title_written)
+        }
+    };
     if !whole {
         open_put(None);
         said.push_str(" It is not kept.");
         documents_panel_again();
         return Ok((said, false));
     }
-    let name = drawn.title_written.as_deref().map(|title| name_cleaned(title.as_bytes())).unwrap_or_default();
-    let lines = drawing_lines_kept(&text);
-    // A new table drawn for a line that a kept file was opened for is made
-    // from that file (see `files.rs`), and its note says so.
+    let name = title_written.as_deref().map(|title| name_cleaned(title.as_bytes())).unwrap_or_default();
+    let lines = match kind {
+        Kind::Table => drawing_lines_kept(&text),
+        Kind::Text => writing_lines_kept(&text),
+    };
+    // A new document drawn for a line that a kept file was opened for is
+    // made from that file (see `files.rs`), and its note says so.
     let from_file = if changes.is_none() { file_opening_number() } else { None };
-    match version_keep(changes, &name, &lines, from_file) {
+    match version_keep(kind, changes, &name, &lines, from_file) {
         Ok(number) => {
             if from_file.is_some() {
                 file_opening_forget();
@@ -352,16 +453,16 @@ pub fn document_draw(inputs: &str, cut_off: bool) -> Result<(String, bool), Stri
         }
     }
     documents_panel_again();
-    Ok((said, drawn.whole()))
+    Ok((said, drawn_whole))
 }
 
-// Keeps a new version of a document: of the kept one with this number, or of
-// a new one, numbered after the highest, made from the kept file `from_file`
-// if it was. Its lines first, read back byte for byte, then the note that
-// names it as the newest; a document made from a file keeps saying so in the
-// note of every version. Gives back the document's number, or why it could
-// not be kept; then nothing changed in what counts.
-fn version_keep(changes: Option<u32>, name: &str, lines: &str, from_file: Option<u32>) -> Result<u32, String> {
+// Keeps a new version of a document, of this kind: of the kept one with this
+// number, or of a new one, numbered after the highest, made from the kept
+// file `from_file` if it was. Its lines first, read back byte for byte, then
+// the note that names it as the newest; a document made from a file keeps
+// saying so in the note of every version. Gives back the document's number,
+// or why it could not be kept; then nothing changed in what counts.
+fn version_keep(kind: Kind, changes: Option<u32>, name: &str, lines: &str, from_file: Option<u32>) -> Result<u32, String> {
     if !notebook_ready() {
         return Err(String::from("the notebook cannot be added to"));
     }
@@ -392,7 +493,7 @@ fn version_keep(changes: Option<u32>, name: &str, lines: &str, from_file: Option
     // otherwise.
     let mut note = Vec::with_capacity(NOTE_HEAD_FILE + name.len());
     note.push(if file.is_some() { NOTE_FORM_FILE } else { NOTE_FORM });
-    note.push(KIND_TABLE);
+    note.push(kind.byte());
     note.extend_from_slice(&version.to_le_bytes());
     if let Some(file) = file {
         note.extend_from_slice(&file.to_le_bytes());
@@ -403,7 +504,7 @@ fn version_keep(changes: Option<u32>, name: &str, lines: &str, from_file: Option
     // The document goes to the top of the list.
     let documents = kept_documents();
     documents.retain(|document| document.number != number);
-    documents.insert(0, KeptDocument { number, version, name: String::from(name), whole: true, file });
+    documents.insert(0, KeptDocument { number, version, name: String::from(name), whole: true, file, kind });
     serial_print(&format!("Documents: version {} of document {} is kept on the disk\r\n", version, number));
     Ok(number)
 }
@@ -415,9 +516,9 @@ pub fn document_open(asked: u64) -> Result<String, String> {
     let Some(number) = kept_number(asked) else {
         return Err(format!("the model asked for document {}, but no kept document has that number.", asked));
     };
-    let drawn = open_inner(number)?;
+    let opened = open_inner(number)?;
     let named = kept_documents().iter().find(|document| document.number == number).map(called).unwrap_or_default();
-    Ok(format!("I opened {}{}.", named, drawing_fit(&drawn)))
+    Ok(format!("I opened {}{}.", named, opened.fit()))
 }
 
 // The tool `open_file`, for a kept file that a document was made from before:
@@ -431,22 +532,23 @@ pub fn document_reopen(file: u32) -> Option<Result<String, String>> {
         .filter(|document| document.whole && document.file == Some(file))
         .map(|document| document.number)
         .max()?;
-    Some(open_inner(number).map(|drawn| {
+    Some(open_inner(number).map(|opened| {
         let named = kept_documents().iter().find(|document| document.number == number).map(called).unwrap_or_default();
-        format!("I opened {}, made from file {} before{}.", named, file, drawing_fit(&drawn))
+        format!("I opened {}, made from file {} before{}.", named, file, opened.fit())
     }))
 }
 
-// Reads the newest version of a kept document from the disk, draws it, makes
-// it the open document and puts it at the top of the list. Its lines come
-// from the disk, so from outside: they are drawn as any description is, and
-// cleaned there. Gives back what came of drawing it, or what the kernel says
-// when it could not.
-fn open_inner(number: u32) -> Result<Drawn, String> {
+// Reads the newest version of a kept document from the disk, draws it by its
+// kind, makes it the open document and puts it at the top of the list. Its
+// lines come from the disk, so from outside: they are drawn as any
+// description is, and cleaned there. Gives back what came of drawing it, or
+// what the kernel says when it could not.
+fn open_inner(number: u32) -> Result<Opened, String> {
     let Some(document) = kept_documents().iter().find(|document| document.number == number) else {
         return Err(format!("the model asked for document {}, but no kept document has that number.", number));
     };
     let named = called(document);
+    let kind = document.kind;
     let lines = match notebook_find(&lines_name(number, document.version)) {
         Ok(Some(bytes)) => match String::from_utf8(bytes) {
             Ok(lines) => lines,
@@ -455,10 +557,18 @@ fn open_inner(number: u32) -> Result<Drawn, String> {
         Ok(None) => return Err(format!("I could not open {}, because its lines are not on the disk.", named)),
         Err(reason) => return Err(format!("I could not open {}, because {}.", named, reason)),
     };
-    let drawn = match drawing_show(&lines) {
-        Ok(drawn) => drawn,
-        Err(NotDrawn::NoRoom) => return Err(String::from("the model asked to open a document, but this screen has no room for one.")),
-        Err(NotDrawn::Empty) => return Err(format!("I could not open {}, because it has no head and no rows.", named)),
+    let no_room = || String::from("the model asked to open a document, but this screen has no room for one.");
+    let opened = match kind {
+        Kind::Table => match drawing_show(&lines) {
+            Ok(drawn) => Opened::Table(drawn),
+            Err(NotDrawn::NoRoom) => return Err(no_room()),
+            Err(NotDrawn::Empty) => return Err(format!("I could not open {}, because it has no head and no rows.", named)),
+        },
+        Kind::Text => match writing_show(&lines) {
+            Ok(written) => Opened::Text(written),
+            Err(NotDrawn::NoRoom) => return Err(no_room()),
+            Err(NotDrawn::Empty) => return Err(format!("I could not open {}, because it has nothing in it.", named)),
+        },
     };
     open_put(Some(OpenDocument { number, lines }));
     let documents = kept_documents();
@@ -467,7 +577,7 @@ fn open_inner(number: u32) -> Result<Drawn, String> {
         documents.insert(0, document);
     }
     documents_panel_again();
-    Ok(drawn)
+    Ok(opened)
 }
 
 // `setup` was sent: another person may be at the machine now, so the open

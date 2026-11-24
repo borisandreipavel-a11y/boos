@@ -5,7 +5,8 @@ the notebook's things for a document, what a start finds and says, and the panel
 Nothing runs when this file is imported.
 
 A document, as these tests follow it, is a dict: number, version, name (the title as kept, "" for none) and lines
-(the newest version's lines as kept)."""
+(the newest version's lines as kept), and kind for a document of text and tables (KIND_TEXT, see
+text_document_model.py); a table has none."""
 import re
 import struct
 
@@ -14,7 +15,7 @@ from look_values import LOOKS
 from picture import LETTER_HEIGHT, LETTER_WIDTH
 
 NAME_MOST = 45
-NOTE_FORM, KIND_TABLE = 1, 1
+NOTE_FORM, KIND_TABLE, KIND_TEXT = 1, 1, 2
 
 # ---------- The tools ----------
 
@@ -63,7 +64,11 @@ def called(document):
 
 
 def told(document):
-    """What stands behind the instruction text while this document is open."""
+    """What stands behind the instruction text while this document is open: for a document of text and tables (kind
+    2, in the dict as "kind"), changed with write_document; for a table, with draw_table."""
+    if document.get("kind") == KIND_TEXT:
+        return ("\n\nThe document open on the screen is %s, a document of text and tables. To change it, write it whole again "
+                "with write_document, beginning with the line document %d. Its lines now:\n%s" % (called(document), document["number"], document["lines"]))
     return ("\n\nThe document open on the screen is %s. To change it, write its whole table again with draw_table, "
             "beginning with the line document %d. Its lines now:\n%s" % (called(document), document["number"], document["lines"]))
 
@@ -149,13 +154,13 @@ def kept_line(number, version):
 
 # ---------- The notebook ----------
 
-def note(version, name):
-    return bytes([NOTE_FORM, KIND_TABLE]) + struct.pack("<I", version) + name.encode()
+def note(version, name, kind=KIND_TABLE):
+    return bytes([NOTE_FORM, kind]) + struct.pack("<I", version) + name.encode()
 
 
-def things(number, version, lines, name):
+def things(number, version, lines, name, kind=KIND_TABLE):
     """The things a version is kept as, in the order they are written: its lines, then the note."""
-    return [("document %d v%d" % (number, version), lines), ("document %d" % number, note(version, name))]
+    return [("document %d v%d" % (number, version), lines), ("document %d" % number, note(version, name, kind))]
 
 
 def documents_of(found):
@@ -164,7 +169,7 @@ def documents_of(found):
     notes = []
     for thing, (block, data) in found.items():
         match = re.fullmatch(r"document ([1-9][0-9]{0,8})", thing)
-        if not match or len(data) < 6 or data[0] != NOTE_FORM or data[1] != KIND_TABLE:
+        if not match or len(data) < 6 or data[0] != NOTE_FORM or data[1] not in (KIND_TABLE, KIND_TEXT):
             continue
         version = struct.unpack("<I", data[2:6])[0]
         if version == 0 or version > 999_999_999:

@@ -57,4 +57,6 @@ def answer(kind, line, bearer):
     if name == "filechange":
         table, number = given.split(":")
         return good(body(message(None, [call("draw_table", {"table": text(table, int(number))})]), "tool_calls")), "goodbye"
-    return None
+    # The behaviours for documents of text are text_document_cases.py's.
+    import text_document_cases
+    return text_document_cases.answer(kind, line, bearer)

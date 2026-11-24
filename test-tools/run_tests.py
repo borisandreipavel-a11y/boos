@@ -247,6 +247,12 @@ def break_jobs():
         add("open file", name, ["test_open_file.py", open_file_breaks.CATCH[name]], {"BREAK": name},
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["open_file_breaks.py"], 60)
+    # Documents of text: in the stand-in copy, through test_text_documents.py with BREAK.
+    import text_document_breaks
+    for name, changes in text_document_breaks.BREAKS.items():
+        add("text documents", name, ["test_text_documents.py", text_document_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["text_document_breaks.py"], 120)
     # Anthropic as a second provider: in the stand-in copy, through test_anthropic.py with BREAK.
     import anthropic_breaks
     for name, changes in anthropic_breaks.BREAKS.items():
