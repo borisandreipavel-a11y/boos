@@ -3,6 +3,7 @@ docs/model.md): the request a line is sent with (the instruction text with the r
 the line, the list of tools for what the disk holds and whether anything is remembered, the limit), the rows the
 kernel says at once and when the answer comes, and the chat box where every line but `key` and `setup` goes to the
 model. Nothing runs when this file is imported."""
+import os
 import re
 
 import documents_model
@@ -95,8 +96,14 @@ def remove_file_tool(files):
 
 def openable(files):
     """The kept files that open_file lists, of `files` as remove_file lists them ((number, "name, a CSV table of 5 KB"),
-    the one kept last first): the CSV files."""
-    return [(number, words) for number, words in files if ", a CSV table of " in words]
+    the one kept last first): the CSV files, while Anthropic is the provider (ANTHROPIC) the PDFs, every one of which keeps
+    its address in these tests, and the PNG pictures."""
+    return [(number, words) for number, words in files
+            if ", a CSV table of " in words or (ANTHROPIC and ", a PDF of " in words) or ", a PNG picture of " in words]
+
+
+# Whether every line goes to Anthropic in these tests (BOOS_PROVIDER, read by net_copy.py too).
+ANTHROPIC = os.environ.get("BOOS_PROVIDER") == "anthropic"
 
 
 def pictures_of(files):
@@ -104,28 +111,27 @@ def pictures_of(files):
     return [(number, words) for number, words in files if ", a PNG picture of " in words]
 
 
-# What open_file says about each kind of file it opens (docs/tools.md): how a file of the kind is listed, its words when
-# it is the only kind kept, and its sentence among the other kinds.
+# What open_file says about each kind of file it opens (docs/tools.md), in the order it names them: how a file of the
+# kind is listed, its words when it is the only kind among the files that open, and its sentence among other kinds.
 OPENS_CSV = (", a CSV table of ",
              "Opens one of the kept CSV files as a table: its text, at most its first 64 KB, is sent to you once, with the next ask, "
              "and you then draw it with draw_table as a new table, which is kept as a document; "
              "a file opened before opens its table again. The kept CSV files, by number: ",
              "A CSV file opens as a table: its text, at most its first 64 KB, is sent to you once, "
              "with the next ask, and you then draw it with draw_table as a new table, which is kept as a document. ")
+OPENS_PDF = (", a PDF of ",
+             "Opens one of the kept PDFs as a document: it is sent to you whole, with the next ask, once the person says yes to its price, "
+             "and you then write it with write_document as a new document of text and tables, which is kept as a document; "
+             "a PDF opened before opens its document again. The kept PDFs, by number: ",
+             "A PDF is sent to you whole, with the next ask, once the person says yes to its price, "
+             "and you then write it with write_document as a new document of text and tables, which is kept as a document. ")
 OPENS_PNG = (", a PNG picture of ",
              "Opens one of the kept PNG pictures in the frame on the screen, as a document of its own that holds the line picture "
              "and the file's number, and the line ends; nothing of the picture is sent to you. A picture opened before opens its "
              "document again. The kept PNG pictures, by number: ",
              "A PNG picture opens in the frame on the screen, as a document of its own that holds the line picture and the file's "
              "number, and the line ends; nothing of the picture is sent to you. ")
-OPENS = [OPENS_CSV, OPENS_PNG]
-
-
-def opened(files, kinds=OPENS):
-    """The kinds open_file opens that are kept, each with its files among `files` (as remove_file lists them), in the
-    order of `kinds`: [(kind, files of the kind)]."""
-    return [(kind, [(number, words) for number, words in files if kind[0] in words]) for kind in kinds
-            if any(kind[0] in words for _, words in files)]
+OPENS = [OPENS_CSV, OPENS_PDF, OPENS_PNG]
 
 
 # What write_document says about pictures while a PNG picture is kept (docs/tools.md).
@@ -133,18 +139,17 @@ DOCUMENT_PICTURES = (" A kept PNG picture is shown with the line picture and the
                      "it is shrunk to fit a page, and nothing of it is sent to you.")
 
 
-def open_file_tool(kinds):
-    """`kinds`: (kind, its kept files) for each kind kept that open_file opens (see `opened`), each kind's files as
-    remove_file lists them, the one kept last first. What it says names only the kinds kept: with one kind, its words;
-    with more, each kind's sentence in turn. The list holds the files of all of them, the one kept last first."""
+def open_file_tool(files):
+    """`files`: (number, "name, a CSV table of 5 KB") of the kept files that open, the one kept last first. What it says
+    names each kind among them (OPENS): with one kind, that kind's words; with more, each kind's sentence in turn."""
+    kinds = [kind for kind in OPENS if any(kind[0] in words for _, words in files)]
     if len(kinds) == 1:
-        lead = kinds[0][0][1]
+        lead = kinds[0][1]
     else:
-        lead = ("Opens one of the kept files. " + "".join(kind[2] for kind, _ in kinds)
+        lead = ("Opens one of the kept files. " + "".join(kind[2] for kind in kinds)
                 + "A file opened before opens its document again. The kept files, by number: ")
-    every = sorted([one for _, files in kinds for one in files], key=lambda one: -one[0])
-    told = lead + "; ".join("%d: %s" % (number, file) for number, file in every) + "."
-    return tool("open_file", told, {"file": {"type": "integer", "enum": [number for number, _ in every],
+    told = lead + "; ".join("%d: %s" % (number, file) for number, file in files) + "."
+    return tool("open_file", told, {"file": {"type": "integer", "enum": [number for number, _ in files],
                                             "description": "The number of the kept file"}}, ["file"])
 
 
@@ -188,7 +193,7 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), d
     `draw_table` if the screen (width, height), or None for none, has room for a table, and `write_document` with it
     where documents can be kept, `download_file` unless `files`
     is None (no room for files, as on a disk that is not divided), `remove_file` for the kept files in `files`
-    ((number, words), the one kept last first), `open_file` for the CSV files and PNG pictures among them where
+    ((number, words), the one kept last first), `open_file` for the files among them that open (`openable`) where
     documents can be kept, with `write_document` saying how a picture is shown while a PNG picture is kept,
     and `forget` if anything said is remembered. `documents`: the kept
     documents as `open_document` lists them ((number, name), the one used last first), or None where documents cannot
@@ -219,8 +224,8 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), d
         tools.append(DOWNLOAD_FILE)
         if files:
             tools.append(remove_file_tool(files))
-        if table and documents is not None and opened(files):
-            tools.append(open_file_tool(opened(files)))
+        if table and documents is not None and openable(files):
+            tools.append(open_file_tool(openable(files)))
     pages = -(-len(apps) // 5)
     if pages > 1:
         tools.append(turn_page_tool(pages, shown))

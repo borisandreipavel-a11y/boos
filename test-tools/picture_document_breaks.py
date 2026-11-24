@@ -11,8 +11,8 @@ BREAKS = {
     # A kept picture's note is not read at a start, so the picture is forgotten.
     "pngforgotten": {"files.rs": swap("[Kind::Pdf, Kind::Word, Kind::Excel, Kind::Text, Kind::Csv, Kind::Png]",
                                       "[Kind::Pdf, Kind::Word, Kind::Excel, Kind::Text, Kind::Csv]")},
-    # open_file lists the CSV files as pictures.
-    "pictureslisted": {"files.rs": swap("        .filter(|file| file.kind == Kind::Png)\n", "        .filter(|file| file.kind == Kind::Csv)\n")},
+    # open_file does not list the PNG pictures, though its words name them.
+    "picturesnotlisted": {"files.rs": swap(" || pdf_openable(file) || file.kind == Kind::Png)\n", " || pdf_openable(file))\n")},
     # A removed file is said to be a number never kept.
     "removednotsaid": {"files.rs": swap("        let removed = number > 0 && number < u64::from(unsafe { NEXT_FILE });\n",
                                         "        let removed = false;\n")},
@@ -57,7 +57,7 @@ BREAKS = {
 CATCH = {
     "pngnotkept": "fetch",
     "pngforgotten": "reopen",
-    "pictureslisted": "layout",
+    "picturesnotlisted": "layout",
     "removednotsaid": "reopen",
     "limitslarger": "broken",
     "noblend": "fetch",

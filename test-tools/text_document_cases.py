@@ -7,11 +7,13 @@ Behaviours: "write=guide:0" asks for write_document with the document "guide" of
 (any number); "writebare=fruit" with the document alone, without such a line; "writecut=moons:1" with the document
 behind "document 1", cut off by the limit of tokens inside the line end behind CUT_LINES lines of it; "writelong" with a
 new document longer than the bound on what the tool is given; "writekey" with a new document that holds the key the
-request came with; "writebad" with inputs that hold no lines; "writeempty" with lines that hold nothing to write."""
+request came with; "writebad" with inputs that hold no lines; "writeempty" with lines that hold nothing to write;
+"pdfrefused" answers with Anthropic's refusal of a PDF's address it cannot fetch (test_pdf_documents.py)."""
 import json
 
-from chat_cases import body, call, good, message
+from chat_cases import body, call, good, message, with_length
 from document_cases import PLANETS
+from pdf_model import UNFETCHABLE
 
 # The bound on what write_document is given (docs/tools.md).
 DOCUMENT_INPUTS_LONGEST = 8192
@@ -87,6 +89,9 @@ DOCUMENTS = {
     "many": "\n".join(["title A document of many pages with a title that is long"] + ["text Note %d." % n for n in range(1, 126)]),
     # A small document without a title, named by its number.
     "fruit": "\n".join(["text Fruit and what it costs.", "head Fruit | Price", "row Apple | 0.40", "row Banana | 0.25"]),
+    # A made-up PDF's text and table, as the model writes the PDF that test_pdf_documents.py opens.
+    "report": "\n".join(["title Quarterly report", "text Sales rose in every region this quarter, most in the north.",
+                         "head Region | Sales | Change", "row North | 410 | +12%", "row South | 285 | +4%", "row West | 330 | +7%"]),
     # A whole document between the table's bound and its own: some 7.5 KB as the tool is given it, kept in 17 pieces.
     "big": "\n".join(["title A long guide"] + ["text Paragraph %03d of a guide that is long, but whole and kept." % n for n in range(1, 116)]),
 }
@@ -160,6 +165,11 @@ def answer(kind, line, bearer):
         return asked({"text": "title Wrong\ntext The lines are under another name."})
     if name == "writeempty":
         return asked({"lines": EMPTY})
+    if name == "pdfrefused":
+        # Anthropic's refusal of a PDF's address it cannot fetch, before any piece, in OrcaRouter's form, which the
+        # stand-in turns into Anthropic's (anthropic_cases.whole).
+        error = {"error": {"code": "", "message": UNFETCHABLE, "type": "invalid_request_error"}}
+        return with_length(b"HTTP/1.1 400 Bad Request", json.dumps(error, separators=(",", ":")).encode()), "goodbye"
     # The behaviours for pictures in documents are picture_document_cases.py's.
     import picture_document_cases
     return picture_document_cases.answer(kind, line, bearer)

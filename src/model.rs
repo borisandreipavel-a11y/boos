@@ -107,6 +107,11 @@ const APP_TOKENS: usize = 4000;
 // needs longer for its answer than a site needs for a page.
 const MODEL_WAIT: u64 = 60;
 
+// How many seconds they may take for the ask that carries a PDF: Anthropic
+// fetches and reads the whole file before it answers (not timed; three
+// minutes at the person's choice).
+const PDF_WAIT: u64 = 180;
+
 // How many bytes of the provider's answer are kept. An answer that is longer
 // is not read at all.
 const ANSWER_ROOM: usize = 64 * 1024;
@@ -228,13 +233,14 @@ pub fn model_chat(
     record: &str,
     document: &str,
     done: &str,
+    pdf: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let mut key_room = [0u8; SECRET_LIMIT];
     let (provider, key_length) = key_copy(false, &mut key_room);
     let told = if key_length == 0 {
         (String::from("no answer came, because no key is kept"), None, None, None)
     } else {
-        chat_question_ask(interface, card, sockets, name_server, provider, &key_room[..key_length], line, tools, record, document, done)
+        chat_question_ask(interface, card, sockets, name_server, provider, &key_room[..key_length], line, tools, record, document, done, pdf)
     };
     wipe(&mut key_room);
     told
@@ -315,7 +321,7 @@ fn question_ask(
             json_text(QUESTION)
         ),
     };
-    match provider_exchange(interface, card, sockets, name_server, provider, key, &body, None) {
+    match provider_exchange(interface, card, sockets, name_server, provider, key, &body, None, MODEL_WAIT) {
         Err(sentence) => (sentence, KeyVerdict::NotTold),
         Ok((answer, whole)) => answer_sentence(provider, &answer, whole, key),
     }
@@ -340,7 +346,11 @@ fn question_ask(
 // Anthropic's form holds the same texts in other places: the instruction text
 // is its own part ("system") beside one message, the line; each tool is
 // written in its form (`tools_anthropic`); and its answer always comes with the
-// tokens it took.
+// tokens it took. A PDF opened for the line (`pdf`, its address, see
+// `files.rs`) goes in that message, before the line, as a document that
+// Anthropic fetches from the address itself, the shape of Anthropic's "PDF
+// support" page; such an ask may take `PDF_WAIT` seconds, since Anthropic
+// reads the whole file first. A PDF goes to Anthropic only.
 fn chat_question_ask(
     interface: &mut Interface,
     card: &mut Card,
@@ -353,8 +363,12 @@ fn chat_question_ask(
     record: &str,
     document: &str,
     done: &str,
+    pdf: &str,
 ) -> (String, Option<ChatReply>, Option<String>, Option<String>) {
     let sent = key_starred(line, key);
+    if !pdf.is_empty() && provider != Provider::Anthropic {
+        return (String::from("no answer came, because a PDF goes only to Anthropic"), None, None, Some(sent));
+    }
     let mut told = String::from(CHAT_INSTRUCTIONS);
     // The open document comes before the record: while it does not change,
     // the beginning of the request stays the same from line to line.
@@ -401,12 +415,21 @@ fn chat_question_ask(
             json_text(ANTHROPIC_MODEL),
             LINE_TOKENS,
             json_text(&told),
-            json_text(&sent),
+            if pdf.is_empty() {
+                json_text(&sent)
+            } else {
+                format!(
+                    "[{{\"type\":\"document\",\"source\":{{\"type\":\"url\",\"url\":{}}}}},{{\"type\":\"text\",\"text\":{}}}]",
+                    json_text(&key_starred(pdf, key)),
+                    json_text(&sent)
+                )
+            },
             offered
         ),
     };
+    let wait = if pdf.is_empty() { MODEL_WAIT } else { PDF_WAIT };
     let mut stream = Stream::new(provider);
-    let exchanged = provider_exchange(interface, card, sockets, name_server, provider, key, &body, Some(&mut stream));
+    let exchanged = provider_exchange(interface, card, sockets, name_server, provider, key, &body, Some(&mut stream), wait);
     if stream.chunked {
         let sentence = "no answer came that I could read, because the provider sent its answer in pieces with their lengths in between (\"chunked\"), which it should not for this kind of request";
         return (String::from(sentence), None, None, Some(sent));
@@ -477,7 +500,7 @@ fn app_question_ask(
             json_text(&format!("{}{}", APP_LEAD, wanted))
         ),
     };
-    match provider_exchange(interface, card, sockets, name_server, provider, key, &body, None) {
+    match provider_exchange(interface, card, sockets, name_server, provider, key, &body, None, MODEL_WAIT) {
         Err(sentence) => (sentence, None, None),
         Ok((answer, whole)) => {
             let (sentence, script) = app_sentence(provider, &answer, whole, key);
@@ -493,6 +516,7 @@ fn app_question_ask(
 // For a line, `stream` is given: the head of the answer is read as it comes,
 // and when it says that the answer comes piece by piece, the pieces go to
 // `stream` as they come, and nothing is collected (see `Stream` below).
+// `wait`: how many seconds the greeting and the answer together may take.
 fn provider_exchange(
     interface: &mut Interface,
     card: &mut Card,
@@ -502,6 +526,7 @@ fn provider_exchange(
     key: &[u8],
     body: &str,
     mut stream: Option<&mut Stream>,
+    wait: u64,
 ) -> Result<(Vec<u8>, bool), String> {
     // The request, in the web's own language: "POST" hands something in, at
     // the place named behind it. Then come lines of notes: which site is
@@ -542,7 +567,7 @@ fn provider_exchange(
     let mut too_long = false;
     let mut head = HeadReader::new();
     let mut head_over = false;
-    let result = site_exchange(interface, card, sockets, name_server, provider.site(), &request, Waits::one(MODEL_WAIT), &mut |bytes| {
+    let result = site_exchange(interface, card, sockets, name_server, provider.site(), &request, Waits::one(wait), &mut |bytes| {
         if let Some(stream) = stream.as_deref_mut() {
             if stream.begun {
                 return stream.take(bytes, key);

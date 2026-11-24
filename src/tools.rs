@@ -12,19 +12,21 @@
 
 use alloc::format;
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::app_inputs::{Input, inputs_listed, inputs_read, inputs_wanted, values_read, values_said, values_wanted};
 use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
-use crate::chat::{chat_remember, chat_say};
+use crate::chat::{chat_next_ask_last, chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::documents::{
     document_draw, document_of_picture, document_open, document_reopen, document_written, documents_listed, documents_usable, documents_wanted,
 };
 use crate::drawing::{drawing_room, drawing_table, drawing_wanted, writing_room, writing_wanted};
-use crate::files::{download_start, file_open_start, file_picture_name, files_listed, files_openable, files_pictures, files_usable, remove_ask};
+use crate::files::{
+    download_start, file_is_pdf, file_open_start, file_picture_name, files_listed, files_open_csv, files_open_pdf, files_open_png, files_openable,
+    files_usable, pdf_open_ask, remove_ask,
+};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
 use crate::model::ToolCall;
@@ -346,6 +348,21 @@ const OPENED_CSV: OpenedKind = OpenedKind {
     ),
 };
 
+// A kept PDF, while Anthropic is the provider: it goes whole with the next
+// ask, at the person's yes, and the model writes it as a document of text and
+// tables (see `pdf_open_ask` in `files.rs`).
+const OPENED_PDF: OpenedKind = OpenedKind {
+    alone: concat!(
+        "Opens one of the kept PDFs as a document: it is sent to you whole, with the next ask, once the person says yes to its price, ",
+        "and you then write it with write_document as a new document of text and tables, which is kept as a document; ",
+        "a PDF opened before opens its document again. The kept PDFs, by number: "
+    ),
+    among: concat!(
+        "A PDF is sent to you whole, with the next ask, once the person says yes to its price, ",
+        "and you then write it with write_document as a new document of text and tables, which is kept as a document. "
+    ),
+};
+
 // A kept PNG picture: shown in the frame as a document of its own, and
 // nothing of it goes to the model (see `document_of_picture` in
 // `documents.rs`).
@@ -361,28 +378,25 @@ const OPENED_PNG: OpenedKind = OpenedKind {
     ),
 };
 
-// The tool that opens a kept file as a document. `kinds` holds each kind of
-// file it opens, with the kept files of that kind, each by number, name, kind
-// and size. What it says names only the kinds kept: with one kind, that
-// kind's words, and with more, each kind's sentence in turn. It lists the
-// files of all of them together, the one kept last first.
-fn open_file_tool(kinds: &[(&OpenedKind, Vec<(u32, String)>)]) -> String {
-    let kept: Vec<&(&OpenedKind, Vec<(u32, String)>)> = kinds.iter().filter(|(_, files)| !files.is_empty()).collect();
-    let mut told = match kept.as_slice() {
-        [(only, _)] => String::from(only.alone),
+// The tool that opens a kept file as a document. `files` are the kept files
+// that open, each by number, name, kind and size, the one kept last first,
+// and `kinds` the kinds among them, in turn. What it says names only those
+// kinds: with one kind, that kind's words, and with more, each kind's
+// sentence in turn.
+fn open_file_tool(files: &[(u32, String)], kinds: &[&OpenedKind]) -> String {
+    let mut told = match kinds {
+        [only] => String::from(only.alone),
         _ => {
             let mut told = String::from("Opens one of the kept files. ");
-            for (kind, _) in kept.iter() {
+            for kind in kinds.iter() {
                 told.push_str(kind.among);
             }
             told.push_str("A file opened before opens its document again. The kept files, by number: ");
             told
         }
     };
-    let mut listed: Vec<&(u32, String)> = kept.iter().flat_map(|(_, files)| files.iter()).collect();
-    listed.sort_by(|one, other| other.0.cmp(&one.0));
     let mut numbers = String::new();
-    for (place, (number, file)) in listed.into_iter().enumerate() {
+    for (place, (number, file)) in files.iter().enumerate() {
         if place > 0 {
             told.push_str("; ");
             numbers.push(',');
@@ -413,11 +427,12 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `draw_table` while
 // the screen has room for a table, `write_document` with it where documents
-// can be kept, and `open_document` while any document is kept; `download_file` while files can be kept, `remove_file` while any
-// file is kept, and `open_file` while a CSV file or a PNG picture is kept
-// where documents can be kept; `turn_page` while the panel of apps has more
-// than one page;
-// `forget` while anything that was said is remembered.
+// can be kept, and `open_document` while any document is kept;
+// `download_file` while files can be kept, `remove_file` while any file is
+// kept, and `open_file` while a CSV file or a PNG picture is kept where
+// documents can be kept, or a PDF while Anthropic is the provider;
+// `turn_page` while the panel of apps has more than one page; `forget` while
+// anything that was said is remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
     tools.push_str(MAKE_APP);
@@ -433,7 +448,7 @@ pub fn chat_tools() -> String {
         tools.push_str(&draw_table_tool(rows, columns, signs, documents_usable()));
         if let (true, Some((rows, signs))) = (documents_usable(), writing_room()) {
             tools.push(',');
-            tools.push_str(&write_document_tool(rows, signs, !files_pictures().is_empty()));
+            tools.push_str(&write_document_tool(rows, signs, files_open_png()));
         }
         let documents = documents_listed();
         if !documents.is_empty() {
@@ -449,10 +464,16 @@ pub fn chat_tools() -> String {
             tools.push(',');
             tools.push_str(&remove_file_tool(&files));
         }
-        let kinds = if documents_usable() { vec![(&OPENED_CSV, files_openable()), (&OPENED_PNG, files_pictures())] } else { Vec::new() };
-        if kinds.iter().any(|(_, files)| !files.is_empty()) {
+        let openable = if documents_usable() { files_openable() } else { Vec::new() };
+        if !openable.is_empty() {
+            // What it says names each kind of file kept that it opens, in
+            // this order.
+            let kinds: Vec<&OpenedKind> = [(files_open_csv(), &OPENED_CSV), (files_open_pdf(), &OPENED_PDF), (files_open_png(), &OPENED_PNG)]
+                .into_iter()
+                .filter_map(|(kept, kind)| kept.then_some(kind))
+                .collect();
             tools.push(',');
-            tools.push_str(&open_file_tool(&kinds));
+            tools.push_str(&open_file_tool(&openable, &kinds));
         }
     }
     let (pages, shown) = apps_pages();
@@ -719,6 +740,10 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             Some(number) => {
                 let kept = files_openable().iter().any(|(file, _)| u64::from(*file) == number);
                 let reopened = if kept { u32::try_from(number).ok().and_then(document_reopen) } else { None };
+                // A PDF goes only at the person's yes (see `files.rs`).
+                if reopened.is_none() && file_is_pdf(number) {
+                    return pdf_open_ask(number, chat_next_ask_last());
+                }
                 match reopened.unwrap_or_else(|| file_open_start(number)) {
                     Ok(said) => {
                         chat_say(&said);

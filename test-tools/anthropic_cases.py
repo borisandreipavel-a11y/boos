@@ -42,7 +42,10 @@ def back(sent):
     """The request `sent` (Anthropic's form, as Python's JSON reader reads it) as the same request in OrcaRouter's form,
     and why it is not one when it is not: (the request, None) or (None, why). Only what this kernel sends is taken: the
     model, the longest answer and `stream` always, the instruction text if any, one message from the person, and the
-    tools, each with exactly a name, a sentence and a schema."""
+    tools, each with exactly a name, a sentence and a schema. The person's message is a text, or a PDF that Anthropic
+    fetches from its address and the text behind it (docs/tools.md `open_file`): exactly a document block of a `url`
+    source and a text block, which OrcaRouter's form has no place for, so it is written as two parts there,
+    {"type": "document", "url": ...} and {"type": "text", "text": ...}, for the tests to compare whole."""
     if not isinstance(sent, dict):
         return None, "not JSON"
     other = set(sent) - FIELDS
@@ -56,14 +59,25 @@ def back(sent):
         return None, "no word about stream"
     messages = sent.get("messages")
     if not (isinstance(messages, list) and len(messages) == 1 and isinstance(messages[0], dict)
-            and set(messages[0]) == {"role", "content"} and messages[0]["role"] == "user" and isinstance(messages[0]["content"], str)):
+            and set(messages[0]) == {"role", "content"} and messages[0]["role"] == "user"):
+        return None, "not one message from the person"
+    content = messages[0]["content"]
+    if isinstance(content, list):
+        document = content[0] if len(content) == 2 and isinstance(content[0], dict) else None
+        text = content[1] if len(content) == 2 and isinstance(content[1], dict) else None
+        source = document.get("source") if document and set(document) == {"type", "source"} and document["type"] == "document" else None
+        if not (isinstance(source, dict) and set(source) == {"type", "url"} and source["type"] == "url" and isinstance(source["url"], str)
+                and text and set(text) == {"type", "text"} and text["type"] == "text" and isinstance(text["text"], str)):
+            return None, "a person's message that is not a PDF's address and a text"
+        content = [{"type": "document", "url": source["url"]}, {"type": "text", "text": text["text"]}]
+    elif not isinstance(content, str):
         return None, "not one message from the person"
     written = []
     if "system" in sent:
         if not isinstance(sent["system"], str):
             return None, "an instruction text that is not a text"
         written.append({"role": "system", "content": sent["system"]})
-    written.append({"role": "user", "content": messages[0]["content"]})
+    written.append({"role": "user", "content": content})
     request = {"model": ORCA_MODEL, "messages": written}
     if "tools" in sent:
         if not isinstance(sent["tools"], list) or not sent["tools"]:

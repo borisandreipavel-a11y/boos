@@ -58,6 +58,11 @@ def not_csv_row(number, name, kind):
     return 'Kernel: file %d, "%s", is %s, which I cannot open as a document yet.' % (number, name, KINDS[kind])
 
 
+def pdf_not_here_row(number, name):
+    """A PDF asked for while OrcaRouter is the provider: it opens only with Anthropic (docs/tools.md `open_file`)."""
+    return 'Kernel: file %d, "%s", is a PDF, which opens only while Anthropic is the provider (setup, then 2).' % (number, name)
+
+
 def no_such_file_row(number):
     return "Kernel: the model asked to open file %d, but no kept file has that number." % number
 

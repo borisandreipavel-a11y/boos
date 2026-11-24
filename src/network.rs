@@ -278,8 +278,9 @@ fn network_task() {
                 }
                 // A line typed in the chat box, and an app, are asked about
                 // with the key that is kept.
-                Errand::ChatLine { line, tools, record, document, done } if has_address => {
-                    let (sentence, reply, tokens, sent) = model_chat(&mut interface, &mut card, &mut sockets, name_server, line, tools, record, document, done);
+                Errand::ChatLine { line, tools, record, document, done, pdf } if has_address => {
+                    let (sentence, reply, tokens, sent) =
+                        model_chat(&mut interface, &mut card, &mut sockets, name_server, line, tools, record, document, done, pdf);
                     (sentence, KeyVerdict::NotTold, None, reply, tokens, sent)
                 }
                 Errand::AppRequest { request, inputs, .. } if has_address => {

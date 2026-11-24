@@ -102,6 +102,12 @@ SUITES = [
          seconds=dict(write=190, cut=160, odd=130, broken=75, nodocs=45)),
     dict(name="text documents with Anthropic", command=["test_text_documents.py"], split=["write", "cut"],
          env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + DOCUMENTS, seconds=dict(write=190, cut=160)),
+    # PDFs opened as documents of text: a kept PDF goes to Anthropic by its address at the person's yes, and the model
+    # writes it as a document, in the stand-in copy; every line in Anthropic's form, but `orca`, with OrcaRouter.
+    dict(name="pdf documents", command=["test_pdf_documents.py"], split=["open", "no", "refused", "wait"],
+         env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + FILES + DOCUMENTS, seconds=dict(open=130, no=200, refused=70, wait=140)),
+    dict(name="pdf documents with OrcaRouter", command=["test_pdf_documents.py"], split=["orca"], watches=STAND_IN + FILES + DOCUMENTS,
+         seconds=dict(orca=50)),
     # Pictures in documents: a PNG picture fetched from a made-up site and kept, opened in the frame as a document of
     # its own, `picture` lines in documents of text, shrunk to fit a page and painted over the look's colour, and
     # pictures that cannot be shown, in the stand-in copy; the main flow with Anthropic's form too.
@@ -172,7 +178,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16,
+                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16, "pdf": 11,
                 "picture documents": 18}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
@@ -435,9 +441,20 @@ CAUGHT_BY = {
     'break text documents: smallbound': "text-cut 'a very long one'",
     'break text documents: streambound': "text-cut 'a very long one'",
     'break text documents: brokennotdrawn': "text-broken 'add the moons'",
+    'break pdf: noisyes': "pdf-no answer 'no'",
+    'break pdf: nosite': "pdf-open 'open the report'",
+    'break pdf: orcaopens': "pdf-orca 'open the pdf'",
+    'break pdf: orcalists': 'orca request 1',
+    'break pdf: anyaddress': "pdf-no 'open the other one'",
+    'break pdf: lateopens': "pdf-no 'open it in the end'",
+    'break pdf: reopensends': "pdf-open 'open the report again'",
+    'break pdf: nodocument': 'open request 3',
+    'break pdf: drawpdf': 'open request 3',
+    'break pdf: csvsentence': 'open request 2',
+    'break pdf: shortwait': "pdf-wait answer 'yes'",
     'break picture documents: pngnotkept': "pd-fetch 'get the harbour picture'",
     'break picture documents: pngforgotten': "pd-reopen 'show me the harbour pict'",
-    'break picture documents: pictureslisted': 'layout request 1',
+    'break picture documents: picturesnotlisted': 'layout request 1',
     'break picture documents: removednotsaid': "pd-reopen 'open the other document'",
     'break picture documents: limitslarger': "pd-broken 'open huge'",
     'break picture documents: notfromfile': "pd-fetch-2 'open the picture again'",

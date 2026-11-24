@@ -253,6 +253,15 @@ def break_jobs():
         add("text documents", name, ["test_text_documents.py", text_document_breaks.CATCH[name]], {"BREAK": name},
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["text_document_breaks.py"], 120)
+    # PDFs opened as documents: in the stand-in copy, through test_pdf_documents.py with BREAK, every line to Anthropic
+    # but for the scenario that runs with OrcaRouter.
+    import pdf_breaks
+    for name, changes in pdf_breaks.BREAKS.items():
+        scenario = pdf_breaks.CATCH[name]
+        env = {"BREAK": name} if scenario == "orca" else {"BREAK": name, "BOOS_PROVIDER": "anthropic"}
+        add("pdf", name, ["test_pdf_documents.py", scenario], env,
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["pdf_breaks.py"], 120)
     # Pictures in documents: in the stand-in copy, through test_picture_documents.py with BREAK.
     import picture_document_breaks
     for name, changes in picture_document_breaks.BREAKS.items():

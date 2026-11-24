@@ -169,12 +169,12 @@ Code: `src/look.rs`. The person at the machine picks the colours of everything o
 
 Code: `files_asking` and `files_answer` in `src/files.rs`, called from `chat_key`.
 
-Before a fetch contacts a site for the first time, and before a kept file is removed, the kernel asks the person in the chat box (see "download_file" and "remove_file" in [tools.md](tools.md)). While it waits for the answer:
+Before a fetch contacts a site for the first time, before a kept file is removed, and before a kept PDF goes to Anthropic, the kernel asks the person in the chat box (see "download_file", "remove_file" and "open_file" in [tools.md](tools.md)). While it waits for the answer:
 
 - **The next line sent is the answer,** whatever it says: `yes`, in any capitals and with spaces around it, says yes; anything else says no, `key` and `setup` too.
 - **The answer is shown** as the person's row and repeated in the terminal. It is not sent to the model, not remembered with the line, and not kept as the last line.
 - **What comes of it** is said in the kernel's rows, which are remembered with the line, as every row of the kernel's.
-- The line that asked for the fetch or the removal waits for the answer, with no request of it in hand; the model is asked about it again only if a fetch then fails.
+- The line that asked for the fetch or the removal waits for the answer, with no request of it in hand; the model is asked about it again only if a fetch then fails. The line that asked to open a PDF is asked about again either way: after a yes, that ask carries the PDF; after a no, it says that nothing was sent.
 
 ## Nothing lands outside the chat box
 
