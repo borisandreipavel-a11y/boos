@@ -21,7 +21,7 @@ and at most one for each two processors), `--base REF` (compare with another bra
 PATH...` (run what a change to those files needs), `--to-the-end` (breaks on purpose run to the end instead of
 stopping at their first failure), `--only NAME...` (only the jobs whose names begin so), `--share I/N` (only the
 I-th of N shares of the jobs it picked, dealt longest first by the table's seconds in the same way on every
-computer, so that N computers together run each job once; the boot tests on GitHub use four), `--own-breaks` (of
+computer, so that N computers together run each job once; the boot tests on GitHub use five), `--own-breaks` (of
 the breaks on purpose, only the change's own: a break whose line in its list is new or changed, or whose first
 failure or known miss in `suites.py` is new or changed; and, when anything runs, the first break of each list, so
 that a change to what makes and judges breaks shows too. The boot tests on GitHub use it for a pull request, and
