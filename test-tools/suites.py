@@ -43,7 +43,9 @@ DOCUMENTS = ["src/documents.rs", "src/drawing.rs", "src/notebook.rs"]  # tables 
 # documents, since the kernel builds the crate in.
 PICTURES = ["pictures/Cargo.toml", "pictures/src/lib.rs", "pictures/src/check.rs", "pictures/src/png.rs",
             "pictures/src/shrink.rs", "pictures/src/unpack.rs", "pictures/src/tests.rs", "pictures/tests/memory.rs",
-            "pictures/test-data/cases.txt", "pictures/test-data/cases.bin"]
+            "pictures/test-data/cases.txt", "pictures/test-data/cases.bin", "pictures/src/jpeg.rs",
+            "pictures/src/entropy.rs", "pictures/src/transform.rs", "pictures/src/jpeg_tests.rs",
+            "pictures/test-data/jpeg-cases.txt", "pictures/test-data/jpeg-cases.bin"]
 
 SUITES = [
     dict(name="app", command=["test_app.py", APP_KINDS, "dump"], watches=STAND_IN + APPS + SECRET, seconds=420),

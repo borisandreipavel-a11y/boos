@@ -1,0 +1,250 @@
+jpeg seq444 61 37 3 0
+jshrunk seq444 20 20 20 12
+jshrunk seq444 7 5 7 4
+jshrunk seq444 61 10 16 10
+jpeg seq420 77 45 3 0
+jshrunk seq420 40 40 40 23
+jshrunk seq420 10 10 10 6
+jshrunk seq420 77 12 21 12
+jshrunk seq420 1 1 1 1
+jpeg seq422 50 33 3 0
+jshrunk seq422 13 9 13 9
+jpeg seq440 33 50 3 0
+jshrunk seq440 9 13 9 13
+jpeg seq411 90 21 3 0
+jshrunk seq411 23 6 23 5
+jpeg seq311 70 20 3 0
+jpeg mixed 45 45 3 0
+jshrunk mixed 12 12 12 12
+jpeg odd121 64 64 3 0
+jshrunk odd121 32 32 32 32
+jpeg grey 50 30 1 0
+jshrunk grey 13 13 13 8
+jpeg grey22 50 30 1 0
+jpeg greyprog 50 30 1 1
+jshrunk greyprog 25 15 25 15
+jpeg multiscan 70 40 3 0
+jshrunk multiscan 35 20 35 20
+jpeg multi3 70 40 3 0
+jpeg tables23 40 24 3 0
+jpeg prog420 77 45 3 1
+jshrunk prog420 30 30 30 18
+jshrunk prog420 19 11 19 11
+jshrunk prog420 5 5 5 3
+jpeg prog420r 77 45 3 1
+jpeg prog411r 90 21 3 1
+jshrunk prog411r 45 11 45 11
+jpeg proglong 64 64 3 1
+jpeg progpart 77 45 3 1
+jshrunk progpart 39 23 39 23
+jpeg rgbadobe 40 24 3 0
+jpeg rgbids 40 24 3 0
+jpeg jfifwins 40 24 3 0
+jpeg adobewins 40 24 3 0
+jpeg extras 24 16 3 0
+jpeg extreme 16 16 1 0
+jpeg extreme3 16 8 3 0
+jpeg one 1 1 1 0
+jpeg one420 1 1 3 0
+jpeg nine 9 9 3 1
+jshrunk nine 4 4 4 4
+jpeg eight 8 8 3 0
+jshrunk eight 1 1 1 1
+jshrunk eight 2 2 2 2
+jshrunk eight 3 3 3 3
+jpeg big 160 120 3 0
+jshrunk big 64 64 64 48
+jshrunk big 100 30 40 30
+jshrunk big 20 15 20 15
+jshrunk big 160 119 159 119
+jpeg sound 20 12 3 0
+jpeg soundprog 20 12 3 1
+jpeg soundgrey 20 12 1 0
+jrefused arith it is a kind of JPEG I do not read: its data is packed with arithmetic coding
+jrefused lossless it is a kind of JPEG I do not read: it is lossless
+jrefused hier it is a kind of JPEG I do not read: it is hierarchical
+jrefused twelve it is a kind of JPEG I do not read: its samples have 12 bits
+jrefused twelvebase it is damaged: its samples have a number of bits its kind of frame does not allow
+jrefused height0 it is a kind of JPEG I do not read: its height comes after its first scan
+jrefused width0 it is damaged: its width is 0
+jrefused cmyk it is a kind of JPEG I do not read: its colours are in other than 1 or 3 components, as CMYK's are in 4
+jrefused twocomp it is a kind of JPEG I do not read: its colours are in other than 1 or 3 components, as CMYK's are in 4
+jrefused ratios it is a kind of JPEG I do not read: its colour components are sampled at ratios that are not whole
+jrefused dnl it is a kind of JPEG I do not read: its height comes after its first scan
+jrefused unknown it is a kind of JPEG I do not read: it holds a marker I do not know
+jrefused notjpeg it does not begin as a JPEG photo does
+jrefused twoframes it is damaged: it has two frames
+jrefused noframe it is damaged: a scan or its end comes before its frame
+jrefused twostarts it is damaged: it has a second start marker
+jrefused notmarker it is damaged: something stands between its segments that is not a marker
+jrefused strayrst it is damaged: a restart marker stands outside a scan's data
+jrefused factors it is damaged: a component's sampling factors are not from 1 to 4
+jrefused tableplace it is damaged: it names a table that cannot be
+jrefused samenames it is damaged: two of its components have the same name
+jrefused framelength it is damaged: a segment's length does not fit what it holds
+jrefused quantprecision it is damaged: a quantization table has a precision that does not exist
+jrefused quantzero it is damaged: a quantization table holds a 0
+jrefused noquant it is damaged: a scan uses a table that has not been given
+jrefused notable it is damaged: a scan uses a table that has not been given
+jrefused overfull it is damaged: a table of codes has more codes than can be
+jrefused scansize it is damaged: a scan names no components, or more than 4
+jrefused notinframe it is damaged: a scan names a component its frame does not have
+jrefused scanorder it is damaged: a scan names its components out of the frame's order
+jrefused manyblocks it is damaged: a scan's units have more than 10 blocks
+jrefused twoscans it is damaged: a component comes in two scans
+jrefused missing it is damaged: it ends before all its components have come
+jrefused acfirst it is damaged: its scans do not build up its coefficients in order
+jrefused badrefine it is damaged: a scan's band of coefficients is not as a progressive scan's must be
+jrefused wrongah it is damaged: its scans do not build up its coefficients in order
+jrefused resent it is damaged: its scans do not build up its coefficients in order
+jrefused dcband it is damaged: a scan's band of coefficients is not as a progressive scan's must be
+jrefused rstorder it is damaged: a restart marker is missing or out of turn
+jrefused rstmissing it is damaged: a scan's data goes on where a marker must come
+jrefused extradata it is damaged: a scan's data goes on where a marker must come
+jrefused extradataend it is damaged: a scan's data goes on where a marker must come
+jrefused rstatend it is damaged: a restart marker is missing or out of turn
+jrefused noend the file ends before the picture does
+jrefused climbing it is damaged: a coefficient is larger than 16 bits hold
+jrefused eobpast it is damaged: a run of empty blocks goes past the end of its restart interval
+file seq444.jpg 0 1127
+file seq444.rgba 1127 9028
+file seq444-20x20.rgba 10155 960
+file seq444-7x5.rgba 11115 112
+file seq444-61x10.rgba 11227 640
+file seq420.jpg 11867 952
+file seq420.rgba 12819 13860
+file seq420-40x40.rgba 26679 3680
+file seq420-10x10.rgba 30359 240
+file seq420-77x12.rgba 30599 1008
+file seq420-1x1.rgba 31607 4
+file seq422.jpg 31611 774
+file seq422.rgba 32385 6600
+file seq422-13x9.rgba 38985 468
+file seq440.jpg 39453 787
+file seq440.rgba 40240 6600
+file seq440-9x13.rgba 46840 468
+file seq411.jpg 47308 660
+file seq411.rgba 47968 7560
+file seq411-23x6.rgba 55528 460
+file seq311.jpg 55988 551
+file seq311.rgba 56539 5600
+file mixed.jpg 62139 697
+file mixed.rgba 62836 8100
+file mixed-12x12.rgba 70936 576
+file odd121.jpg 71512 988
+file odd121.rgba 72500 16384
+file odd121-32x32.rgba 88884 4096
+file grey.jpg 92980 362
+file grey.rgba 93342 6000
+file grey-13x13.rgba 99342 416
+file grey22.jpg 99758 354
+file grey22.rgba 100112 6000
+file greyprog.jpg 106112 519
+file greyprog.rgba 106631 6000
+file greyprog-25x15.rgba 112631 1500
+file multiscan.jpg 114131 1043
+file multiscan.rgba 115174 11200
+file multiscan-35x20.rgba 126374 2800
+file multi3.jpg 129174 1311
+file multi3.rgba 130485 11200
+file tables23.jpg 141685 574
+file tables23.rgba 142259 3840
+file prog420.jpg 146099 1174
+file prog420.rgba 147273 13860
+file prog420-30x30.rgba 161133 2160
+file prog420-19x11.rgba 163293 836
+file prog420-5x5.rgba 164129 60
+file prog420r.jpg 164189 1578
+file prog420r.rgba 165767 13860
+file prog411r.jpg 179627 1375
+file prog411r.rgba 181002 7560
+file prog411r-45x11.rgba 188562 1980
+file proglong.jpg 190542 1492
+file proglong.rgba 192034 16384
+file progpart.jpg 208418 838
+file progpart.rgba 209256 13860
+file progpart-39x23.rgba 223116 3588
+file rgbadobe.jpg 226704 574
+file rgbadobe.rgba 227278 3840
+file rgbids.jpg 231118 550
+file rgbids.rgba 231668 3840
+file jfifwins.jpg 235508 590
+file jfifwins.rgba 236098 3840
+file adobewins.jpg 239938 571
+file adobewins.rgba 240509 3840
+file extras.jpg 244349 560
+file extras.rgba 244909 1536
+file extreme.jpg 246445 481
+file extreme.rgba 246926 1024
+file extreme3.jpg 247950 807
+file extreme3.rgba 248757 512
+file one.jpg 249269 198
+file one.rgba 249467 4
+file one420.jpg 249471 405
+file one420.rgba 249876 4
+file nine.jpg 249880 673
+file nine.rgba 250553 324
+file nine-4x4.rgba 250877 64
+file eight.jpg 250941 339
+file eight.rgba 251280 256
+file eight-1x1.rgba 251536 4
+file eight-2x2.rgba 251540 16
+file eight-3x3.rgba 251556 36
+file big.jpg 251592 3864
+file big.rgba 255456 76800
+file big-64x64.rgba 332256 12288
+file big-100x30.rgba 344544 4800
+file big-20x15.rgba 349344 1200
+file big-160x119.rgba 350544 75684
+file sound.jpg 426228 420
+file sound.rgba 426648 960
+file soundprog.jpg 427608 653
+file soundprog.rgba 428261 960
+file soundgrey.jpg 429221 269
+file soundgrey.rgba 429490 960
+file arith.jpg 430450 420
+file lossless.jpg 430870 420
+file hier.jpg 431290 420
+file twelve.jpg 431710 420
+file twelvebase.jpg 432130 420
+file height0.jpg 432550 420
+file width0.jpg 432970 420
+file cmyk.jpg 433390 176
+file twocomp.jpg 433566 166
+file ratios.jpg 433732 172
+file dnl.jpg 433904 426
+file unknown.jpg 434330 426
+file notjpeg.jpg 434756 420
+file twoframes.jpg 435176 439
+file noframe.jpg 435615 401
+file twostarts.jpg 436016 422
+file notmarker.jpg 436438 421
+file strayrst.jpg 436859 422
+file factors.jpg 437281 420
+file tableplace.jpg 437701 420
+file samenames.jpg 438121 420
+file framelength.jpg 438541 420
+file quantprecision.jpg 438961 420
+file quantzero.jpg 439381 420
+file noquant.jpg 439801 351
+file notable.jpg 440152 313
+file overfull.jpg 440465 443
+file scansize.jpg 440908 420
+file notinframe.jpg 441328 420
+file scanorder.jpg 441748 420
+file manyblocks.jpg 442168 175
+file twoscans.jpg 442343 212
+file missing.jpg 442555 218
+file acfirst.jpg 442773 191
+file badrefine.jpg 442964 224
+file wrongah.jpg 443188 209
+file resent.jpg 443397 225
+file dcband.jpg 443622 143
+file rstorder.jpg 443765 420
+file rstmissing.jpg 444185 418
+file extradata.jpg 444603 421
+file extradataend.jpg 445024 421
+file rstatend.jpg 445445 422
+file noend.jpg 445867 418
+file climbing.jpg 446285 188
+file eobpast.jpg 446473 186

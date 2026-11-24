@@ -9,7 +9,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use pictures::{Limits, Refusal, png_picture};
+use pictures::{JpegLimits, Limits, Refusal, jpeg_picture, png_picture};
 
 struct Counting;
 
@@ -98,8 +98,15 @@ fn most_held<T>(work: impl FnOnce() -> T) -> (T, usize) {
     (result, MOST.load(Ordering::SeqCst) - before)
 }
 
+/// Both parts in one test, one after the other: the count is of the whole
+/// program, so two tests at once would count each other.
 #[test]
 fn memory_held() {
+    png_memory_held();
+    jpeg_memory_held();
+}
+
+fn png_memory_held() {
     let limits = Limits { dots_most: 1 << 26, side_most: 1 << 15, interlaced_dots_most: 1 << 22 };
 
     // A head that says 30,000 by 30,000: turned down before memory is set
@@ -131,4 +138,85 @@ fn memory_held() {
         );
         assert!(held < shown_bytes + 512 * 1024, "{} by {}: {} bytes", width, height, held);
     }
+}
+
+/// A JPEG segment: its marker's code, its length and what it holds.
+fn segment(out: &mut Vec<u8>, code: u8, body: &[u8]) {
+    out.extend_from_slice(&[0xFF, code]);
+    out.extend_from_slice(&((body.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(body);
+}
+
+/// A colour JPEG of `width` by `height` dots, 4:2:0, every block flat grey,
+/// so that it is made fast: a baseline one in one scan, or a progressive one
+/// with its DC scan only. Each table has one code, 0: a DC difference of
+/// size 0, and the end of a block. The data is zero bits, one or two a
+/// block, the last byte filled with 1-bits.
+fn photo(width: u16, height: u16, progressive: bool) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xD8];
+    let mut quant = vec![0u8];
+    quant.extend_from_slice(&[1; 64]);
+    segment(&mut out, 0xDB, &quant);
+    let mut frame = vec![8];
+    frame.extend_from_slice(&height.to_be_bytes());
+    frame.extend_from_slice(&width.to_be_bytes());
+    frame.extend_from_slice(&[3, 1, 0x22, 0, 2, 0x11, 0, 3, 0x11, 0]);
+    segment(&mut out, if progressive { 0xC2 } else { 0xC0 }, &frame);
+    let mut one_code = vec![1u8];
+    one_code.extend_from_slice(&[0; 15]);
+    for kind in [0x00u8, 0x10] {
+        let mut table = vec![kind];
+        table.extend_from_slice(&one_code);
+        table.push(0);
+        segment(&mut out, 0xC4, &table);
+    }
+    let end = if progressive { 0 } else { 63 };
+    segment(&mut out, 0xDA, &[3, 1, 0x00, 2, 0x00, 3, 0x00, 0, end, 0]);
+    let units = u64::from(width.div_ceil(16)) * u64::from(height.div_ceil(16));
+    let bits = units * 6 * if progressive { 1 } else { 2 };
+    out.resize(out.len() + (bits / 8) as usize, 0);
+    if bits % 8 != 0 {
+        out.push(0xFF >> (bits % 8));
+    }
+    out.extend_from_slice(&[0xFF, 0xD9]);
+    out
+}
+
+fn jpeg_memory_held() {
+    let limits = JpegLimits { dots_most: 1 << 26, side_most: 1 << 15, held_most: 1 << 30 };
+
+    // A baseline photo is read a row of units at a time: what is held is
+    // the shown picture and the reading's own pieces, whatever its size.
+    for (width, height) in [(4000, 3000), (554, 400), (16_000, 100)] {
+        let file = photo(width, height, false);
+        let (result, held) = most_held(|| jpeg_picture(&file, 554, 400, &limits));
+        let shown = result.unwrap();
+        let shown_bytes = shown.dots.len();
+        println!(
+            "a baseline JPEG of {} by {} dots shown at {} by {}: {} bytes held at most, of which {} are the shown picture",
+            width, height, shown.width, shown.height, held, shown_bytes
+        );
+        assert!(held < shown_bytes + 512 * 1024, "{} by {}: {} bytes", width, height, held);
+    }
+
+    // A progressive one keeps its blocks until its last scan: 4000 by 3000
+    // in 4:2:0 has 282,000 blocks; shown at 533 by 400 it is read at a
+    // quarter, n = 2, so 8 + 2 x 2 x 2 = 16 bytes a block, 4,512,000 bytes.
+    let file = photo(4000, 3000, true);
+    let (result, held) = most_held(|| jpeg_picture(&file, 554, 400, &limits));
+    let shown = result.unwrap();
+    println!(
+        "a progressive JPEG of 4000 by 3000 dots shown at {} by {}: {} bytes held at most, of which {} are the shown picture",
+        shown.width,
+        shown.height,
+        held,
+        shown.dots.len()
+    );
+    assert!(held >= 4_512_000 && held < 4_512_000 + shown.dots.len() + 512 * 1024, "{} bytes", held);
+    // The same with too little room for its blocks: turned down before they
+    // are set aside.
+    let tight = JpegLimits { held_most: 4_511_999, ..limits };
+    let (result, held) = most_held(|| jpeg_picture(&file, 554, 400, &tight));
+    assert_eq!(result, Err(Refusal::TooLarge { width: 4000, height: 3000 }));
+    assert!(held < shown.dots.len() + 64 * 1024, "{} bytes", held);
 }
