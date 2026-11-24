@@ -14,7 +14,7 @@ import subprocess
 
 from places import WORK
 
-SITES = ["example.com", "api.orcarouter.ai", "files.example.org", "other.example.net"]
+SITES = ["example.com", "api.orcarouter.ai", "files.example.org", "other.example.net", "api.anthropic.com"]
 
 
 def openssl():

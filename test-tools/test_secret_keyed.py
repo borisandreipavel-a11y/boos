@@ -92,6 +92,7 @@ try:
     assert machine.wait_for(b"repeated here:"), machine.serial()[-400:]
     look("0 before anything", [("secret", SECRET, 0, 0), ("second", OTHER, 0, 0)])
     press(ENTER)  # the answer to the name question: Enter alone, so the name stays "You"
+    press(ENTER)  # the question for the provider: Enter alone, so OrcaRouter stays
     press(ENTER)  # the question for the key: Enter alone, so no key is kept
     press(ENTER)  # the question for a look: Enter alone, so the first look stays
     look("0b the question answered", [("secret", SECRET, 0, 0)], check_memory=False)

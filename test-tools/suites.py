@@ -20,8 +20,8 @@ To add a suite: one entry here. A new test_*.py that is neither in an entry nor 
 test cannot be left out by mistake. This file holds data only: run_tests.py reads it, and compares it with the
 version on master to run only the entries that changed."""
 
-# The 46 kinds of answer to a request for an app (runrandom twice: random numbers must differ from run to run).
-APP_KINDS = ("app,appfenced,appprose,appopen,appclose,apptwo,appmarksonly,appcut,appfiltered,appthink,appnull,appexact,appover,"
+# The 47 kinds of answer to a request for an app (runrandom twice: random numbers must differ from run to run).
+APP_KINDS = ("app,appthought,appfenced,appprose,appopen,appclose,apptwo,appmarksonly,appcut,appfiltered,appthink,appnull,appexact,appover,"
              "appodd,appecho,apppieces,appspaces,appcrlf,appnoending,apponeline,slowapp,realrefusal,upstream,upstreambare,huge,"
              "nothttp,otherform,streamed,runshow,runprint,runcut,runcut41,runexact40,runsplit,runloop,runmemory,runmistake,"
              "runsyntax,runmanyshow,runmanyprint,runrandom,runrandom,runreal,runslow,runnil,runrecurse")
@@ -91,6 +91,17 @@ SUITES = [
     # document that names the file, in the stand-in copy.
     dict(name="open file", command=["test_open_file.py"], split=True, watches=STAND_IN + FILES + DOCUMENTS,
          seconds=dict(open=150, big=150, odd=120)),
+    # Anthropic as a second provider: the question for the provider, each provider's key, and Anthropic's form, in the
+    # stand-in copy, whose stand-in answers Anthropic's form too (anthropic_cases.py).
+    dict(name="anthropic", command=["test_anthropic.py"], split=True, watches=STAND_IN + SECRET,
+         seconds=dict(first=330, older=60, powercut=60, keyword=100, events=170)),
+    # The model's answers and eight scenarios of every line to the model, with every line going to Anthropic, in its
+    # form (BOOS_PROVIDER, read by net_copy.py): the stand-in answers in that form, with the same words, tools and counts.
+    dict(name="model with Anthropic", command=["test_model.py", MODEL_KINDS], env={"DIVIDED_DISK": "", "BOOS_PROVIDER": "anthropic"},
+         watches=STAND_IN + SECRET, seconds=340),
+    dict(name="chat tools with Anthropic", command=["test_chat_tools.py"],
+         split=["words", "stream", "dice", "table", "inputs", "rounds", "remember", "odd"], env={"BOOS_PROVIDER": "anthropic"},
+         watches=STAND_IN + APPS, seconds=dict(words=80, stream=120, dice=70, table=110, inputs=120, rounds=120, remember=90, odd=130)),
     # The kernel's own lines on the screen. "noserial" and "later" build a copy of their own (lines_copy.py).
     dict(name="lines", command=["test_lines.py"], split=["start", "early", "small", "noscreen", "noserial", "later", "held"],
          watches=[], seconds=dict(start=45, early=20, small=45, noscreen=20, noserial=75, later=30, held=25)),
@@ -138,7 +149,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10, "documents": 11, "open file": 8}
+                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -369,4 +380,19 @@ CAUGHT_BY = {
     'break open file: anykind': 'big request 1',
     'break open file: noreopen': "of-open-2 'open b.csv'",
     'break open file: fileagain': 'odd request 9',
+    'break anthropic: keytoother': 'first boot 1 request 1 provider',
+    'break anthropic: noversion': "first boot 1 request 1 in Anthropic's form",
+    'break anthropic: bearer': "first boot 1 request 1 in Anthropic's form",
+    'break anthropic: notkept': 'first the provider kept',
+    'break anthropic: noswitchpassword': 'first setup 2 the password asked at once',
+    'break anthropic: nowipe': 'keyword the key of the start is gone',
+    'break anthropic: untagged': 'keyword request 1 provider',
+    'break anthropic: nostopmark': 'keyword a line to Anthropic',
+    'break anthropic: nocountsfirst': 'keyword a line to Anthropic',
+    'break anthropic: offersorca': 'powercut the start',
+    'break anthropic: olderasked': 'older the start',
+    'break anthropic: noerror': 'events overloaded',
+    'break anthropic: checkstool': 'events checks after words',
+    'break anthropic: toolpieces': "events a tool's inputs in pieces",
+    'break anthropic: nothinking': 'events all of it thinking',
 }

@@ -6,6 +6,8 @@
 //! to the service it belongs to (`model.rs`), and locked with a password
 //! (`lock.rs`), which scrambles it so that it can be kept on the disk. A
 //! secret that is unlocked again comes straight back here.
+//! The secret is kept together with the provider it belongs to, and lent
+//! together with it, so that a key goes only to its own provider's site.
 //! A password chosen to lock the secret with is kept here too, for the short
 //! time between the two times it is typed. So is a key being tried: typed at
 //! the onboarding, it waits apart from the secret until the service has said
@@ -17,7 +19,7 @@ use alloc::vec::Vec;
 use core::ptr::write_volatile;
 
 use crate::lock::{lock, unlock};
-use crate::model::KeyPass;
+use crate::model::{KeyPass, Provider};
 use crate::processor::{signals_back, signals_off};
 
 // The longest secret that is taken, in signs. A password may be as long.
@@ -32,6 +34,9 @@ pub const SECRET_LIMIT: usize = 200;
 // off: the timer cannot then switch to the other task half-way through.
 static mut SECRET: [u8; SECRET_LIMIT] = [0; SECRET_LIMIT];
 static mut SECRET_LENGTH: usize = 0;
+
+// The provider the secret belongs to: the one whose site it goes to.
+static mut SECRET_PROVIDER: Provider = Provider::OrcaRouter;
 
 // A password chosen to lock the secret with, and how many signs long it is,
 // kept between the first time it is typed and the second. Only the main loop
@@ -48,6 +53,7 @@ static mut PASSWORD_LENGTH: usize = 0;
 // borrows it for the try.
 static mut TRIAL: [u8; SECRET_LIMIT] = [0; SECRET_LIMIT];
 static mut TRIAL_LENGTH: usize = 0;
+static mut TRIAL_PROVIDER: Provider = Provider::OrcaRouter;
 
 // Writes zeros over a stretch of memory that held a secret. `write_volatile`
 // tells the compiler that these writes matter: it may otherwise leave out a
@@ -58,18 +64,32 @@ pub fn wipe(signs: &mut [u8]) {
     }
 }
 
-// Keeps a secret, in place of the one kept before, and gives back how many
-// signs of it were taken. The whole room is wiped first, so that nothing of a
-// longer secret from before is left behind a shorter new one.
-pub fn secret_keep(signs: &[u8]) -> usize {
+// Keeps a secret, the key of `provider`, in place of the one kept before, and
+// gives back how many signs of it were taken. The whole room is wiped first,
+// so that nothing of a longer secret from before is left behind a shorter new
+// one.
+pub fn secret_keep(signs: &[u8], provider: Provider) -> usize {
     let were_on = signals_off();
     let room = unsafe { &mut *(&raw mut SECRET) };
     wipe(room);
     let length = signs.len().min(SECRET_LIMIT);
     room[..length].copy_from_slice(&signs[..length]);
-    unsafe { SECRET_LENGTH = length };
+    unsafe {
+        SECRET_LENGTH = length;
+        SECRET_PROVIDER = provider;
+    }
     signals_back(were_on);
     length
+}
+
+// Forgets the secret: wipes its room. When the person picks another provider
+// at `setup`, the key kept for the one before must not go to the new one's
+// site.
+pub fn secret_forget() {
+    let were_on = signals_off();
+    wipe(unsafe { &mut *(&raw mut SECRET) });
+    unsafe { SECRET_LENGTH = 0 };
+    signals_back(were_on);
 }
 
 // How many signs long the kept secret is. 0 means that none is kept.
@@ -80,16 +100,19 @@ pub fn secret_length() -> usize {
     length
 }
 
-// Lends the secret to `borrower`, a piece of code that is run with the
-// secret in hand and must be short, because device signals are off while it
-// runs. Whoever calls this has to show a pass, and only `model.rs` can make
-// one: that is how the compiler sees to it that no other file gets at the
-// secret. What the borrower copies out of it, the borrower must wipe.
-pub fn secret_lend(_pass: &KeyPass, borrower: &mut dyn FnMut(&[u8])) {
+// Lends the secret, and the provider it belongs to, to `borrower`, a piece of
+// code that is run with the secret in hand and must be short, because device
+// signals are off while it runs. Both are handed over in the same moment, so
+// that a change of provider at `setup` cannot come between them. Whoever
+// calls this has to show a pass, and only `model.rs` can make one: that is how
+// the compiler sees to it that no other file gets at the secret. What the
+// borrower copies out of it, the borrower must wipe.
+pub fn secret_lend(_pass: &KeyPass, borrower: &mut dyn FnMut(Provider, &[u8])) {
     let were_on = signals_off();
     let room = unsafe { &*(&raw const SECRET) };
     let length = unsafe { SECRET_LENGTH };
-    borrower(&room[..length]);
+    let provider = unsafe { SECRET_PROVIDER };
+    borrower(provider, &room[..length]);
     signals_back(were_on);
 }
 
@@ -124,32 +147,36 @@ pub fn password_forget() {
     signals_back(were_on);
 }
 
-// Keeps a key to be tried, in place of one kept for that before, and gives
-// back how many signs of it were taken.
-pub fn trial_keep(signs: &[u8]) -> usize {
+// Keeps a key to be tried, the key of `provider`, in place of one kept for
+// that before, and gives back how many signs of it were taken.
+pub fn trial_keep(signs: &[u8], provider: Provider) -> usize {
     let were_on = signals_off();
     let room = unsafe { &mut *(&raw mut TRIAL) };
     wipe(room);
     let length = signs.len().min(SECRET_LIMIT);
     room[..length].copy_from_slice(&signs[..length]);
-    unsafe { TRIAL_LENGTH = length };
+    unsafe {
+        TRIAL_LENGTH = length;
+        TRIAL_PROVIDER = provider;
+    }
     signals_back(were_on);
     length
 }
 
-// Lends the key being tried, as `secret_lend` lends the secret, and to the
-// same one file.
-pub fn trial_lend(_pass: &KeyPass, borrower: &mut dyn FnMut(&[u8])) {
+// Lends the key being tried, with its provider, as `secret_lend` lends the
+// secret, and to the same one file.
+pub fn trial_lend(_pass: &KeyPass, borrower: &mut dyn FnMut(Provider, &[u8])) {
     let were_on = signals_off();
     let room = unsafe { &*(&raw const TRIAL) };
     let length = unsafe { TRIAL_LENGTH };
-    borrower(&room[..length]);
+    let provider = unsafe { TRIAL_PROVIDER };
+    borrower(provider, &room[..length]);
     signals_back(were_on);
 }
 
-// The key that was tried is kept: it takes the secret's place, and its own
-// room is wiped. It goes straight from one room to the other, so no copy of
-// it is made on the way.
+// The key that was tried is kept: it takes the secret's place, with its
+// provider, and its own room is wiped. It goes straight from one room to the
+// other, so no copy of it is made on the way.
 pub fn trial_take() {
     let were_on = signals_off();
     let secret = unsafe { &mut *(&raw mut SECRET) };
@@ -157,7 +184,10 @@ pub fn trial_take() {
     let length = unsafe { TRIAL_LENGTH };
     wipe(secret);
     secret[..length].copy_from_slice(&trial[..length]);
-    unsafe { SECRET_LENGTH = length };
+    unsafe {
+        SECRET_LENGTH = length;
+        SECRET_PROVIDER = TRIAL_PROVIDER;
+    }
     wipe(trial);
     unsafe { TRIAL_LENGTH = 0 };
     signals_back(were_on);
@@ -201,16 +231,16 @@ pub fn secret_lock() -> Result<Vec<u8>, &'static str> {
     locked
 }
 
-// Unlocks a locked secret with a password, and keeps it in place of the
-// secret kept before. Gives back how many signs it has, or why it could not
-// be unlocked; then the secret kept before stays as it was. Unlocking takes
-// more than a second, so it runs with device signals on, into a room of this
-// function's own; only the finished secret is kept, with signals off, and
-// the room is wiped.
-pub fn secret_unlock(password: &[u8], locked: &[u8]) -> Result<usize, &'static str> {
+// Unlocks a locked secret with a password, and keeps it, as the key of
+// `provider`, in place of the secret kept before. Gives back how many signs it
+// has, or why it could not be unlocked; then the secret kept before stays as it
+// was. Unlocking takes more than a second, so it runs with device signals on,
+// into a room of this function's own; only the finished secret is kept, with
+// signals off, and the room is wiped.
+pub fn secret_unlock(password: &[u8], locked: &[u8], provider: Provider) -> Result<usize, &'static str> {
     let mut room = [0u8; SECRET_LIMIT];
     let kept = match unlock(password, locked, &mut room) {
-        Ok(length) => Ok(secret_keep(&room[..length])),
+        Ok(length) => Ok(secret_keep(&room[..length], provider)),
         Err(reason) => Err(reason),
     };
     wipe(&mut room);

@@ -337,6 +337,8 @@ def scenario_first():
     run = Run("kept-first", disk, behaviours=["app"])
     run.mark()
     run.press(FIRST_NAME + "\n")
+    report("first question for the provider", run.wait_line("Kernel: type 1 or 2 and press Enter.", timeout=30) is not None)
+    run.press("\n")
     report("first question for the key", run.wait_line("Kernel: type the key and press Enter.", timeout=30) is not None)
     run.press("\n")
     report("first no key kept", run.wait_line("Kernel: then no key is kept.", timeout=30) is not None)

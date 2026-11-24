@@ -7,7 +7,12 @@ time the model picks a look with the tool pick_look (pick() below). Every line b
 (picture.Chat). kept_look is what the notebook holds under "look" before the start (None:
 nothing); the default, DISK, lets start_helper.Start read it from the disk file before the machine starts. With
 auto_look, start_helper.Start answers the question with Enter alone as soon as it appears, so that tests about other
-things go on as they were written."""
+things go on as they were written.
+
+The provider (docs/chat.md, "The provider"): wherever the question for the key is asked, the question for the provider
+comes first. `provider` is the one the notebook holds ("OrcaRouter" when it holds none), and `anthropic_entry` what it
+holds under "locked key anthropic", as `key_entry` does under "locked key". With auto_provider, start_helper.Start
+answers the question with Enter alone as soon as it appears, which keeps the provider, as auto_look does for a look."""
 import re
 
 from look_values import ORDER
@@ -24,6 +29,14 @@ KEY_WHY = "Kernel: to ask the model I need your key. I lock it with a password a
 KEY_QUESTION = "Kernel: type the key and press Enter. It shows as stars. Enter alone goes on without a key."
 KEY_QUESTION_AGAIN = "Kernel: type a new key and press Enter. Enter alone keeps the one locked on the disk."
 PASSWORD_QUESTION = "Kernel: type your password and press Enter to unlock the key. Enter alone goes on without it."
+ANTHROPIC_PASSWORD_QUESTION = "Kernel: type your password and press Enter to unlock the Anthropic key. Enter alone goes on without it."
+PROVIDER_QUESTION = "Kernel: your lines go to 1 OrcaRouter (api.orcarouter.ai) or 2 Anthropic (api.anthropic.com)."
+PROVIDER_ENTER = "Kernel: type 1 or 2 and press Enter. Enter alone keeps %s."
+NOT_ONE_OR_TWO = "Kernel: that is not 1 or 2. Type 1 or 2, or Enter alone to keep %s."
+CHOSEN = "Kernel: your lines go to %s."
+# Each provider's name for its locked key in the notebook, and for itself under "provider".
+KEY_ENTRIES = {"OrcaRouter": "locked key", "Anthropic": "locked key anthropic"}
+PROVIDERS_KEPT = {"OrcaRouter": b"orcarouter", "Anthropic": b"anthropic"}
 NO_RANDOM = ["Kernel: I cannot lock a key on this machine, because it cannot make random numbers.",
              'Kernel: send "key" for a key that lasts until the machine is switched off.']
 KEY_STAYS = "Kernel: the key locked on the disk stays as it was. Type a line and press Enter."
@@ -134,8 +147,15 @@ class KeyedChat(Chat):
     random: whether the machine can make random numbers."""
 
     def __init__(self, screen_width, notebook="ready", kept_name=None, last_line=None, key_entry=None, password=None,
-                 random=True, trouble=None, tries=None, instant=True, kept_look=DISK, auto_look=True):
+                 random=True, trouble=None, tries=None, instant=True, kept_look=DISK, auto_look=True, provider="OrcaRouter",
+                 anthropic_entry=None, auto_provider=True):
         super().__init__(screen_width)
+        self.provider = provider       # the provider in use, and the one the notebook holds
+        self.provider_kept = provider
+        self.entries = {"OrcaRouter": key_entry, "Anthropic": anthropic_entry}
+        self.auto_provider = auto_provider
+        self.switched = False          # whether the questions under way changed the provider
+        key_entry = self.entries[provider]
         self.trouble = trouble         # why the locked key on the disk is refused before any password is tried
         self.tries = list(tries) if tries is not None else None   # outcomes of the tries, in turn; None: always TRY_FENCED
         self.instant = instant         # the answer to a try is there before the next key (else the test calls tried())
@@ -221,6 +241,34 @@ class KeyedChat(Chat):
     def done(self):
         self.waiting = None
         self.setting_up = False
+        self.switched = False
+
+    def password_question(self):
+        return ANTHROPIC_PASSWORD_QUESTION if self.provider == "Anthropic" else PASSWORD_QUESTION
+
+    def answer_provider(self, said):
+        """The answer to the question for the provider: 1, 2, or Enter alone, which keeps the one in use. The choice
+        is kept when it differs from what the notebook holds; another provider than the one in use wipes the key in
+        memory. Then the question for that provider's key."""
+        given = said.strip(" ")
+        if given not in ("", "1", "2"):
+            return [NOT_ONE_OR_TWO % self.provider]
+        chosen = {"": self.provider, "1": "OrcaRouter", "2": "Anthropic"}[given]
+        if chosen != self.provider_kept and self.can_keep:
+            self.provider_kept = chosen
+            self.kept.append(("provider", PROVIDERS_KEPT[chosen]))
+        if chosen != self.provider:
+            self.entries[self.provider] = self.key_entry
+            self.provider = chosen
+            self.key_entry = self.entries[chosen]
+            self.key_in_memory = None
+            self.secret_held = False
+            self.switched = True
+        self.waiting = "key"
+        rows = [CHOSEN % chosen]
+        if not (self.setting_up and self.key_entry == LOCKED):
+            rows.append(KEY_WHY)
+        return rows + [self.key_question()]
 
     def more_follows(self):
         if self.key_entry == LOCKED:
@@ -282,17 +330,16 @@ class KeyedChat(Chat):
     def key_rows(self):
         if self.key_entry == LOCKED and not self.setting_up:
             self.waiting = "password"
-            return [PASSWORD_QUESTION]
+            return [self.password_question()]
         if self.key_entry == b"" and not self.setting_up:
             return self.finish([])
         if not self.can_keep:
             return self.finish([])
         if not self.random:
             return self.finish(list(NO_RANDOM))
-        self.waiting = "key"
-        if self.setting_up and self.key_entry == LOCKED:
-            return [KEY_QUESTION_AGAIN]
-        return [KEY_WHY, KEY_QUESTION]
+        # The key is about to be asked for: the question for the provider comes first.
+        self.waiting = "provider"
+        return [PROVIDER_QUESTION, PROVIDER_ENTER % self.provider]
 
     def key_question(self):
         return KEY_QUESTION_AGAIN if self.setting_up and self.key_entry == LOCKED else KEY_QUESTION
@@ -351,7 +398,7 @@ class KeyedChat(Chat):
     def no_key_noted(self):
         if self.key_entry is None:
             self.key_entry = b""
-            self.kept.append(("locked key", b""))
+            self.kept.append((KEY_ENTRIES[self.provider], b""))
         return []
 
     def for_this_start(self):
@@ -363,6 +410,11 @@ class KeyedChat(Chat):
         if step == "key":
             if typed == "":
                 if self.key_entry == LOCKED:
+                    # Just after a change of provider the key in memory was wiped: that provider's locked key is
+                    # unlocked with its password at once.
+                    if self.switched and not self.secret_held:
+                        self.waiting = "password"
+                        return [self.password_question()]
                     return self.finish([KEY_STAYS])
                 return self.finish([NO_KEY] + self.no_key_noted())
             outcome = self.next_try()
@@ -399,7 +451,7 @@ class KeyedChat(Chat):
             self.key_entry = LOCKED
             self.password = typed
             self.locked_key_text = self.key_in_memory
-            self.kept.append(("locked key", LOCKED))
+            self.kept.append((KEY_ENTRIES[self.provider], LOCKED))
             return self.finish(list(LOCKED_ROWS))
         if step == "password":
             if typed == "":
@@ -422,10 +474,10 @@ class KeyedChat(Chat):
         self.add("kernel", row)
 
     def line_room(self):
-        return NAME_LIMIT if self.waiting == "name" else CHAT_LINE_LIMIT
+        return NAME_LIMIT if self.waiting in ("name", "provider") else CHAT_LINE_LIMIT
 
     def kernel_question(self):
-        return self.waiting == "name" or self.look_asking
+        return self.waiting in ("name", "provider") or self.look_asking
 
     def stars_now(self):
         return self.secret_asked or self.waiting in STAR_STEPS
@@ -457,12 +509,13 @@ class KeyedChat(Chat):
             elif len(self.typed) < SECRET_LIMIT:
                 self.typed += sign
             return
-        if sign == "\n" and self.waiting == "name":
+        if sign == "\n" and self.waiting in ("name", "provider"):
             said, self.line = self.line, ""
             rows = []
             if said:
                 rows.append(("person", "%s: %s" % (self.person(), said)))
-            rows += [("kernel", row) for row in self.answer_name(said)]
+            answer = self.answer_name(said) if self.waiting == "name" else self.answer_provider(said)
+            rows += [("kernel", row) for row in answer]
             for speaker, row in rows:
                 self.said.append(row)
                 self.add(speaker, row)

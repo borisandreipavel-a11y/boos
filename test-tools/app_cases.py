@@ -97,6 +97,9 @@ def answer(kind, bearer):
     a = {"role": "assistant"}
     table = {
         "app": ({**a, "content": SCRIPT}, "stop"),
+        # The model thought before it wrote the script, as a model that thinks may (with Anthropic: a thinking block
+        # before the script's).
+        "appthought": ({**a, "content": SCRIPT, "reasoning_content": "The person wants a dice that rolls, so the script picks one of six."}, "stop"),
         "appfenced": ({**a, "content": "```lua\n" + SCRIPT + "```"}, "stop"),
         "appprose": ({**a, "content": "Here is your app:\n\n```lua\n" + SCRIPT + "```\n\nEnjoy it!"}, "stop"),
         "appopen": ({**a, "content": "```lua\n" + SCRIPT}, "stop"),
@@ -131,7 +134,7 @@ SHOWED_NOTHING = "the app ran to its end, but it showed nothing on the screen."
 MISTAKE = "the app was stopped, because it has a mistake in it; the terminal says which."
 TOO_MUCH_WORK = "the app was stopped, because it did too much work."
 GAVE_UP = "the app was stopped, because the interpreter gave up, most likely for lack of memory."
-DICE_KINDS = ["app", "appfenced", "appprose", "appopen", "appclose", "apppieces", "appspaces", "appcrlf", "appnoending", "slowapp"]
+DICE_KINDS = ["app", "appthought", "appfenced", "appprose", "appopen", "appclose", "apppieces", "appspaces", "appcrlf", "appnoending", "slowapp"]
 
 
 def run_expect(kind, key):

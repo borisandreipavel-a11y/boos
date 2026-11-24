@@ -12,7 +12,7 @@ def swap(old, new):
 
 BREAKS = {
     # The instruction text is left out of the request.
-    "noinstructions": {"model.rs": swap("json_text(APP_INSTRUCTIONS),", "json_text(\"\"),")},
+    "noinstructions": {"model.rs": swap("json_text(MODEL_NAME),\n            json_text(APP_INSTRUCTIONS),", "json_text(MODEL_NAME),\n            json_text(\"\"),")},
     # The ``` marks are never found, so they stay in the script.
     "nomarks": {"apps.rs": swap('.filter(|(_, line)| line.trim_start().starts_with("```"))', '.filter(|(_, line)| line.trim_start().starts_with("~~~never"))')},
     # A script cut off at the limit is taken as if it were whole.
@@ -24,10 +24,10 @@ BREAKS = {
     # A long line of the script is not cut.
     "nocut": {"apps.rs": swap("const SCRIPT_LINE_SHOWN: usize = 200;", "const SCRIPT_LINE_SHOWN: usize = 400;")},
     # The key is not hidden in the script.
-    "nohide": {"model.rs": swap("                key_hide(&mut signs, key);\n", "")},
+    "nohide": {"model.rs": swap("            key_hide(&mut signs, key);\n            // Only signs of the key", "            // Only signs of the key")},
     # A line is sent with the fixed question's limit of tokens, not its own (every line goes to the model,
     # docs/tools.md; a line's limit is the app's 4000 too, so that swap would show nothing).
-    "asktokens": {"model.rs": swap("json_text(&sent),\n        offered,\n        LINE_TOKENS", "json_text(&sent),\n        offered,\n        ANSWER_TOKENS")},
+    "asktokens": {"model.rs": swap("json_text(&sent),\n            offered,\n            LINE_TOKENS", "json_text(&sent),\n            offered,\n            ANSWER_TOKENS")},
     # (No break for the word `make` and for a request without a key: the word is an ordinary line now, and a line
     # without a key is turned away before it reaches the model, which the breaks of model_breaks.py and
     # chat_tools_breaks.py named nokeycheck show.)

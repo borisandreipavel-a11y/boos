@@ -57,7 +57,10 @@ disk = fresh_disk("key-model")
 try:
     m = Machine("key-model-1", extra=one_disk(disk), disk=False, network="open", kernel=kernel)
     assert m.wait_for(b"repeated here:", 150)
-    press(m, "Ada\n" + KEY + "\n")
+    # The question for the provider comes between the name and the key: Enter alone keeps OrcaRouter.
+    press(m, "Ada\n")
+    assert wait_row(m, "Enter alone keeps OrcaRouter"), rows(m)[-5:]
+    press(m, "\n" + KEY + "\n")
     assert wait_row(m, "choose a password"), rows(m)[-5:]
     press(m, PW + "\n" + PW + "\n")
     assert wait_row(m, "the key is locked and kept"), rows(m)[-5:]

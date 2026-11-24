@@ -31,7 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 # Nothing from outside may change what the jobs test: a KERNEL_FILE left set would have every suite boot another kernel.
 STRIPPED = ("KERNEL_FILE", "KERNEL_BREAK", "BREAK", "DIVIDED_DISK", "BOOS_PROJECT", "RAW", "KEY_PAUSE", "BREAKS_MODULE", "CHAT_LOOK", "BOOS_COPIES",
-            "BOOS_NETWORK_CARD")
+            "BOOS_NETWORK_CARD", "BOOS_PROVIDER")
 CLEARED = [_name for _name in STRIPPED if _name in os.environ]  # said at the start of main(), so that it is not missed
 for _name in STRIPPED:
     os.environ.pop(_name, None)
@@ -247,6 +247,12 @@ def break_jobs():
         add("open file", name, ["test_open_file.py", open_file_breaks.CATCH[name]], {"BREAK": name},
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["open_file_breaks.py"], 60)
+    # Anthropic as a second provider: in the stand-in copy, through test_anthropic.py with BREAK.
+    import anthropic_breaks
+    for name, changes in anthropic_breaks.BREAKS.items():
+        add("anthropic", name, ["test_anthropic.py", anthropic_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["anthropic_breaks.py"], 90)
     # Intel's network card: in the break copy, test_intel_card.py's scenarios booting the copy's kernel ("many" and
     # "page" carry the break into a copy of their own, through KERNEL_BREAK).
     import run_intel_card_breaks
@@ -288,8 +294,8 @@ def table_problems(jobs):
             if absent:
                 problems.append("the entry '%s' names scenarios its script does not know: %s" % (entry["name"], absent))
     kinds = suites.APP_KINDS.split(",")
-    if len(kinds) != 46:
-        problems.append("suites.APP_KINDS holds %d kinds, not the 46 of app_cases.py" % len(kinds))
+    if len(kinds) != 47:
+        problems.append("suites.APP_KINDS holds %d kinds, not the 47 of app_cases.py" % len(kinds))
     meant = assigned("test_model.py", "MEANT")
     model_known = {ast.literal_eval(key) for key in meant.keys} if isinstance(meant, ast.Dict) else set()
     if set(suites.MODEL_KINDS.split(",")) != model_known:

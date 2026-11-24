@@ -157,6 +157,17 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The request names nothing about this kernel** (no note saying what kind of program asks). A provider that wants one would refuse; this one did not.
 - **Refusals are not told apart.** A wrong key, used-up credit, a model the provider does not know and too many requests all read "the provider turned the question down", with the number and the provider's words. Only the provider's own trouble (500 to 599) reads differently, "the provider could not answer". Nothing asks again by itself.
 
+### Anthropic
+
+- **The real Anthropic has been seen in one person's run only:** the key worked, a line's answer came piece by piece to the kernel's `HTTP/1.0` request, as OrcaRouter's does, a table was drawn and a dice app made (see "Anthropic as a second provider" in [testing.md](testing.md)). What came in those answers was not watched: whether the model thought, the counts, the times.
+- **A tool in an answer of Anthropic's that came whole is not done,** only said: what the model gives a tool stands there as JSON of its own, which the JSON reader does not hand out as a text. A line's answer is asked for piece by piece, where it comes as a text.
+- **What of a tool's input arrives when an answer reaches its limit** was not seen: Anthropic holds each part of a tool's input back until it is whole and checked. So a table cut off at the limit may bring none of its rows, where OrcaRouter's brings its whole rows.
+- **The provider's checks (`refusal`) keep a tool from being done,** even a table whose rows came whole, since such an answer may stop in the middle of what the model gives a tool.
+- **A key typed after `key` belongs to the provider in use,** and a `setup` that changes the provider wipes it; a key locked for the other provider stays on the disk, and is unlocked again only when that provider is chosen at `setup` (by its own password, asked for at once).
+- **Each locked key keeps the password it was locked with.** After switching back and forth, the start asks for the password of the provider in use; two keys may have two passwords.
+- **Nothing is cached on purpose.** Anthropic reads back what it kept of an earlier question only when the request asks for it, at a tenth of the price on its smallest model; the kernel does not ask, so the instruction text and the tools are paid in full with every line (about 0.02 cent a line more than with it, an estimate).
+- **The model is fixed** (`claude-haiku-5-5`): another, by a wish or for apps only, is a later step.
+
 ## Every line to the model
 
 - **Every line is a paid question that needs the network and takes seconds,** and everything typed in it reaches the provider and, from there, the maker of the model. Without a key, or without the network, a line gets a row that says so and nothing else. See [tools.md](tools.md).

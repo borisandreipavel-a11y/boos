@@ -37,4 +37,9 @@ rem The machine's network card: the virtio card, or with the word e1000
 rem (.\run.bat e1000) the Intel card QEMU plays under that name.
 set NETWORK_CARD=virtio-net-pci
 if /I "%~1"=="e1000" set NETWORK_CARD=e1000
-"C:\Program Files\qemu\qemu-system-x86_64.exe" -m 256M -cpu qemu64,+rdrand -netdev user,id=net0 -device %NETWORK_CARD%,netdev=net0 -device ich9-ahci,id=ahci0 -drive if=none,id=disk0,format=raw,file=disk.img -device ide-hd,drive=disk0,bus=ahci0.0 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code.fd -drive format=raw,file=fat:rw:esp -serial stdio
+rem A long key can be typed into the machine by type-key.ps1, through QEMU's
+rem monitor, which listens on this computer only, and only when BOOS_MONITOR
+rem names a port ($env:BOOS_MONITOR = "4455" before .\run.bat).
+set MONITOR=
+if not "%BOOS_MONITOR%"=="" set MONITOR=-monitor tcp:127.0.0.1:%BOOS_MONITOR%,server=on,wait=off
+"C:\Program Files\qemu\qemu-system-x86_64.exe" -m 256M -cpu qemu64,+rdrand -netdev user,id=net0 -device %NETWORK_CARD%,netdev=net0 -device ich9-ahci,id=ahci0 -drive if=none,id=disk0,format=raw,file=disk.img -device ide-hd,drive=disk0,bus=ahci0.0 -drive if=pflash,format=raw,readonly=on,file=edk2-x86_64-code.fd -drive format=raw,file=fat:rw:esp -serial stdio %MONITOR%

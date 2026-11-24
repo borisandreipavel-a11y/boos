@@ -89,6 +89,10 @@ def main():
         wait_line(machine, "Network: this machine was given the address", 30)
         time.sleep(1.0)
         press(machine, NAME + ENTER)
+        # The question for the provider comes before the key's: Enter alone keeps OrcaRouter.
+        if not wait_line(machine, "Kernel: type 1 or 2 and press Enter. Enter alone keeps OrcaRouter."):
+            failures.append("no question for the provider")
+        press(machine, ENTER)
         if not wait_line(machine, "Kernel: type the key and press Enter."):
             failures.append("no key question")
         if scenario == "keylater":

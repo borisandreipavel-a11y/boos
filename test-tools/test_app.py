@@ -14,7 +14,8 @@ Usage: python test_app.py <behaviour,behaviour,...> [dump]      (behaviours: the
                                                                 some of model_server.py's, see OTHER below)
        python test_app.py nocard                                 (a machine without a network card)
 With `dump`, the machine's memory is searched for the made-up key after the last answer.
-Environment: BREAK (a break on purpose from app_breaks.py)."""
+Environment: BREAK (a break on purpose from app_breaks.py), BOOS_PROVIDER ("anthropic": every request goes to
+Anthropic, in Anthropic's form; see FIRST_LINE)."""
 import json
 import os
 import subprocess
@@ -25,6 +26,10 @@ import time
 # request for a line offers no kept app. Set before interp_helpers is imported, which would otherwise ask for a
 # divided one.
 os.environ["DIVIDED_DISK"] = ""
+# The first line of every request. With BOOS_PROVIDER=anthropic every request goes to Anthropic, in Anthropic's form
+# (net_copy.py), and the stand-in turns it back into OrcaRouter's form before it is judged (anthropic_cases.py): only
+# its first line stays Anthropic's.
+FIRST_LINE = "POST /v1/messages HTTP/1.0" if os.environ.get("BOOS_PROVIDER") == "anthropic" else "POST /v1/chat/completions HTTP/1.0"
 
 import app_cases
 from app_cases import INSTRUCTIONS, LEAD, clean, hide, outcome
@@ -414,7 +419,7 @@ def main():
     def judged(note, want, label, what):
         right = want is not None and note.get("body") == want
         whole_key = note.get("key came as") == "Bearer " + KEY
-        ok = right and note.get("length note right") and whole_key and note.get("first line") == "POST /v1/chat/completions HTTP/1.0"
+        ok = right and note.get("length note right") and whole_key and note.get("first line") == FIRST_LINE
         if not ok:
             failures.append(label)
         print("   %-17s %-24s | body as meant %s | %5s bytes | length note right %s | key came whole %s | name %s%s" % (
