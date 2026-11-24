@@ -15,7 +15,7 @@ from look_values import LOOKS
 from picture import LETTER_HEIGHT, LETTER_WIDTH
 
 NAME_MOST = 45
-NOTE_FORM, KIND_TABLE, KIND_TEXT = 1, 1, 2
+NOTE_FORM, KIND_TABLE, KIND_TEXT, KIND_CHART = 1, 1, 2, 3
 
 # ---------- The tools ----------
 
@@ -64,8 +64,12 @@ def called(document):
 
 
 def told(document):
-    """What stands behind the instruction text while this document is open: for a document of text and tables (kind
-    2, in the dict as "kind"), changed with write_document; for a table, with draw_table."""
+    """What stands behind the instruction text while this document is open: for a bar chart (kind 3, in the dict as
+    "kind"), changed with draw_chart; for a document of text and tables (kind 2), with write_document; for a table,
+    with draw_table."""
+    if document.get("kind") == KIND_CHART:
+        return ("\n\nThe document open on the screen is %s, a bar chart. To change it, write it whole again with draw_chart, "
+                "beginning with the line document %d. Its lines now:\n%s" % (called(document), document["number"], document["lines"]))
     if document.get("kind") == KIND_TEXT:
         return ("\n\nThe document open on the screen is %s, a document of text and tables. To change it, write it whole again "
                 "with write_document, beginning with the line document %d. Its lines now:\n%s" % (called(document), document["number"], document["lines"]))
@@ -169,7 +173,7 @@ def documents_of(found):
     notes = []
     for thing, (block, data) in found.items():
         match = re.fullmatch(r"document ([1-9][0-9]{0,8})", thing)
-        if not match or len(data) < 6 or data[0] != NOTE_FORM or data[1] not in (KIND_TABLE, KIND_TEXT):
+        if not match or len(data) < 6 or data[0] != NOTE_FORM or data[1] not in (KIND_TABLE, KIND_TEXT, KIND_CHART):
             continue
         version = struct.unpack("<I", data[2:6])[0]
         if version == 0 or version > 999_999_999:

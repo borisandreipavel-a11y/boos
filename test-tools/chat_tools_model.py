@@ -6,6 +6,7 @@ model. Nothing runs when this file is imported."""
 import os
 import re
 
+import chart_model
 import documents_model
 import table_model
 import text_document_model
@@ -190,8 +191,8 @@ FORGET = {"type": "function", "function": {"name": "forget",
 
 def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), documents=()):
     """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
-    `draw_table` if the screen (width, height), or None for none, has room for a table, and `write_document` with it
-    where documents can be kept, `download_file` unless `files`
+    `draw_table` if the screen (width, height), or None for none, has room for a table, and `write_document` and
+    `draw_chart` with it where documents can be kept, `download_file` unless `files`
     is None (no room for files, as on a disk that is not divided), `remove_file` for the kept files in `files`
     ((number, words), the one kept last first), `open_file` for the files among them that open (`openable`) where
     documents can be kept, with `write_document` saying how a picture is shown while a PNG picture is kept,
@@ -218,6 +219,7 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), d
             if files and pictures_of(files):
                 write["function"]["description"] += DOCUMENT_PICTURES
             tools.append(write)
+            tools.append(chart_model.tool_meant(*screen))
         if documents:
             tools.append(documents_model.open_document_tool(documents))
     if files is not None:

@@ -268,6 +268,12 @@ def break_jobs():
         add("picture documents", name, ["test_picture_documents.py", picture_document_breaks.CATCH[name]], {"BREAK": name},
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["picture_document_breaks.py"], 150)
+    # Bar charts: in the stand-in copy, through test_chart_documents.py with BREAK.
+    import chart_breaks
+    for name, changes in chart_breaks.BREAKS.items():
+        add("charts", name, ["test_chart_documents.py", chart_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["chart_breaks.py"], 150)
     # Anthropic as a second provider: in the stand-in copy, through test_anthropic.py with BREAK.
     import anthropic_breaks
     for name, changes in anthropic_breaks.BREAKS.items():

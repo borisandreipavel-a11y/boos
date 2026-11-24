@@ -141,10 +141,11 @@ def check_things(tag, disk, documents, versions=()):
     return found
 
 
-def unfinished(given):
-    """What the kernel's JSON reader takes out of lines cut off before their closing quote (`given`, what the model
-    gave write_document so far): the text as far as it goes, a backslash form cut in two left out."""
-    rest = given[given.index('"lines": "') + len('"lines": "'):]
+def unfinished(given, name="lines"):
+    """What the kernel's JSON reader takes out of a text cut off before its closing quote (`given`, what the model gave
+    the tool so far, the text under `name`): the text as far as it goes, a backslash form cut in two left out."""
+    lead = '"%s": "' % name
+    rest = given[given.index(lead) + len(lead):]
     out, at = [], 0
     while at < len(rest) and rest[at] != '"':
         if rest[at] != "\\":

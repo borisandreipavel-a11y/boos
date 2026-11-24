@@ -343,15 +343,16 @@ struct Table {
     rows: Vec<Vec<String>>,
 }
 
-// What the frame shows: the table drawn last, or the document of text written
-// or opened last, laid out in pages, with the page shown. One thing at a
-// time: each takes the other's place. It is kept until the machine is
-// switched off, so that it can be painted again in another look. Only the
-// startup code and the main loop may touch it; it is taken out of its place
-// and put back by value.
+// What the frame shows: the table drawn last, the document of text written or
+// opened last, laid out in pages, with the page shown, or the chart drawn
+// last. One thing at a time: each takes the other's place. It is kept until
+// the machine is switched off, so that it can be painted again in another
+// look. Only the startup code and the main loop may touch it; it is taken out
+// of its place and put back by value.
 enum InFrame {
     Table(Table),
     Text(Pages),
+    Chart(Chart),
 }
 static mut IN_FRAME: Option<InFrame> = None;
 
@@ -661,9 +662,9 @@ fn grid_paint(left: u32, top: u32, widths: &[u32], head: Option<&Vec<String>>, r
 }
 
 // Paints what the frame shows again, in the look in use: the table drawn
-// last, or the page shown of the document of text. Does nothing while the
-// frame shows nothing. The look calls it when it paints the whole screen
-// again.
+// last, the page shown of the document of text, or the chart. Does nothing
+// while the frame shows nothing. The look calls it when it paints the whole
+// screen again.
 pub fn drawing_paint_again() {
     let Some(shown) = frame_take() else {
         return;
@@ -672,6 +673,7 @@ pub fn drawing_paint_again() {
         match &shown {
             InFrame::Table(table) => table_paint(&place, &room, table),
             InFrame::Text(pages) => pages_paint(&place, &room, pages),
+            InFrame::Chart(chart) => chart_paint(&place, &room, chart),
         }
     }
     frame_put(shown);
@@ -1230,6 +1232,414 @@ pub fn drawing_page_turn(forward: bool) {
         }
     }
     frame_put(shown);
+}
+
+// ---------- A bar chart ----------
+//
+// The tool `draw_chart` (see `tools.rs` and `documents.rs`): bars, one a row,
+// from a zero point, a label at the left of each and its number at the right.
+// The rules are those of "A bar chart" in docs/screen.md. Every number is
+// worked out in whole numbers: the kernel has no floating point.
+
+// The most signs of a label shown, and of a number as written.
+const CHART_SIGNS_MOST: usize = 12;
+// The most digits a number may have.
+const CHART_DIGITS_MOST: usize = 15;
+// How high a bar is, and how far below its row's top it begins; how far below
+// their row's top the letters stand; the room between the columns.
+const BAR_HEIGHT: u32 = 20;
+const BAR_TOP: u32 = 4;
+const CHART_LETTERS_TOP: u32 = 5;
+const CHART_GAP: u32 = 12;
+
+// A bar as read: its label and its number as the model wrote them, and the
+// number exactly: whether it is below zero, its digits as one whole number,
+// and how many of them are decimals.
+struct Bar {
+    label: String,
+    written: String,
+    negative: bool,
+    digits: u128,
+    decimals: u32,
+}
+
+// A chart's lines as read: which kept document they change, if they say (0
+// for a new one), its title, the colour asked for its bars, the bars whose
+// number could be read, and how many could not.
+struct ChartLines {
+    document: Option<u64>,
+    title: Option<String>,
+    colour: Option<Colour>,
+    bars: Vec<Bar>,
+    unread: usize,
+}
+
+// Reads a chart's lines: everything but the bars counts only before the
+// first `bar` line, read or not, and of two the later counts; any other line
+// is skipped.
+fn chart_read(text: &str) -> ChartLines {
+    let mut found = ChartLines { document: None, title: None, colour: None, bars: Vec::new(), unread: 0 };
+    let mut begun = false;
+    for line in text.split('\n') {
+        let (word, rest) = line_parts(line);
+        if word.eq_ignore_ascii_case("bar") {
+            begun = true;
+            match bar_read(rest) {
+                Some(bar) => found.bars.push(bar),
+                None => found.unread += 1,
+            }
+        } else if begun {
+            continue;
+        } else if word.eq_ignore_ascii_case("document") {
+            found.document = document_number(rest);
+        } else if word.eq_ignore_ascii_case("title") {
+            found.title = Some(String::from(rest));
+        } else if word.eq_ignore_ascii_case("colours") || word.eq_ignore_ascii_case("colors") {
+            if let Some(colour) = bars_colour(rest) {
+                found.colour = Some(colour);
+            }
+        }
+    }
+    found
+}
+
+// The colour a `colours` line gives the bars: the word `bars` and a colour
+// behind it, parted by spaces, commas, colons or equals signs, as a table's
+// parts are; other parts are passed over.
+fn bars_colour(rest: &str) -> Option<Colour> {
+    let words: Vec<&str> = rest.split([' ', '\t', ',', ':', '=']).filter(|word| !word.is_empty()).collect();
+    let mut found = None;
+    let mut at = 0;
+    while at < words.len() {
+        if words[at].eq_ignore_ascii_case("bars") {
+            if let Some(colour) = words.get(at + 1).and_then(|word| colour_read(word)) {
+                found = Some(colour);
+                at += 2;
+                continue;
+            }
+        }
+        at += 1;
+    }
+    found
+}
+
+// A bar's line behind its first word: the label before the first `|`, the
+// number after it, each without the spaces and tabs at either end. Gives
+// nothing when the number cannot be read.
+fn bar_read(rest: &str) -> Option<Bar> {
+    let (label, number) = rest.split_once('|')?;
+    let written = number.trim_matches([' ', '\t']);
+    let (negative, digits, decimals) = number_read(written)?;
+    Some(Bar { label: String::from(label.trim_matches([' ', '\t'])), written: String::from(written), negative, digits, decimals })
+}
+
+// A bar's number, read exactly: an optional sign, digits that single commas
+// may part, and at most one point with digits behind it; at most 15 digits
+// and 12 signs. Gives whether it is below zero (minus zero is zero), its
+// digits as one whole number, and how many of them are decimals.
+fn number_read(text: &str) -> Option<(bool, u128, u32)> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || bytes.len() > CHART_SIGNS_MOST {
+        return None;
+    }
+    let (negative, mut at) = match bytes[0] {
+        b'-' => (true, 1),
+        b'+' => (false, 1),
+        _ => (false, 0),
+    };
+    let (mut digits, mut count, mut decimals) = (0u128, 0usize, 0u32);
+    let (mut point, mut after_digit) = (false, false);
+    while at < bytes.len() {
+        let next_is_digit = bytes.get(at + 1).is_some_and(|byte| byte.is_ascii_digit());
+        match bytes[at] {
+            byte @ b'0'..=b'9' => {
+                digits = digits.saturating_mul(10).saturating_add(u128::from(byte - b'0'));
+                count += 1;
+                if point {
+                    decimals += 1;
+                }
+                after_digit = true;
+            }
+            b',' if !point && after_digit && next_is_digit => after_digit = false,
+            b'.' if !point && after_digit && next_is_digit => {
+                point = true;
+                after_digit = false;
+            }
+            _ => return None,
+        }
+        at += 1;
+    }
+    if count == 0 || count > CHART_DIGITS_MOST {
+        return None;
+    }
+    Some((negative && digits > 0, digits, decimals))
+}
+
+// A chart as drawn and kept in memory: its title as drawn, the colour asked
+// for its bars (checked against the look each time it is painted), and the
+// bars drawn.
+struct Chart {
+    title: String,
+    colour: Option<Colour>,
+    bars: Vec<Bar>,
+}
+
+// What came of drawing a chart: its title as the model wrote it, if it gave
+// one, and as drawn; how many bars were drawn, how many did not fit and how
+// many had no number that could be read; and the scale's two ends as written.
+pub struct Charted {
+    pub title_written: Option<String>,
+    pub title: String,
+    bars: usize,
+    left_out: usize,
+    unread: usize,
+    from: String,
+    to: String,
+}
+
+impl Charted {
+    // Whether every bar the model wrote was drawn.
+    pub fn whole(&self) -> bool {
+        self.left_out == 0 && self.unread == 0
+    }
+}
+
+// How many bars fit in the room below the title's row, above a last row for
+// the scale.
+fn chart_rows(room: &Room) -> usize {
+    (room.bottom.saturating_sub(room.table_top).saturating_sub(row_height()) / row_height().max(1)) as usize
+}
+
+// The room the tool `draw_chart` tells the model: how many bars fit, and how
+// many signs of a label are shown. Nothing when this screen has no room for
+// the frame.
+pub fn charting_room() -> Option<(usize, usize)> {
+    let (_, room) = room()?;
+    Some((chart_rows(&room), CHART_SIGNS_MOST))
+}
+
+// The scale of the bars drawn: the numbers brought to the most decimals any
+// of them has, as whole numbers; the most negative one's size and the
+// largest above zero; and the texts of the scale's two ends, as written.
+struct Scale {
+    decimals: u32,
+    most_negative: u128,
+    largest: u128,
+    from: String,
+    to: String,
+}
+
+impl Scale {
+    fn of(bars: &[Bar]) -> Scale {
+        let decimals = bars.iter().map(|bar| bar.decimals).max().unwrap_or(0);
+        let mut scale = Scale { decimals, most_negative: 0, largest: 0, from: String::from("0"), to: String::from("0") };
+        for bar in bars {
+            let value = scale.value(bar);
+            if bar.negative && value > scale.most_negative {
+                scale.most_negative = value;
+                scale.from = shown(&bar.written, CHART_SIGNS_MOST);
+            } else if !bar.negative && value > scale.largest {
+                scale.largest = value;
+                scale.to = shown(&bar.written, CHART_SIGNS_MOST);
+            }
+        }
+        scale
+    }
+
+    // A bar's number's size, at the scale's decimals.
+    fn value(&self, bar: &Bar) -> u128 {
+        bar.digits.saturating_mul(10u128.saturating_pow(self.decimals.saturating_sub(bar.decimals)))
+    }
+
+    // How many dots of `width` a size takes: size * width / span, rounded
+    // down; nothing when every number is zero.
+    fn dots(&self, size: u128, width: u32) -> u32 {
+        let span = self.most_negative.saturating_add(self.largest);
+        if span == 0 { 0 } else { (size.saturating_mul(u128::from(width)) / span) as u32 }
+    }
+}
+
+// The colour the bars are painted in: the one asked for, when it stands out
+// from the look's inside by a contrast ratio of at least 3, the measure for
+// shapes; otherwise the look's frame colour, when that stands out so;
+// otherwise the look's letters' colour, which every look holds to 4.5.
+fn bar_colour(asked: Option<Colour>, frame: Colour, inside: Colour, letters: Colour) -> Colour {
+    let stands_out = |colour: Colour| {
+        let (one, other) = (brightness(colour), brightness(inside));
+        let (lighter, darker) = if one >= other { (one, other) } else { (other, one) };
+        lighter + FLARE >= 3 * (darker + FLARE)
+    };
+    match asked {
+        Some(colour) if stands_out(colour) => colour,
+        _ if stands_out(frame) => frame,
+        _ => letters,
+    }
+}
+
+// Paints the frame, the title and the chart: each row's label, bar and
+// number, the axis at the zero point, and the scale's two ends below. The
+// frame is painted whole, which wipes out what it showed before.
+fn chart_paint(place: &FramePlace, room: &Room, chart: &Chart) {
+    let size = TABLE_STYLE.text_size;
+    let line = TABLE_STYLE.line;
+    let look = look();
+    let sign = sign_width();
+    frame_paint(place);
+    screen_text(room.left, room.title_top, &chart.title, size, look.panel_text);
+    let labels = chart.bars.iter().map(|bar| shown(&bar.label, CHART_SIGNS_MOST).len()).max().unwrap_or(0) as u32;
+    let numbers = chart.bars.iter().map(|bar| bar.written.len()).max().unwrap_or(0) as u32;
+    let right = room.left.saturating_add(room.width);
+    let bars_left = room.left.saturating_add(labels.saturating_mul(sign)).saturating_add(CHART_GAP);
+    let bars_right = right.saturating_sub(numbers.saturating_mul(sign)).saturating_sub(CHART_GAP);
+    let width = bars_right.saturating_sub(bars_left);
+    let scale = Scale::of(&chart.bars);
+    let zero = bars_left.saturating_add(scale.dots(scale.most_negative, width));
+    let colour = bar_colour(chart.colour, look.panel_frame, look.panel_inside, look.panel_text);
+    let mut top = room.table_top;
+    for bar in &chart.bars {
+        screen_text(room.left, top.saturating_add(CHART_LETTERS_TOP), &shown(&bar.label, CHART_SIGNS_MOST), size, look.panel_text);
+        let length = scale.dots(scale.value(bar), width);
+        let left = if bar.negative { zero.saturating_sub(length) } else { zero };
+        screen_rectangle(left, top.saturating_add(BAR_TOP), length, BAR_HEIGHT, colour);
+        let number = shown(&bar.written, CHART_SIGNS_MOST);
+        let number_left = right.saturating_sub((number.len() as u32).saturating_mul(sign));
+        screen_text(number_left, top.saturating_add(CHART_LETTERS_TOP), &number, size, look.panel_text);
+        top = top.saturating_add(row_height());
+    }
+    screen_rectangle(zero, room.table_top, line, top.saturating_sub(room.table_top), look.panel_text);
+    // The scale's ends, the right one alone when the two would leave less
+    // than a sign between them.
+    let to_left = bars_right.saturating_sub((scale.to.len() as u32).saturating_mul(sign));
+    if bars_left.saturating_add((scale.from.len() as u32 + 1).saturating_mul(sign)) <= to_left {
+        screen_text(bars_left, top.saturating_add(CHART_LETTERS_TOP), &scale.from, size, look.panel_text);
+    }
+    screen_text(to_left, top.saturating_add(CHART_LETTERS_TOP), &scale.to, size, look.panel_text);
+}
+
+// The text the model gave `draw_chart`, as far as it counts, and whether it
+// came whole; or what the kernel says when it cannot be read. As for a
+// table: a piece of the key in it is starred, and of a text that was cut off
+// only the lines that came whole count.
+pub fn charting_text(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
+    if room().is_none() {
+        return Err(String::from("the model asked to draw a chart, but this screen has no room for one."));
+    }
+    let Some((text, whole)) = given_text(inputs, cut_off, "chart") else {
+        return Err(String::from("the model asked to draw a chart, but I could not read it."));
+    };
+    let mut text = key_starred_kept(&text);
+    if !whole {
+        let end = text.rfind('\n').unwrap_or(0);
+        text.truncate(end);
+    }
+    Ok((text, whole))
+}
+
+// What the model asked to be drawn, so that two requests for the same chart
+// give the same text (see `drawing_wanted`).
+pub fn charting_wanted(inputs: &str, cut_off: bool) -> Option<String> {
+    given_text(inputs, cut_off, "chart").map(|(text, _)| text)
+}
+
+// The number on the chart's `document` line, if it has one before its first
+// bar: which kept document it changes, or 0 for a new one.
+pub fn charting_document(text: &str) -> Option<u64> {
+    chart_read(text).document
+}
+
+// A chart as a document keeps it: every line as the model wrote it, but the
+// `document` lines before the first bar, which say only which document it is.
+pub fn charting_lines_kept(text: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut bars_begun = false;
+    for line in text.split('\n') {
+        let (word, _) = line_parts(line);
+        bars_begun = bars_begun || word.eq_ignore_ascii_case("bar");
+        if !bars_begun && word.eq_ignore_ascii_case("document") {
+            continue;
+        }
+        kept.push(line);
+    }
+    kept.join("\n")
+}
+
+// Reads a chart's lines and draws it in the frame, in place of what it
+// showed, keeping it in memory: the bars that fit, in the order written. A
+// chart with no bar whose number could be read changes nothing.
+pub fn charting_show(text: &str) -> Result<Charted, NotDrawn> {
+    let Some((place, room)) = room() else {
+        return Err(NotDrawn::NoRoom);
+    };
+    let mut found = chart_read(text);
+    if found.bars.is_empty() {
+        return Err(NotDrawn::Empty);
+    }
+    let fit = chart_rows(&room).max(1);
+    let left_out = found.bars.len().saturating_sub(fit);
+    found.bars.truncate(fit);
+    let scale = Scale::of(&found.bars);
+    let title = found.title.as_deref().map(|title| shown(title, (room.width / sign_width().max(1)) as usize)).unwrap_or_default();
+    let charted = Charted {
+        title_written: found.title,
+        title: title.clone(),
+        bars: found.bars.len(),
+        left_out,
+        unread: found.unread,
+        from: scale.from,
+        to: scale.to,
+    };
+    let chart = Chart { title, colour: found.colour, bars: found.bars };
+    chart_paint(&place, &room, &chart);
+    frame_put(InFrame::Chart(chart));
+    Ok(charted)
+}
+
+// What the kernel says about a chart it drew: the chart, by its title, its
+// bars and the scale's ends, and what of it did not fit or did not come.
+pub fn charting_said(charted: &Charted, whole: bool) -> String {
+    let bars = counted(charted.bars, "bar", "bars");
+    let mut said = if charted.title.is_empty() {
+        format!("I drew a chart with {} from {} to {}", bars, charted.from, charted.to)
+    } else {
+        format!("I drew the chart \"{}\", with {} from {} to {}", charted.title, bars, charted.from, charted.to)
+    };
+    said.push_str(&charting_left_out(charted));
+    if !whole {
+        said.push_str("; it was cut off, so I drew only the bars that came whole");
+    }
+    said.push('.');
+    said
+}
+
+// What of a chart was left out, as the kernel says it behind what it drew or
+// opened: bars that did not fit, and bars without a number it could read.
+fn charting_left_out(charted: &Charted) -> String {
+    let mut said = String::new();
+    if charted.left_out > 0 {
+        let (did, were) = if charted.left_out == 1 { ("bar did", "was") } else { ("bars did", "were") };
+        said.push_str(&format!("; {} more {} not fit and {} left out", charted.left_out, did, were));
+    }
+    if charted.unread > 0 {
+        let (had, were) = if charted.unread == 1 { ("bar had", "was") } else { ("bars had", "were") };
+        said.push_str(&format!("; {} {} no number I could read and {} left out", charted.unread, had, were));
+    }
+    said
+}
+
+// How the kernel says what it opened of a chart: its bars, and what was left
+// out.
+pub fn charting_fit(charted: &Charted) -> String {
+    format!(", with {}{}", counted(charted.bars, "bar", "bars"), charting_left_out(charted))
+}
+
+// What the kernel says when the model's chart was not drawn, for a text that
+// came whole or one that was cut off.
+pub fn charting_refused(not: NotDrawn, whole: bool) -> String {
+    String::from(match not {
+        NotDrawn::NoRoom => "the model asked to draw a chart, but this screen has no room for one.",
+        NotDrawn::Empty if whole => "the model asked to draw a chart, but it has no bar with a number I could read.",
+        NotDrawn::Empty => "the model asked to draw a chart, but it was cut off before any of its bars came whole.",
+    })
 }
 
 // How bright a colour is to the eye: its relative luminance, as WCAG 2 (the
