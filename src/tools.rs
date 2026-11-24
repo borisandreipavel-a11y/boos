@@ -19,9 +19,9 @@ use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
 use crate::chat::{chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
-use crate::documents::{document_draw, document_open, documents_listed, documents_usable, documents_wanted};
+use crate::documents::{document_draw, document_open, document_reopen, documents_listed, documents_usable, documents_wanted};
 use crate::drawing::{drawing_room, drawing_table, drawing_wanted};
-use crate::files::{download_start, files_listed, files_usable, remove_ask};
+use crate::files::{download_start, file_open_start, files_listed, files_openable, files_usable, remove_ask};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
 use crate::model::ToolCall;
@@ -272,6 +272,34 @@ fn remove_file_tool(files: &[(u32, String)]) -> String {
     )
 }
 
+// The tool that opens a kept CSV file as a document: the kernel reads the
+// file and sends its text to the model once, with the next ask about the line,
+// and the model draws it as a table, which is kept as a document (see
+// `files.rs` and `documents.rs`). It lists the files that can be opened, by
+// number, name, kind and size, the one kept last first.
+fn open_file_tool(files: &[(u32, String)]) -> String {
+    let mut told = String::from(concat!(
+        "Opens one of the kept CSV files as a table: its text, at most its first 64 KB, is sent to you once, with the next ask, ",
+        "and you then draw it with draw_table as a new table, which is kept as a document; ",
+        "a file opened before opens its table again. The kept CSV files, by number: "
+    ));
+    let mut numbers = String::new();
+    for (place, (number, file)) in files.iter().enumerate() {
+        if place > 0 {
+            told.push_str("; ");
+            numbers.push(',');
+        }
+        told.push_str(&format!("{}: {}", number, file));
+        numbers.push_str(&format!("{}", number));
+    }
+    told.push('.');
+    format!(
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"open_file\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"file\":{{\"type\":\"integer\",\"enum\":[{}],\"description\":\"The number of the kept file\"}}}},\"required\":[\"file\"]}}}}}}",
+        json_text(&told),
+        numbers
+    )
+}
+
 // The tool that turns the page of the panel of apps.
 fn turn_page_tool(pages: usize, shown: usize) -> String {
     format!(
@@ -287,8 +315,9 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `draw_table` while
 // the screen has room for a table, and `open_document` while any document is
-// kept; `download_file` while files can be kept, and `remove_file` while any
-// file is kept; `turn_page` while the panel of apps has more than one page;
+// kept; `download_file` while files can be kept, `remove_file` while any
+// file is kept, and `open_file` while a CSV file is kept where documents can
+// be kept; `turn_page` while the panel of apps has more than one page;
 // `forget` while anything that was said is remembered.
 pub fn chat_tools() -> String {
     let mut tools = String::from("[");
@@ -316,6 +345,11 @@ pub fn chat_tools() -> String {
         if !files.is_empty() {
             tools.push(',');
             tools.push_str(&remove_file_tool(&files));
+        }
+        let openable = if documents_usable() { files_openable() } else { Vec::new() };
+        if !openable.is_empty() {
+            tools.push(',');
+            tools.push_str(&open_file_tool(&openable));
         }
     }
     let (pages, shown) = apps_pages();
@@ -454,6 +488,27 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             Some(number) => return remove_ask(number),
             None => String::from("the model asked to remove a kept file, but I could not read which one."),
         },
+        // A kept CSV file opened as a document: read on the machine, its text
+        // kept for the next ask about the line, which carries it to the model
+        // once, so that the model can draw it as a table (see `files.rs`).
+        // A file that a document was made from before opens that document
+        // instead, and its text is not sent again (see `documents.rs`).
+        // Either way it goes back, so the ask follows at once.
+        "open_file" => match input_number(&call.inputs, "file") {
+            Some(number) if !documents_usable() => format!("the model asked to open file {}, but documents cannot be kept here.", number),
+            Some(number) => {
+                let kept = files_openable().iter().any(|(file, _)| u64::from(*file) == number);
+                let reopened = if kept { u32::try_from(number).ok().and_then(document_reopen) } else { None };
+                match reopened.unwrap_or_else(|| file_open_start(number)) {
+                    Ok(said) => {
+                        chat_say(&said);
+                        return ToolDone::Back;
+                    }
+                    Err(said) => said,
+                }
+            }
+            None => String::from("the model asked to open a kept file, but I could not read which one."),
+        },
         // Everything said is forgotten first, the line that asked for it
         // too, so the row that says so is not remembered either, and nothing
         // of the line is left to go back.
@@ -485,6 +540,7 @@ pub fn tool_wanted(call: &ToolCall) -> String {
         "open_document" => input_number(&call.inputs, "document").map(|number| format!("{}", number)),
         "download_file" => input_text(&call.inputs, "address").map(|address| String::from(address.trim())),
         "remove_file" => input_number(&call.inputs, "file").map(|number| format!("{}", number)),
+        "open_file" => input_number(&call.inputs, "file").map(|number| format!("{}", number)),
         _ => None,
     };
     // A change of a kept document counts as the same thing again only while

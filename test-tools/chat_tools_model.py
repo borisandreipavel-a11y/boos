@@ -92,6 +92,22 @@ def remove_file_tool(files):
                                               "description": "The number of the kept file"}}, ["file"])
 
 
+def openable(files):
+    """The kept files that open_file lists, of `files` as remove_file lists them ((number, "name, a CSV table of 5 KB"),
+    the one kept last first): the CSV files."""
+    return [(number, words) for number, words in files if ", a CSV table of " in words]
+
+
+def open_file_tool(files):
+    """`files`: (number, "name, a CSV table of 5 KB") of the kept CSV files, the one kept last first."""
+    told = ("Opens one of the kept CSV files as a table: its text, at most its first 64 KB, is sent to you once, with the next ask, "
+            "and you then draw it with draw_table as a new table, which is kept as a document; "
+            "a file opened before opens its table again. The kept CSV files, by number: "
+            + "; ".join("%d: %s" % (number, file) for number, file in files) + ".")
+    return tool("open_file", told, {"file": {"type": "integer", "enum": [number for number, _ in files],
+                                            "description": "The number of the kept file"}}, ["file"])
+
+
 def run_app_tool(apps):
     """`apps`: (number, request), or (number, request, inputs) with (name, kind, about) for each input, of the kept apps,
     the one kept last first. While any has inputs, the tool says so and takes their values too."""
@@ -131,7 +147,8 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), d
     """The list of tools for a disk with these kept apps (the one kept last first), the panel showing page `shown`,
     `draw_table` if the screen (width, height), or None for none, has room for a table, `download_file` unless `files`
     is None (no room for files, as on a disk that is not divided), `remove_file` for the kept files in `files`
-    ((number, words), the one kept last first), and `forget` if anything said is remembered. `documents`: the kept
+    ((number, words), the one kept last first), `open_file` for the CSV files among them where documents can be kept,
+    and `forget` if anything said is remembered. `documents`: the kept
     documents as `open_document` lists them ((number, name), the one used last first), or None where documents cannot
     be kept, where draw_table is offered as before documents; when not given, None along with `files`, since in these
     tests a disk without room for files is one without a notebook."""
@@ -155,6 +172,8 @@ def tools_meant(apps, shown=1, remembered=False, screen=(1280, 800), files=(), d
         tools.append(DOWNLOAD_FILE)
         if files:
             tools.append(remove_file_tool(files))
+        if table and documents is not None and openable(files):
+            tools.append(open_file_tool(openable(files)))
     pages = -(-len(apps) // 5)
     if pages > 1:
         tools.append(turn_page_tool(pages, shown))

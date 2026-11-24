@@ -33,7 +33,11 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The notebook has half the room it had,** about 15,300 entries, and every line sent takes one; nothing tidies it yet.
 - **An older kernel** sees the whole part as its notebook's: on a disk with files, its notebook would write over them only once it reached the middle of the part.
 - **A site's yes cannot be taken back,** and `setup` does not forget the sites allowed or the files kept.
-- **What a file holds is not looked at** beyond its first bytes; a reader that turns a file into a document is still to come. A kept file's check value is not checked again after it was written.
+- **What a file holds is not looked at by the kernel** beyond its first bytes. Only a CSV file can be opened as a document (`open_file`, see [tools.md](tools.md)), and the model reads it, not the kernel: its text goes to the provider, once, when it is opened. A PDF, a Word or an Excel file and plain text cannot be opened yet; Word, Excel and PDF are packed, and the kernel has no way of unpacking them.
+- **Only a file's first 64 KB go to the model,** cut behind a line end: the rest of a longer file is not seen, and a part further on cannot be asked for yet. A file whose first line is longer is not opened.
+- **Nothing checks the table the model draws from a file against the file:** a value it left out or changed looks right. The table holds 50 rows at most, so that a change by a wish still fits; how a real rewrite fits is known only from a run with the real model.
+- **A kept file's check value is not checked again** after it was written, not even when it is opened, since that would take a pass over the whole file.
+- **A file opened before opens its document again;** reading the file afresh, for a new table from the same file, is not offered. A file's text goes to the model when it is opened, and the person is not asked first.
 
 ## Network
 

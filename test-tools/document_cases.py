@@ -77,4 +77,6 @@ def answer(kind, line, bearer):
         return good(body(message(None, [call("open_document", {"document": int(given)})]), "tool_calls")), "goodbye"
     if name == "openbad":
         return good(body(message(None, [call("open_document", {"document": "the planets"})]), "tool_calls")), "goodbye"
-    return None
+    # The behaviours for files opened as documents are open_file_cases.py's.
+    import open_file_cases
+    return open_file_cases.answer(kind, line, bearer)
