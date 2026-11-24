@@ -51,7 +51,7 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 - **The limits** (9,000,000 dots, 16,384 on a side, 4,000,000 interlaced) were set from times measured in QEMU; how long a real PC takes was not measured. A larger picture is turned down, not read at a smaller size.
 - **Colours are shown as they are written:** gamma, colour profiles and the colour of the screen it was made on are not applied; 16-bit colours keep their high byte. A picture is shrunk by averaging, never enlarged, and stands at the left of the page.
 - **The model never sees a picture:** it knows a picture's file, name and size, and the document's lines, nothing of what it shows, so it cannot describe it or write a caption from it.
-- **Whether the real model picks `open_file` when asked to show a picture** was not tried: only the tool's words lead it there. The stand-in asks for it by name.
+- **Whether the real model picks `open_file` when asked to show a picture** was tried once, in a person's run (see [testing.md](testing.md)): `show dog picture` made it ask for `open_file`, and it wrote a `picture` line with a caption into the picture's document. Only the tool's words lead it there, and how it does in general is not known.
 - **A picture document keeps the line, not the dots:** a removed file leaves `picture of file 3: it was removed` in its place, and a document that names another file's number than meant shows that file.
 - **The breaks on purpose** of pictures in documents are each caught by a scenario; painting while the kernel's lines cover the screen has no break, since nothing paints a picture then that is not painted again after.
 
