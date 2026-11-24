@@ -53,7 +53,7 @@ kernel                      shares the processor and the memory, talks to device
 
 - Finds its network card on the PCI list and drives it: a virtio card, or one of Intel's 82540EM and 82545EM cards.
 - Is given an address, looks up a name, and fetches a web page over an encrypted link (TLS). The site proves who it is with a certificate, and the kernel checks it against a list of trusted roots it carries.
-- Fetches a file from an address on the web when the model asks for one, over the same kind of encrypted link: a PDF, a Word or Excel file, plain text or CSV, of at most 4 MB. Before it contacts a site for the first time it asks you in the chat box, and a site you allowed is kept; a site that sends it on to another address is followed at most five times.
+- Fetches a file from an address on the web when the model asks for one, over the same kind of encrypted link: a PDF, a Word or Excel file, plain text, CSV or a PNG picture, of at most 4 MB. Before it contacts a site for the first time it asks you in the chat box, and a site you allowed is kept; a site that sends it on to another address is followed at most five times.
 - Gets random numbers from the processor and the date from the clock chip, which encryption needs.
 
 **The model**
@@ -85,6 +85,7 @@ kernel                      shares the processor and the memory, talks to device
 - Writes a document of text and tables when asked, such as a short guide: the model writes it in short lines (a title, paragraphs, a head and rows for each table), and the kernel sets it into pages in the same frame, one page at a time, which Page Down and Page Up turn at once, without asking the model. It is kept as a document like a table, at most 8 KB, about nine pages, and opened and changed again by a wish.
 - Opens a kept CSV file as a table when asked: its text, at most its first 64 KB, goes to the model once, and the model draws it as a table that is kept like the others.
 - Opens a kept PDF as a document of text and tables while Anthropic is the provider, after asking you with its price a page: Anthropic fetches the PDF from the address it came from, and the model writes its text and tables, or a summary of a longer one, as a document that is kept like the others; opening the PDF again opens that document and sends nothing.
+- Shows a kept PNG picture in the same frame when asked, shrunk to fit a page, read by a PNG reader written for this kernel; nothing of the picture goes to the model. It is kept as a document of its own, and a document of text can show up to four pictures among its paragraphs, each with a caption.
 - Keeps an app that ran to its end on the disk, with the words it was asked for, and reads the script back to check that it was written whole. A panel near the top left of the screen lists the apps kept, five a page, the newest first, and it is there again after a restart. The model can run a kept app again, as it was kept, without having it written anew, and turn the panel's page; an app made again for the same request takes the old one's place.
 - Lets an app take inputs, at most four numbers, texts or yes/no values that the model fills in each time the app runs: `convert 5 km to miles` makes a converter and runs it with 5, and a later `convert 12 km` runs the kept converter with 12, without having it written again. The kernel checks each value first, and the script finds the values in a table, never written into its text.
 
@@ -224,6 +225,7 @@ Seven crates are kept as copies in `vendor/`. Six of them came with a build scri
 | `src/` | The kernel, one topic per file. The map is in [docs/README.md](docs/README.md) |
 | `interpreter/` | The interpreter for Lua, a program of its own, built for WebAssembly before the kernel |
 | `password-key/` | A small crate of the project's own that turns a password into a key, kept apart so that it is built to run fast |
+| `pictures/` | A crate of the project's own that reads PNG pictures and shrinks them to fit the frame, kept apart for the same reason, with its own tests |
 | `docs/` | The notes, from the takeover to the apps the model writes |
 | `vendor/` | The copies of outside code |
 | `run.bat` | Builds both, makes the disk file the first time, starts QEMU |
@@ -240,7 +242,7 @@ Said plainly, because a list of what works is only half the picture:
 - An app can show one line of 40 signs and print to the terminal, and nothing else. It cannot wait, read a key or open a file. It takes at most four inputs, and a request for one has at most 45 signs.
 - The model is told the same fixed text with every request for an app, and whether it keeps to it is not checked: an answer in words instead of a script is taken as the script.
 - Every line is a paid question that needs the internet and takes seconds. The model sees that line and a record of up to 10 lines before it, with what came of each, and nothing older; the record is gone when the machine is switched off. Only the first tool it asks for is done. What the tool did goes back to the model in the same line only when it needs the model, such as a new app's run or a tool that was turned down, and the model is asked about one line at most three times.
-- Of the files fetched from the web, only a CSV file can be opened, as a table, and a PDF while Anthropic is the provider, as a document; the others are only kept, and no app can read a file. A table shows at most six columns. Only PDFs, Word and Excel files, plain text and CSV are kept, at most 4 MB each, and only from addresses that begin with `https://`.
+- Of the files fetched from the web, only a CSV file can be opened, as a table, a PDF while Anthropic is the provider, as a document, and a PNG picture shown; the others are only kept, and no app can read a file. A table shows at most six columns. A picture has at most 9 million dots, and a large one takes some seconds to show. Only PDFs, Word and Excel files, plain text, CSV and PNG pictures are kept, at most 4 MB each, and only from addresses that begin with `https://`.
 - It has run in QEMU and, from its boot disk, in VirtualBox, and nowhere else. What a real PC may do differently is collected in [docs/open-points.md](docs/open-points.md).
 - Its network card is a virtio card, a kind that exists only in virtual machines, or one of Intel's 82540EM and 82545EM, which QEMU and VMware play and some older PCs have. The Intel driver has run only in QEMU.
 - The mouse is switched off, and the look of the screen is one of four built into the kernel.

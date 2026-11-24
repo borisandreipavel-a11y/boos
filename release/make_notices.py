@@ -23,7 +23,7 @@ import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-OWN = {os.path.normcase(os.path.abspath(os.path.join(REPO, part))) for part in ("", "interpreter", "password-key")}
+OWN = {os.path.normcase(os.path.abspath(os.path.join(REPO, part))) for part in ("", "interpreter", "password-key", "pictures")}
 LICENCE_FILE = re.compile(r"^(licen[cs]e|copying|notice|copyright|unlicense)", re.IGNORECASE)
 
 # Crates whose files hold no licence text, with the texts kept here instead: the folder, the project, the commit.

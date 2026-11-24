@@ -76,6 +76,7 @@ dependencies = [
  "p256",
  "p384",
  "password-key",
+ "pictures",
  "rsa",
  "rustls",
  "sha2",
@@ -422,6 +423,10 @@ dependencies = [
  "hmac",
  "sha2",
 ]
+
+[[package]]
+name = "pictures"
+version = "0.1.0"
 
 [[package]]
 name = "poly1305"

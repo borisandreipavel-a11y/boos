@@ -38,7 +38,7 @@ def check(file, old, new):
 def fresh():
     """Brings the copy's sources up to date with the project's; keeps the copy's build folder and its vendor folder."""
     os.makedirs(COPY, exist_ok=True)
-    for name in ["src", "password-key", ".cargo"]:
+    for name in ["src", "password-key", "pictures", ".cargo"]:
         shutil.rmtree(os.path.join(COPY, name), ignore_errors=True)
         shutil.copytree(os.path.join(PROJECT, name), os.path.join(COPY, name))
         # copytree keeps the files' old times, and cargo would then take an earlier build for up to date.

@@ -122,6 +122,27 @@ fn rectangle_paint(left: u32, top: u32, width: u32, height: u32, colour: Colour)
     }
 }
 
+// Paints one row of dots of the usual picture, each in its own colour, from
+// `left` and `top` rightwards: a row of a picture (see `drawing.rs`). Dots
+// that would land past the screen's edge are not painted. While the kernel's
+// lines cover the screen it paints nothing.
+pub fn screen_row(left: u32, top: u32, colours: &[Colour]) {
+    if unsafe { COVERED } {
+        return;
+    }
+    let Some(screen) = (unsafe { SCREEN }) else {
+        return;
+    };
+    if top >= screen.height {
+        return;
+    }
+    // As in `rectangle_paint`: rows are counted in `row_length`.
+    let row = screen.memory_start + top as u64 * screen.row_length as u64 * 4;
+    for (x, colour) in (left..screen.width).zip(colours.iter()) {
+        device_write_32(row + x as u64 * 4, dot_value(screen.colours, *colour));
+    }
+}
+
 // Writes one line of text of the usual picture. `left` and `top` say where
 // the top left corner of the first sign goes. `size` says how large a dot of
 // a letter is painted: with 1 it is one dot of the screen, with 2 a block of

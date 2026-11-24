@@ -262,6 +262,12 @@ def break_jobs():
         add("pdf", name, ["test_pdf_documents.py", scenario], env,
             [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
             ["pdf_breaks.py"], 120)
+    # Pictures in documents: in the stand-in copy, through test_picture_documents.py with BREAK.
+    import picture_document_breaks
+    for name, changes in picture_document_breaks.BREAKS.items():
+        add("picture documents", name, ["test_picture_documents.py", picture_document_breaks.CATCH[name]], {"BREAK": name},
+            [(file, lambda file, c=change: check_change(c, file)) for file, change in changes.items()], "caught",
+            ["picture_document_breaks.py"], 150)
     # Anthropic as a second provider: in the stand-in copy, through test_anthropic.py with BREAK.
     import anthropic_breaks
     for name, changes in anthropic_breaks.BREAKS.items():

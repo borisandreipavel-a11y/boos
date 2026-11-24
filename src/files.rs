@@ -9,19 +9,24 @@
 //! the person before a kept file is removed. And it opens a kept CSV file as a
 //! document: it reads the file's beginning, which goes to the model once,
 //! with the next ask about the line, so that the model can draw it as a
-//! table (see `documents.rs`). Only the main loop may call these functions,
-//! and the startup code the first two.
-//! Notes: `docs/disk.md`, `docs/notebook.md`, `docs/tools.md`.
+//! table (see `documents.rs`). A kept PNG picture is read whole and turned
+//! into dots for the frame, and nothing of it goes to the model (see
+//! `file_picture`). Only the main loop may call these functions, and the
+//! startup code the first two.
+//! Notes: `docs/disk.md`, `docs/notebook.md`, `docs/tools.md`,
+//! `docs/pictures.md`.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use pictures::{Limits, Picture, png_head, png_picture};
+
 use crate::chat::chat_say;
 use crate::clock::clock_read;
 use crate::disk::BLOCK_SIZE;
-use crate::download::{Address, Fetched, address_join, address_read, size_words};
+use crate::download::{Address, FILE_MOST, Fetched, address_join, address_read, size_words};
 use crate::errand::{Errand, errand_ask};
 use crate::model::Provider;
 use crate::notebook::{notebook_find, notebook_keep, notebook_names, notebook_ready};
@@ -65,6 +70,7 @@ enum Kind {
     Excel,
     Text,
     Csv,
+    Png,
 }
 
 impl Kind {
@@ -76,11 +82,12 @@ impl Kind {
             Kind::Excel => "xlsx",
             Kind::Text => "txt",
             Kind::Csv => "csv",
+            Kind::Png => "png",
         }
     }
 
     fn from_word(word: &str) -> Option<Kind> {
-        [Kind::Pdf, Kind::Word, Kind::Excel, Kind::Text, Kind::Csv].into_iter().find(|kind| kind.word() == word)
+        [Kind::Pdf, Kind::Word, Kind::Excel, Kind::Text, Kind::Csv, Kind::Png].into_iter().find(|kind| kind.word() == word)
     }
 
     // What it is called in a sentence, with "a" or "an".
@@ -91,9 +98,21 @@ impl Kind {
             Kind::Excel => "an Excel file",
             Kind::Text => "a text",
             Kind::Csv => "a CSV table",
+            Kind::Png => "a PNG picture",
         }
     }
 }
+
+// The first eight bytes of every PNG picture (RFC 2083, 3.1).
+const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+
+// How large a picture the kernel shows may be (see "In the kernel" in
+// docs/pictures.md): the most dots in all, enough for a screenshot of 3840 by
+// 2160; on either side; and in an interlaced picture, which is put together
+// whole, four bytes a dot (16 MB), before it is shrunk. They bound the memory
+// a picture takes and the time the main loop waits for it: measured in QEMU,
+// 9 million dots of 16-bit colour and alpha take about 5 seconds.
+const PICTURE_LIMITS: Limits = Limits { dots_most: 9_000_000, side_most: 16_384, interlaced_dots_most: 4_000_000 };
 
 // A kept file, as its note in the notebook says, with the address it was
 // fetched from, when the note holds one that could have been fetched.
@@ -351,12 +370,13 @@ pub fn files_listed() -> Vec<(u32, String)> {
 
 // The kept files that can be opened as a document, the one kept last first,
 // each by its number, its name, its kind and its size, as the tool
-// `open_file` lists them: the CSV files, and the PDFs whose address is kept
-// while Anthropic is the provider (see `pdf_open_ask`).
+// `open_file` lists them: the CSV files, the PDFs whose address is kept while
+// Anthropic is the provider (see `pdf_open_ask`), and the PNG pictures, which
+// open in the frame as documents of their own (see `documents.rs`).
 pub fn files_openable() -> Vec<(u32, String)> {
     let mut listed: Vec<(u32, String)> = files()
         .iter()
-        .filter(|file| file.kind == Kind::Csv || pdf_openable(file))
+        .filter(|file| file.kind == Kind::Csv || pdf_openable(file) || file.kind == Kind::Png)
         .map(|file| (file.number, format!("{}, {} of {}", file.name, file.kind.told(), size_words(file.bytes))))
         .collect();
     listed.sort_by(|one, other| other.0.cmp(&one.0));
@@ -369,10 +389,23 @@ fn pdf_openable(file: &KeptFile) -> bool {
     file.kind == Kind::Pdf && file.address.is_some() && provider_in_use() == Provider::Anthropic
 }
 
+// Whether `open_file` lists a CSV file now, so that its words say what comes
+// of opening one (see `tools.rs`).
+pub fn files_open_csv() -> bool {
+    files().iter().any(|file| file.kind == Kind::Csv)
+}
+
 // Whether `open_file` lists a PDF now, so that its sentence says what comes
 // of opening one (see `tools.rs`).
 pub fn files_open_pdf() -> bool {
     files().iter().any(pdf_openable)
+}
+
+// Whether `open_file` lists a PNG picture now, so that its words say what
+// comes of opening one; `write_document` then says how a picture is shown too
+// (see `tools.rs`).
+pub fn files_open_png() -> bool {
+    files().iter().any(|file| file.kind == Kind::Png)
 }
 
 // Whether the kept file with this number is a PDF.
@@ -462,12 +495,13 @@ fn file_keep(bytes: &[u8], kind: Kind, name: &str, address: &str) -> Result<u32,
 }
 
 // What kind of file this is, by its first bytes where the kind has a mark of
-// its own: a PDF begins with "%PDF-" (RFC 8118), and a Word or an Excel file
-// is a ZIP package that begins with the bytes 50 4b 03 04 (the IANA's
-// registrations of both kinds); which of the two it is, the address's ending
-// or the site's word for it says. Plain text and CSV have no mark: they are
-// taken when the address's ending or the site's word says so, and only if
-// every byte reads as text. Anything else is not kept.
+// its own: a PDF begins with "%PDF-" (RFC 8118), a PNG picture with the bytes
+// 137 80 78 71 13 10 26 10 (RFC 2083), and a Word or an Excel file is a ZIP
+// package that begins with the bytes 50 4b 03 04 (the IANA's registrations of
+// both kinds); which of the two it is, the address's ending or the site's
+// word for it says. Plain text and CSV have no mark: they are taken when the
+// address's ending or the site's word says so, and only if every byte reads
+// as text. Anything else is not kept.
 fn kind_of(bytes: &[u8], last_part: &str, content_type: Option<&str>) -> Result<Kind, String> {
     if bytes.is_empty() {
         return Err(String::from("the site sent an empty file"));
@@ -479,6 +513,9 @@ fn kind_of(bytes: &[u8], last_part: &str, content_type: Option<&str>) -> Result<
     let said = content_type.map(|kind| kind.split(';').next().unwrap_or("").trim()).unwrap_or("");
     if bytes.starts_with(b"%PDF-") {
         return Ok(Kind::Pdf);
+    }
+    if bytes.starts_with(&PNG_SIGNATURE) {
+        return Ok(Kind::Png);
     }
     if bytes.starts_with(&[0x50, 0x4b, 0x03, 0x04]) {
         if ending == "docx" || said == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
@@ -899,6 +936,44 @@ pub fn file_opening_number() -> Option<u32> {
 // another.
 pub fn file_opening_forget() {
     unsafe { OPENING = None };
+}
+
+// ---------- A kept picture, for the frame ----------
+
+// The name of the kept PNG picture with this number, or nothing when no kept
+// file of that number is one.
+pub fn file_picture_name(number: u64) -> Option<String> {
+    files().iter().find(|file| u64::from(file.number) == number && file.kind == Kind::Png).map(|file| file.name.clone())
+}
+
+// Reads the kept PNG picture with this number from the room for files, whole,
+// and turns it into dots shrunk to fit a room of `room_width` by `room_height`
+// dots (see docs/pictures.md). Nothing of it goes to the model. Gives back the
+// picture's own width and height and its dots as shown; or, when it cannot be
+// shown, why, in words to stand after "because": the file was removed, no
+// kept file has the number, it is not a picture, it cannot be read from the
+// disk, or what the picture's reader turned it down for.
+pub fn file_picture(number: u64, room_width: u32, room_height: u32) -> Result<(u32, u32, Picture), String> {
+    let Some(file) = files().iter().find(|file| u64::from(file.number) == number) else {
+        // A number below the next one was given to a file that is no longer
+        // kept.
+        let removed = number > 0 && number < u64::from(unsafe { NEXT_FILE });
+        return Err(String::from(if removed { "it was removed" } else { "no kept file has that number" }));
+    };
+    let (kind, bytes, first) = (file.kind, file.bytes, file.first);
+    if kind != Kind::Png {
+        return Err(format!("it is {}, not a picture", kind.told()));
+    }
+    // A note from the disk could say any size; the kernel keeps no file
+    // larger than this.
+    if bytes > FILE_MOST as u64 {
+        return Err(format!("it is larger than the {} I take", size_words(FILE_MOST as u64)));
+    }
+    let mut read = vec![0u8; bytes as usize];
+    part_read_run(first, &mut read).map_err(|reason| format!("it could not be read from the disk, because {}", reason))?;
+    let head = png_head(&read).map_err(|refusal| refusal.because())?;
+    let picture = png_picture(&read, room_width, room_height, &PICTURE_LIMITS).map_err(|refusal| refusal.because())?;
+    Ok((head.width, head.height, picture))
 }
 
 // `setup` was sent: a fetch under way ends, and so does a question of this

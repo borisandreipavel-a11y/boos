@@ -21,7 +21,7 @@ COPY = os.path.join(RUNS, "lua-copy")
 
 def build(script):
     os.makedirs(COPY, exist_ok=True)
-    for name in ["src", "vendor", ".cargo", "password-key"]:
+    for name in ["src", "vendor", ".cargo", "password-key", "pictures"]:
         target = os.path.join(COPY, name)
         if name == "vendor" and os.path.exists(target):
             continue

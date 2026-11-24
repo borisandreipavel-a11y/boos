@@ -7,24 +7,29 @@
 //! The table drawn last is kept in memory, and painted again with the rest of
 //! the screen (`look_paint`); a new table takes its place, and `setup` empties
 //! the frame. Where documents can be kept, the description itself is kept on
-//! the disk too and drawn again from there (see `documents.rs`). Only the
-//! startup code and the main loop may call these functions.
-//! Notes: `docs/screen.md` ("The table", "Documents") and `docs/tools.md`
-//! (`draw_table`).
+//! the disk too and drawn again from there (see `documents.rs`). A document of
+//! text, laid out in pages in the same frame, is drawn here too, with the kept
+//! PNG pictures it names. Only the startup code and the main loop may call
+//! these functions.
+//! Notes: `docs/screen.md` ("The table", "A document of text", "Documents"),
+//! `docs/tools.md` (`draw_table`, `write_document`) and `docs/pictures.md`.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use pictures::Picture;
+
 use crate::apps_kept::apps_panel_place;
 use crate::chat::chat_box_place;
 use crate::drawing_values::LINEAR;
+use crate::files::file_picture;
 use crate::json::{Step, json_find_text, json_find_text_unfinished};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::look;
 use crate::model::key_starred_kept;
-use crate::screen::{Colour, screen_rectangle, screen_size, screen_text};
+use crate::screen::{Colour, screen_rectangle, screen_row, screen_size, screen_text};
 
 // How the frame and the table in it are laid out. The sizes are decided here,
 // in this one place. The colours of the frame and the title come from the
@@ -674,21 +679,28 @@ pub fn drawing_paint_again() {
 
 // ---------- A document of text ----------
 //
-// The tool `write_document` (see `tools.rs` and `documents.rs`): paragraphs
-// and tables, in the order the model wrote them, laid out in the frame's room
-// and cut into pages, one page shown at a time. The rules are those of "A
-// document of text" in docs/screen.md.
+// The tool `write_document` (see `tools.rs` and `documents.rs`): paragraphs,
+// tables and pictures of kept files, in the order the model wrote them, laid
+// out in the frame's room and cut into pages, one page shown at a time. The
+// rules are those of "A document of text" in docs/screen.md.
 
 // How high a row of text is: a letter, and two dots below it.
 fn text_row() -> u32 {
     TABLE_STYLE.text_size.saturating_mul(LETTER_HEIGHT + 1)
 }
 
-// A block of a document of text: a paragraph as the model wrote it, or a
-// table: its head, if it has one, and its rows, each row its cells.
+// The most pictures a document of text shows: each is read from the disk and
+// shrunk when the document is written or opened, and its dots are kept in
+// memory while it is shown (see "In the kernel" in docs/pictures.md).
+const PICTURES_MOST: usize = 4;
+
+// A block of a document of text: a paragraph as the model wrote it; a table:
+// its head, if it has one, and its rows, each row its cells; or a picture: the
+// number of the kept file it shows, and its caption, if it has one.
 enum Block {
     Paragraph(String),
     Table { head: Option<Vec<String>>, rows: Vec<Vec<String>> },
+    Picture { file: u64, caption: Option<String> },
 }
 
 // A document of text as the model wrote it, read line by line: which kept
@@ -703,13 +715,19 @@ struct WrittenLines {
 // Reads the lines of a document of text: `document` and `title` count only
 // before anything else; `text` is a paragraph; `head` begins a new table;
 // `row` adds a row to the table begun last, or begins a table without a head
-// when a paragraph stands since. Any other line is skipped.
+// when a paragraph or a picture stands since; `picture` is a picture (see
+// `picture_line`). Any other line is skipped. Nothing is read from the disk
+// here: the pictures are read when the document is laid out.
 fn writing_read(text: &str) -> WrittenLines {
     let mut found = WrittenLines { document: None, title: None, blocks: Vec::new() };
     for line in text.split('\n') {
         let (word, rest) = line_parts(line);
         if word.eq_ignore_ascii_case("text") {
             found.blocks.push(Block::Paragraph(String::from(rest)));
+        } else if word.eq_ignore_ascii_case("picture") {
+            if let Some(picture) = picture_line(rest) {
+                found.blocks.push(picture);
+            }
         } else if word.eq_ignore_ascii_case("head") {
             found.blocks.push(Block::Table { head: Some(cells(rest)), rows: Vec::new() });
         } else if word.eq_ignore_ascii_case("row") {
@@ -728,12 +746,29 @@ fn writing_read(text: &str) -> WrittenLines {
     found
 }
 
-// A part of a page: rows of text, or a table, so many dots below the top of
-// the page; a table with its columns' widths, its head (drawn again at the
-// top of every page it goes on to) and the rows on this page.
+// The rest of a `picture` line: the number of the kept file it shows, a whole
+// number of at most nine digits, as on a `document` line, and behind a `|`
+// its caption, the spaces and tabs at either end of each not counting; an
+// empty caption is none. A line whose number cannot be read is skipped, as a
+// line a kernel from before pictures does not know.
+fn picture_line(rest: &str) -> Option<Block> {
+    let (number, caption) = match rest.split_once('|') {
+        Some((number, caption)) => (number, Some(caption)),
+        None => (rest, None),
+    };
+    let file = document_number(number.trim_matches([' ', '\t']))?;
+    let caption = caption.map(|caption| caption.trim_matches([' ', '\t'])).filter(|caption| !caption.is_empty()).map(String::from);
+    Some(Block::Picture { file, caption })
+}
+
+// A part of a page: rows of text, a table, or a picture, so many dots below
+// the top of the page; a table with its columns' widths, its head (drawn
+// again at the top of every page it goes on to) and the rows on this page; a
+// picture with its dots as shown, shrunk to fit.
 enum PagePart {
     Text { top: u32, rows: Vec<String> },
     Table { top: u32, widths: Vec<u32>, head: Option<Vec<String>>, rows: Vec<Vec<String>> },
+    Picture { top: u32, picture: Picture },
 }
 
 // A document of text laid out: its title as drawn, its pages, and the page
@@ -745,20 +780,33 @@ struct Pages {
 }
 
 // What came of writing a document of text: its title as the model wrote it,
-// if it gave one, and as drawn; how many pages it has; and whether a table in
-// it had more columns than fit, which were left out.
+// if it gave one, and as drawn; how many pages it has; whether a table in it
+// had more columns than fit, which were left out; the pictures shown, each by
+// its file's number with the picture's own width and height in dots; and the
+// pictures not shown, each by its file's number with why, in words to stand
+// after "because".
 pub struct Written {
     pub title_written: Option<String>,
     pub title: String,
     pub pages: usize,
     columns_left_out: bool,
+    pub pictures: Vec<(u64, u32, u32)>,
+    pub pictures_not_shown: Vec<(u64, String)>,
 }
 
 impl Written {
-    // Whether all of it was drawn: every column of every table.
+    // Whether all of it was drawn: every column of every table, and every
+    // picture.
     pub fn whole(&self) -> bool {
-        !self.columns_left_out
+        !self.columns_left_out && self.pictures_not_shown.is_empty()
     }
+}
+
+// A document of text laid out in pages, its pictures read and shrunk, and not
+// shown yet (see `writing_laid` and `writing_put`), with what came of it.
+pub struct Laid {
+    pages: Pages,
+    pub written: Written,
 }
 
 // A paragraph set into rows of at most `across` signs: parted into words at
@@ -798,20 +846,53 @@ fn rows_of(text: &str, across: usize) -> Vec<String> {
     rows
 }
 
+// Rows of text laid out from `used`, the dots of the last page taken so far,
+// as a paragraph's: a row that does not fit goes on at the top of the next
+// page, and rows that follow one another on a page are one part of it.
+fn text_rows_laid(pages: &mut Vec<Vec<PagePart>>, used: &mut u32, height: u32, rows: Vec<String>) {
+    for row in rows {
+        if used.saturating_add(text_row()) > height {
+            pages.push(Vec::new());
+            *used = 0;
+        }
+        if let Some(page) = pages.last_mut() {
+            match page.last_mut() {
+                Some(PagePart::Text { top, rows }) if top.saturating_add(text_row().saturating_mul(rows.len() as u32)) == *used => rows.push(row),
+                _ => page.push(PagePart::Text { top: *used, rows: vec![row] }),
+            }
+        }
+        *used = used.saturating_add(text_row());
+    }
+}
+
+// A document of text laid out: its pages, whether a table had more columns
+// than fit, and the pictures shown and not shown (as in `Written`).
+struct Layout {
+    pages: Vec<Vec<PagePart>>,
+    columns_left_out: bool,
+    pictures: Vec<(u64, u32, u32)>,
+    pictures_not_shown: Vec<(u64, String)>,
+}
+
 // Lays the blocks out in pages of the room's height below the title's row:
 // one empty row between two blocks where the page has room for more below
 // it, none at the top of a page; a paragraph's rows that do not fit going on
 // at the top of the next page; a table beginning on the next page unless its
 // head and first row fit, and its rows that do not fit going on to the next
-// page under its head drawn again. Gives the pages, and whether a table had
-// more columns than fit.
-fn laid_out(found: &WrittenLines, room: &Room) -> (Vec<Vec<PagePart>>, bool) {
+// page under its head drawn again; a picture, with its caption under it,
+// read from its file and shrunk to fit a whole page, beginning on the next
+// page unless it fits whole on this one, or, when it cannot be shown, rows
+// that say why in its place.
+fn laid_out(found: &WrittenLines, room: &Room) -> Layout {
     let style = TABLE_STYLE;
     let height = room.bottom.saturating_sub(room.table_top);
     let across = (room.width / sign_width().max(1)) as usize;
     let mut pages: Vec<Vec<PagePart>> = vec![Vec::new()];
     let mut used: u32 = 0;
     let mut columns_left_out = false;
+    let mut pictures_tried = 0;
+    let mut pictures = Vec::new();
+    let mut pictures_not_shown = Vec::new();
     for (place, block) in found.blocks.iter().enumerate() {
         if place > 0 && used > 0 {
             if used.saturating_add(text_row()) >= height {
@@ -822,21 +903,37 @@ fn laid_out(found: &WrittenLines, room: &Room) -> (Vec<Vec<PagePart>>, bool) {
             }
         }
         match block {
-            Block::Paragraph(text) => {
-                for row in rows_of(text, across) {
-                    if used.saturating_add(text_row()) > height {
-                        pages.push(Vec::new());
-                        used = 0;
-                    }
-                    if let Some(page) = pages.last_mut() {
-                        match page.last_mut() {
-                            Some(PagePart::Text { top, rows }) if top.saturating_add(text_row().saturating_mul(rows.len() as u32)) == used => {
-                                rows.push(row)
-                            }
-                            _ => page.push(PagePart::Text { top: used, rows: vec![row] }),
+            Block::Paragraph(text) => text_rows_laid(&mut pages, &mut used, height, rows_of(text, across)),
+            Block::Picture { file, caption } => {
+                // The caption is one row under the picture, cut to the row.
+                let caption_rows: Vec<String> = caption.iter().map(|caption| shown(caption, across)).collect();
+                let caption_height = text_row().saturating_mul(caption_rows.len() as u32);
+                pictures_tried += 1;
+                let got = if pictures_tried > PICTURES_MOST {
+                    Err(format!("a document shows at most {} pictures", PICTURES_MOST))
+                } else {
+                    file_picture(*file, room.width, height.saturating_sub(caption_height))
+                };
+                match got {
+                    Ok((width, tall, picture)) => {
+                        let picture_height = picture.height;
+                        if used > 0 && used.saturating_add(picture_height).saturating_add(caption_height) > height {
+                            pages.push(Vec::new());
+                            used = 0;
                         }
+                        if let Some(page) = pages.last_mut() {
+                            page.push(PagePart::Picture { top: used, picture });
+                        }
+                        used = used.saturating_add(picture_height);
+                        text_rows_laid(&mut pages, &mut used, height, caption_rows);
+                        pictures.push((*file, width, tall));
                     }
-                    used = used.saturating_add(text_row());
+                    Err(why) => {
+                        let mut rows = rows_of(&format!("picture of file {}: {}", file, why), across);
+                        rows.extend(caption_rows);
+                        text_rows_laid(&mut pages, &mut used, height, rows);
+                        pictures_not_shown.push((*file, why));
+                    }
                 }
             }
             Block::Table { head, rows } => {
@@ -897,7 +994,7 @@ fn laid_out(found: &WrittenLines, room: &Room) -> (Vec<Vec<PagePart>>, bool) {
             }
         }
     }
-    (pages, columns_left_out)
+    Layout { pages, columns_left_out, pictures, pictures_not_shown }
 }
 
 // The mark of the page shown, `page 2 of 5`, for a document of more than one
@@ -935,7 +1032,28 @@ fn pages_paint(place: &FramePlace, room: &Room, pages: &Pages) {
             PagePart::Table { top, widths, head, rows } => {
                 grid_paint(room.left, room.table_top.saturating_add(*top), widths, head.as_ref(), rows, &[None; 5]);
             }
+            PagePart::Picture { top, picture } => picture_paint(room.left, room.table_top.saturating_add(*top), picture, look.panel_inside),
         }
+    }
+}
+
+// Paints a picture's dots from `left` and `top`, row by row, each over `back`,
+// the colour of the frame's inside in the look in use, as much as its alpha
+// says: (colour * alpha + back * (255 - alpha)) / 255, each of red, green and
+// blue, rounded to the nearest. So a see-through part shows the look's
+// colour, and changes with the look. The picture was shrunk to fit the room,
+// so nothing of it lands outside the frame.
+fn picture_paint(left: u32, top: u32, picture: &Picture, back: Colour) {
+    let width = picture.width.max(1) as usize;
+    let mut row: Vec<Colour> = Vec::with_capacity(width);
+    for (y, dots) in picture.dots.chunks_exact(width * 4).enumerate() {
+        row.clear();
+        for dot in dots.chunks_exact(4) {
+            let alpha = dot[3] as u32;
+            let mix = |front: u8, behind: u8| ((front as u32 * alpha + behind as u32 * (255 - alpha) + 127) / 255) as u8;
+            row.push(Colour { red: mix(dot[0], back.red), green: mix(dot[1], back.green), blue: mix(dot[2], back.blue) });
+        }
+        screen_row(left, top.saturating_add(y as u32), &row);
     }
 }
 
@@ -986,8 +1104,10 @@ pub fn writing_lines_kept(text: &str) -> String {
     let mut kept: Vec<&str> = Vec::new();
     let mut begun = false;
     for line in text.split('\n') {
-        let (word, _) = line_parts(line);
-        begun = begun || ["text", "head", "row"].iter().any(|block| word.eq_ignore_ascii_case(block));
+        let (word, rest) = line_parts(line);
+        begun = begun
+            || ["text", "head", "row"].iter().any(|block| word.eq_ignore_ascii_case(block))
+            || (word.eq_ignore_ascii_case("picture") && picture_line(rest).is_some());
         if !begun && word.eq_ignore_ascii_case("document") {
             continue;
         }
@@ -1000,25 +1120,48 @@ pub fn writing_lines_kept(text: &str) -> String {
 // the frame, in place of what it showed, keeping it in memory. A document
 // that cannot be written changes nothing.
 pub fn writing_show(text: &str) -> Result<Written, NotDrawn> {
-    let Some((place, room)) = room() else {
+    Ok(writing_put(writing_laid(text)?))
+}
+
+// Reads a document of text and lays it out in pages, its pictures read from
+// their files and shrunk, without showing it: so that what came of it can be
+// looked at first (see `document_of_picture` in `documents.rs`). Nothing
+// changes on the screen or in memory.
+pub fn writing_laid(text: &str) -> Result<Laid, NotDrawn> {
+    let Some((_, room)) = room() else {
         return Err(NotDrawn::NoRoom);
     };
     let found = writing_read(text);
     if found.blocks.is_empty() {
         return Err(NotDrawn::Empty);
     }
-    let (pages, columns_left_out) = laid_out(&found, &room);
-    let count = pages.len();
+    let layout = laid_out(&found, &room);
+    let count = layout.pages.len();
     // The title is cut so that it leaves room for the longest page mark, that
     // of the last page, and one sign more: so it stays the same as the pages
     // are turned.
     let across = (room.width / sign_width().max(1)) as usize;
     let mark_room = if count > 1 { page_mark(count - 1, count).len() + 1 } else { 0 };
     let title = found.title.as_deref().map(|title| shown(title, across.saturating_sub(mark_room))).unwrap_or_default();
-    let laid = Pages { title: title.clone(), pages, shown: 0 };
-    pages_paint(&place, &room, &laid);
-    frame_put(InFrame::Text(laid));
-    Ok(Written { title_written: found.title, title, pages: count, columns_left_out })
+    let written = Written {
+        title_written: found.title,
+        title: title.clone(),
+        pages: count,
+        columns_left_out: layout.columns_left_out,
+        pictures: layout.pictures,
+        pictures_not_shown: layout.pictures_not_shown,
+    };
+    Ok(Laid { pages: Pages { title, pages: layout.pages, shown: 0 }, written })
+}
+
+// Shows a document of text laid out by `writing_laid`: its first page in the
+// frame, in place of what it showed, and keeps it in memory.
+pub fn writing_put(laid: Laid) -> Written {
+    if let Some((place, room)) = room() {
+        pages_paint(&place, &room, &laid.pages);
+    }
+    frame_put(InFrame::Text(laid.pages));
+    laid.written
 }
 
 // What the kernel says about a document of text it wrote: the document, by
@@ -1040,14 +1183,18 @@ pub fn writing_said(written: &Written, whole: bool) -> String {
 }
 
 // What of a document of text did not fit, as the kernel says it behind what
-// it wrote or opened: columns past the most it draws. Nothing when all of it
-// fit.
+// it wrote or opened: columns past the most it draws, and each picture not
+// shown, with why. Nothing when all of it fit.
 pub fn writing_fit(written: &Written) -> String {
-    if written.columns_left_out {
+    let mut said = if written.columns_left_out {
         format!("; a table had more columns than fit, and only its first {} were drawn", TABLE_STYLE.columns_most)
     } else {
         String::new()
+    };
+    for (file, why) in written.pictures_not_shown.iter() {
+        said.push_str(&format!("; the picture of file {} is not shown, because {}", file, why));
     }
+    said
 }
 
 // How the kernel says what it opened of a document of text: its pages, and

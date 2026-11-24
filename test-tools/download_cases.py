@@ -97,10 +97,16 @@ FILES[(SITE, "/hops/7")] = (plain(PDF, "application/pdf"), "goodbye")
 
 
 def answer_get(site, path):
-    """What the stand-in sends for a GET of `path` from `site`, and how it ends; a 404 for anything else."""
+    """What the stand-in sends for a GET of `path` from `site`, and how it ends; a 404 for anything else. The made-up
+    pictures under /pictures/ are picture_files.py's, made only when one is asked for."""
     found = FILES.get((site, path))
     if found:
         return found
+    if site == SITE and path.startswith("/pictures/"):
+        import picture_files
+        data = picture_files.served(path)
+        if data is not None:
+            return plain(data, "image/png"), "goodbye"
     return plain(b"<html><body>No such file here</body></html>\n", "text/html", first=b"HTTP/1.1 404 Not Found"), "goodbye"
 
 
@@ -118,7 +124,7 @@ def size_words(length):
     return "%d MB" % (tenths // 10) if tenths % 10 == 0 else "%d.%d MB" % (tenths // 10, tenths % 10)
 
 
-KINDS = {"pdf": "a PDF", "docx": "a Word file", "xlsx": "an Excel file", "txt": "a text", "csv": "a CSV table"}
+KINDS = {"pdf": "a PDF", "docx": "a Word file", "xlsx": "an Excel file", "txt": "a text", "csv": "a CSV table", "png": "a PNG picture"}
 
 
 def new_site(name, site):

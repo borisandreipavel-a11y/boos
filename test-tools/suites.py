@@ -39,7 +39,8 @@ APPS = ["src/apps.rs"]
 SECRET = ["src/secret.rs"]  # a key or a password typed and kept
 FILES = ["src/files.rs", "src/download.rs", "src/notebook.rs", "src/parts.rs", "src/disk.rs", "src/tls.rs"]  # files from the web, kept
 DOCUMENTS = ["src/documents.rs", "src/drawing.rs", "src/notebook.rs"]  # tables kept as documents
-# The pictures crate (pictures/) and its test data: only its own two entries go through them.
+# The pictures crate (pictures/) and its test data: its own two entries go through them, and so do the picture
+# documents, since the kernel builds the crate in.
 PICTURES = ["pictures/Cargo.toml", "pictures/src/lib.rs", "pictures/src/check.rs", "pictures/src/png.rs",
             "pictures/src/shrink.rs", "pictures/src/unpack.rs", "pictures/src/tests.rs", "pictures/tests/memory.rs",
             "pictures/test-data/cases.txt", "pictures/test-data/cases.bin"]
@@ -107,6 +108,13 @@ SUITES = [
          env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + FILES + DOCUMENTS, seconds=dict(open=130, no=200, refused=70, wait=140)),
     dict(name="pdf documents with OrcaRouter", command=["test_pdf_documents.py"], split=["orca"], watches=STAND_IN + FILES + DOCUMENTS,
          seconds=dict(orca=50)),
+    # Pictures in documents: a PNG picture fetched from a made-up site and kept, opened in the frame as a document of
+    # its own, `picture` lines in documents of text, shrunk to fit a page and painted over the look's colour, and
+    # pictures that cannot be shown, in the stand-in copy; the main flow with Anthropic's form too.
+    dict(name="picture documents", command=["test_picture_documents.py"], split=True, watches=STAND_IN + FILES + DOCUMENTS + PICTURES,
+         seconds=dict(fetch=170, reopen=110, kinds=110, layout=100, broken=150)),
+    dict(name="picture documents with Anthropic", command=["test_picture_documents.py"], split=["fetch"],
+         env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + FILES + DOCUMENTS + PICTURES, seconds=dict(fetch=170)),
     # Anthropic as a second provider: the question for the provider, each provider's key, and Anthropic's form, in the
     # stand-in copy, whose stand-in answers Anthropic's form too (anthropic_cases.py).
     dict(name="anthropic", command=["test_anthropic.py"], split=True, watches=STAND_IN + SECRET,
@@ -170,7 +178,8 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
-                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16, "pdf": 11}
+                "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16, "pdf": 11,
+                "picture documents": 18}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -443,4 +452,22 @@ CAUGHT_BY = {
     'break pdf: drawpdf': 'open request 3',
     'break pdf: csvsentence': 'open request 2',
     'break pdf: shortwait': "pdf-wait answer 'yes'",
+    'break picture documents: pngnotkept': "pd-fetch 'get the harbour picture'",
+    'break picture documents: pngforgotten': "pd-reopen 'show me the harbour pict'",
+    'break picture documents: picturesnotlisted': 'layout request 1',
+    'break picture documents: removednotsaid': "pd-reopen 'open the other document'",
+    'break picture documents: limitslarger': "pd-broken 'open huge'",
+    'break picture documents: notfromfile': "pd-fetch-2 'open the picture again'",
+    'break picture documents: noreopen': "pd-reopen 'show me the harbour pict'",
+    'break picture documents: picturegoesback': 'fetch open the line ends',
+    'break picture documents: nottold': 'fetch request 2',
+    'break picture documents: noblend': 'pd-fetch opened',
+    'break picture documents: blendcut': 'pd-fetch opened',
+    'break picture documents: blendblue': 'pd-fetch night',
+    'break picture documents: nonextpage': "pd-layout 'lay some pictures out'",
+    'break picture documents: nocaption': 'pd-fetch caption',
+    'break picture documents: captionroom': 'pd-fetch caption',
+    'break picture documents: nolimit': "pd-layout 'lay some pictures out'",
+    'break picture documents: notpainted': 'pd-fetch opened',
+    'break picture documents: refusedopened': "pd-broken 'open badcheck'",
 }

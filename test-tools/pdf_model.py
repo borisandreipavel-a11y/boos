@@ -1,7 +1,8 @@
 """A kept PDF opened as a document while Anthropic is the provider (docs/tools.md `open_file`), worked out from the notes
-apart from the kernel's code: open_file's sentence while a PDF is listed, the question before a PDF goes, the kernel's
-rows, what goes behind the line with the ask that carries the PDF, and that ask's person's message as the stand-in
-writes it back in OrcaRouter's form (anthropic_cases.back). Nothing runs when this file is imported."""
+apart from the kernel's code: the question before a PDF goes, the kernel's rows, what goes behind the line with the ask
+that carries the PDF, and that ask's person's message as the stand-in writes it back in OrcaRouter's form
+(anthropic_cases.back). open_file's words about a PDF are chat_tools_model.OPENS_PDF. Nothing runs when this file is
+imported."""
 from download_cases import size_words
 
 # What the model is told behind a PDF's lead when the ask that carries it offers tools.
@@ -9,11 +10,8 @@ PDF_WRITE = (" To keep it, write it with write_document as a new document, begin
              "its own text and tables when they fit in 6000 signs, and otherwise a summary with its most telling tables; "
              "and what the person asked for, when they asked for something.")
 
-# open_file's sentence while a PDF is among the files it lists; the CSV files and the numbers follow it.
-OPEN_TOLD = ("Opens one of the kept files as a document. A CSV file's text, at most its first 64 KB, is sent to you once, with the next ask, "
-             "and you then draw it with draw_table as a new table. A PDF is sent to you whole, with the next ask, once the person says yes "
-             "to its price, and you then write it with write_document as a new document of text and tables. "
-             "Either is kept as a document; a file opened before opens its document again. The kept files that open, by number: ")
+# open_file's words about a PDF, alone and among other kinds, are chat_tools_model.OPENS_PDF: one entry of the list
+# of kinds it names.
 
 # Anthropic's words when it cannot fetch a PDF's address, as a person's paid try saw them (2026-11-24).
 UNFETCHABLE = "Unable to download the file. Please verify the URL and try again."

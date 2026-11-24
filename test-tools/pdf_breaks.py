@@ -30,8 +30,8 @@ BREAKS = {
     "nodocument": {"model.rs": swap("            if pdf.is_empty() {\n                json_text(&sent)\n", "            if true {\n                json_text(&sent)\n")},
     # The model is asked to draw a PDF as a table, as a CSV file.
     "drawpdf": {"files.rs": swap("draw: PDF_WRITE,", "draw: FILE_DRAW,")},
-    # open_file's sentence stays the CSV one while a PDF is listed.
-    "csvsentence": {"tools.rs": swap("open_file_tool(&openable, files_open_pdf())", "open_file_tool(&openable, false)")},
+    # open_file's words name no PDF while one is listed.
+    "csvsentence": {"tools.rs": swap("(files_open_pdf(), &OPENED_PDF)", "(false, &OPENED_PDF)")},
     # The ask that carries a PDF may take a minute, as every other.
     "shortwait": {"model.rs": swap("const PDF_WAIT: u64 = 180;\n", "const PDF_WAIT: u64 = 60;\n")},
 }
