@@ -836,12 +836,15 @@ const SECOND_TOOL: &[Step<'static>] =
 // the model gives the tool. Every tool of this kernel's has a short name and
 // needs a few words at most, but for an app's inputs with their values, which
 // come to about 1,070 bytes at the most the kernel takes (see
-// `app_inputs.rs`), and for the table that `draw_table` is given; what is
-// longer is given to the tool as nothing, and a table is cut off at its
-// bound.
+// `app_inputs.rs`), for the table that `draw_table` is given, and for the
+// document of text that `write_document` is given; what is longer is given
+// to the tool as nothing, and a table or a document is cut off at its bound.
+// An answer piece by piece keeps what a tool is given up to the largest of
+// them and one byte more, so that any past its bound shows.
 const TOOL_NAME_LONGEST: usize = 64;
 const TOOL_INPUTS_LONGEST: usize = 2048;
 const TABLE_INPUTS_LONGEST: usize = 4096;
+const DOCUMENT_INPUTS_LONGEST: usize = 8192;
 
 // Says what the kernel has to say about the answer to a line typed in the
 // chat box, and gives back what the model answered: its words, the tool it
@@ -893,13 +896,18 @@ fn chat_reply(provider: Provider, answer: &[u8], whole: bool, key: &[u8]) -> (St
 // The tool the model asked for, made fit to be checked (see `tools.rs`): its
 // name is cleaned like every word from the provider. What it gives the tool
 // is JSON, which cleaning would spoil: it is only held to its bound, with the
-// key hidden in it. A table past its bound is cut there, and counts as cut
-// off, as everything the tool is given does when the answer reached its limit
-// of tokens (`cut_off`) or broke off.
+// key hidden in it. A table or a document past its bound is cut there, and
+// counts as cut off, as everything the tool is given does when the answer
+// reached its limit of tokens (`cut_off`) or broke off.
 fn tool_made(name: &str, mut inputs: Vec<u8>, mut cut_off: bool, key: &[u8]) -> ToolCall {
-    if name == "draw_table" {
-        if inputs.len() > TABLE_INPUTS_LONGEST {
-            inputs.truncate(TABLE_INPUTS_LONGEST);
+    let bound = match name {
+        "draw_table" => Some(TABLE_INPUTS_LONGEST),
+        "write_document" => Some(DOCUMENT_INPUTS_LONGEST),
+        _ => None,
+    };
+    if let Some(bound) = bound {
+        if inputs.len() > bound {
+            inputs.truncate(bound);
             cut_off = true;
         }
     } else if inputs.len() > TOOL_INPUTS_LONGEST {
@@ -1533,7 +1541,7 @@ impl Stream {
                 self.tool_name = name;
             }
             if let Some(inputs) = inputs {
-                let room = (TABLE_INPUTS_LONGEST + 1).saturating_sub(self.tool_inputs.len()).min(inputs.len());
+                let room = (DOCUMENT_INPUTS_LONGEST + 1).saturating_sub(self.tool_inputs.len()).min(inputs.len());
                 self.tool_inputs.extend_from_slice(&inputs.as_bytes()[..room]);
             }
             self.tool_from.get_or_insert(now);
@@ -1597,7 +1605,7 @@ impl Stream {
                     }
                     "input_json_delta" if self.tool_place.is_some() && index == self.tool_place => {
                         if let Ok(inputs) = json_find_text(piece, &[Step::Name("delta"), Step::Name("partial_json")]) {
-                            let room = (TABLE_INPUTS_LONGEST + 1).saturating_sub(self.tool_inputs.len()).min(inputs.len());
+                            let room = (DOCUMENT_INPUTS_LONGEST + 1).saturating_sub(self.tool_inputs.len()).min(inputs.len());
                             self.tool_inputs.extend_from_slice(&inputs.as_bytes()[..room]);
                         }
                         self.tool_to = Some(now);
@@ -1763,7 +1771,8 @@ fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
 
     let sentence = if let Some(broke) = broke {
-        let undone = if tool.as_ref().is_some_and(|tool| tool.name != "draw_table") { ", so I did not do what it asked for" } else { "" };
+        let drawn_anyway = tool.as_ref().is_some_and(|tool| tool.name == "draw_table" || tool.name == "write_document");
+        let undone = if tool.is_some() && !drawn_anyway { ", so I did not do what it asked for" } else { "" };
         format!("{}{}.", broke, undone)
     } else if checked {
         let undone = if stream.tool_name.is_some() { ", so I did not do what it asked for" } else { "" };

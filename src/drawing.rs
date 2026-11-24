@@ -126,6 +126,7 @@ struct Room {
     table_top: u32,
     width: u32,
     rows: usize,
+    bottom: u32,
 }
 
 fn room() -> Option<(FramePlace, Room)> {
@@ -142,7 +143,7 @@ fn room() -> Option<(FramePlace, Room)> {
     if rows < 2 || signs_across(width, style.columns_most) < style.columns_most as u32 {
         return None;
     }
-    Some((place, Room { left, title_top, table_top, width, rows }))
+    Some((place, Room { left, title_top, table_top, width, rows, bottom }))
 }
 
 // How many signs fit across a table this many dots wide, all its columns
@@ -302,13 +303,14 @@ fn colour_read(given: &str) -> Option<Colour> {
     Some(Colour { red: amounts[0], green: amounts[1], blue: amounts[2] })
 }
 
-// The text the model gave the tool under `table`, and whether it came whole.
-// It is read with the JSON reader, which takes nothing on trust. When the
-// model's answer was cut off (at its limit of tokens, or at the bound on what
-// a tool is given, see `model.rs`), a text cut off before its closing quote
-// is taken as far as it goes; otherwise such a text cannot be read at all.
-fn table_text(inputs: &str, cut_off: bool) -> Option<(String, bool)> {
-    let path = [Step::Name("table")];
+// The text the model gave a tool under `name` (`table` for `draw_table`,
+// `lines` for `write_document`), and whether it came whole. It is read with
+// the JSON reader, which takes nothing on trust. When the model's answer was
+// cut off (at its limit of tokens, or at the bound on what a tool is given,
+// see `model.rs`), a text cut off before its closing quote is taken as far as
+// it goes; otherwise such a text cannot be read at all.
+fn given_text(inputs: &str, cut_off: bool, name: &str) -> Option<(String, bool)> {
+    let path = [Step::Name(name)];
     if let Ok(text) = json_find_text(inputs.as_bytes(), &path) {
         return Some((text, true));
     }
@@ -322,7 +324,7 @@ fn table_text(inputs: &str, cut_off: bool) -> Option<(String, bool)> {
 // same table give the same text: the text as the kernel reads it. No tool is
 // done twice for one line (see `chat.rs`).
 pub fn drawing_wanted(inputs: &str, cut_off: bool) -> Option<String> {
-    table_text(inputs, cut_off).map(|(text, _)| text)
+    given_text(inputs, cut_off, "table").map(|(text, _)| text)
 }
 
 // A table as it is drawn and kept: its title, the colours the model picked,
@@ -336,17 +338,24 @@ struct Table {
     rows: Vec<Vec<String>>,
 }
 
-// The table drawn last, kept until the machine is switched off, so that it
-// can be painted again in another look. Only the startup code and the main
-// loop may touch it; it is taken out of its place and put back by value.
-static mut TABLE: Option<Table> = None;
+// What the frame shows: the table drawn last, or the document of text written
+// or opened last, laid out in pages, with the page shown. One thing at a
+// time: each takes the other's place. It is kept until the machine is
+// switched off, so that it can be painted again in another look. Only the
+// startup code and the main loop may touch it; it is taken out of its place
+// and put back by value.
+enum InFrame {
+    Table(Table),
+    Text(Pages),
+}
+static mut IN_FRAME: Option<InFrame> = None;
 
-fn table_take() -> Option<Table> {
-    unsafe { (*(&raw mut TABLE)).take() }
+fn frame_take() -> Option<InFrame> {
+    unsafe { (*(&raw mut IN_FRAME)).take() }
 }
 
-fn table_put(table: Table) {
-    unsafe { TABLE = Some(table) };
+fn frame_put(shown: InFrame) {
+    unsafe { IN_FRAME = Some(shown) };
 }
 
 // The tool `draw_table` where no documents can be kept: reads the table the
@@ -370,7 +379,7 @@ pub fn drawing_text(inputs: &str, cut_off: bool) -> Result<(String, bool), Strin
     if room().is_none() {
         return Err(String::from("the model asked to draw a table, but this screen has no room for one."));
     }
-    let Some((text, whole)) = table_text(inputs, cut_off) else {
+    let Some((text, whole)) = given_text(inputs, cut_off, "table") else {
         return Err(String::from("the model asked to draw a table, but I could not read it."));
     };
     let mut text = key_starred_kept(&text);
@@ -494,7 +503,7 @@ pub fn drawing_show(text: &str) -> Result<Drawn, NotDrawn> {
     };
     table_paint(&place, &room, &table);
     let drawn = Drawn { title_written: found.title, title: table.title.clone(), columns, drawn_columns, rows: drawn_rows, left_out };
-    table_put(table);
+    frame_put(InFrame::Table(table));
     Ok(drawn)
 }
 
@@ -530,11 +539,11 @@ pub fn drawing_fit(drawn: &Drawn) -> String {
     said
 }
 
-// `setup` empties the frame: the table drawn last is forgotten, and where it
-// was, the screen's background is painted, as a whole new picture would
-// show it there.
+// `setup` empties the frame: the table or the document of text it showed is
+// forgotten, and where it was, the screen's background is painted, as a
+// whole new picture would show it there.
 pub fn drawing_clear() {
-    if table_take().is_none() {
+    if frame_take().is_none() {
         return;
     }
     if let Some(place) = frame_place() {
@@ -582,15 +591,11 @@ fn widths_worked_out(asked: &Option<Vec<u32>>, longest: &[u32], across: u32) -> 
     wanted.iter().zip(given.iter()).map(|(want, got)| got + (left * (want - got) as u64 / more.max(1)) as u32).collect()
 }
 
-// Paints the frame, the title and the table. The frame is painted whole,
-// which wipes out the table shown before.
-fn table_paint(place: &FramePlace, room: &Room, table: &Table) {
+// Paints the frame as the other boxes have it: the whole of it in the frame's
+// colour, then the inside painted over it, which wipes out what it showed.
+fn frame_paint(place: &FramePlace) {
     let style = TABLE_STYLE;
     let look = look();
-
-    // The frame as the other boxes have it: the whole of it in the frame's
-    // colour, then the inside painted over it. The title in the look's
-    // letters.
     screen_rectangle(place.left, place.top, place.width, place.height, look.panel_frame);
     screen_rectangle(
         place.left.saturating_add(style.frame),
@@ -599,13 +604,27 @@ fn table_paint(place: &FramePlace, room: &Room, table: &Table) {
         place.height.saturating_sub(style.frame.saturating_mul(2)),
         look.panel_inside,
     );
-    screen_text(room.left, room.title_top, &table.title, style.text_size, look.panel_text);
+}
+
+// Paints the frame, the title in the look's letters, and the table. The
+// frame is painted whole, which wipes out what it showed before.
+fn table_paint(place: &FramePlace, room: &Room, table: &Table) {
+    frame_paint(place);
+    screen_text(room.left, room.title_top, &table.title, TABLE_STYLE.text_size, look().panel_text);
+    grid_paint(room.left, room.table_top, &table.widths, table.head.as_ref(), &table.rows, &table.colours);
+}
+
+// Paints a table's head, if it has one, and rows, from `left` and `top`, each
+// column `widths` signs wide.
+fn grid_paint(left: u32, top: u32, widths: &[u32], head: Option<&Vec<String>>, rows: &[Vec<String>], colours: &[Option<Colour>; 5]) {
+    let style = TABLE_STYLE;
+    let look = look();
 
     // The colours: those the model picked, or the look's for the parts it
     // left out: the head in the frame's colour, the rows in the inside's, the
     // letters in the look's, and the lines in the frame's. Letters that would
     // be too faint on their background become black or white.
-    let picked = |part: usize, otherwise: Colour| table.colours[part].unwrap_or(otherwise);
+    let picked = |part: usize, otherwise: Colour| colours[part].unwrap_or(otherwise);
     let head_back = picked(HEAD, look.panel_frame);
     let head_letters = readable(picked(HEAD_LETTERS, look.panel_text), head_back);
     let rows_back = picked(ROWS, look.panel_inside);
@@ -614,42 +633,456 @@ fn table_paint(place: &FramePlace, room: &Room, table: &Table) {
 
     // The whole table in the colour of its lines first; each cell is painted
     // over it and leaves the lines showing between the cells and round them.
-    let cell_widths: Vec<u32> = table
-        .widths
-        .iter()
-        .map(|width| style.cell_left.saturating_add(width.saturating_mul(sign_width())).saturating_add(style.cell_right))
-        .collect();
+    let cell_widths: Vec<u32> =
+        widths.iter().map(|width| style.cell_left.saturating_add(width.saturating_mul(sign_width())).saturating_add(style.cell_right)).collect();
     let width = cell_widths.iter().fold(style.line, |sum, cell| sum.saturating_add(cell.saturating_add(style.line)));
-    let count = table.rows.len() + if table.head.is_some() { 1 } else { 0 };
+    let count = rows.len() + if head.is_some() { 1 } else { 0 };
     let height = row_height().saturating_mul(count as u32).saturating_add(style.line);
-    screen_rectangle(room.left, room.table_top, width, height, lines);
+    screen_rectangle(left, top, width, height, lines);
 
-    let mut top = room.table_top;
-    let head = table.head.iter().map(|cells| (cells, head_back, head_letters));
-    for (cells, back, front) in head.chain(table.rows.iter().map(|cells| (cells, rows_back, letters))) {
-        let mut left = room.left;
+    let mut row_top = top;
+    let head = head.into_iter().map(|cells| (cells, head_back, head_letters));
+    for (cells, back, front) in head.chain(rows.iter().map(|cells| (cells, rows_back, letters))) {
+        let mut cell_left = left;
         for (cell, cell_width) in cells.iter().zip(cell_widths.iter()) {
-            let cell_left = left.saturating_add(style.line);
-            let cell_top = top.saturating_add(style.line);
-            screen_rectangle(cell_left, cell_top, *cell_width, row_height().saturating_sub(style.line), back);
-            screen_text(cell_left.saturating_add(style.cell_left), cell_top.saturating_add(style.cell_top), cell, style.text_size, front);
-            left = cell_left.saturating_add(*cell_width);
+            let inner_left = cell_left.saturating_add(style.line);
+            let inner_top = row_top.saturating_add(style.line);
+            screen_rectangle(inner_left, inner_top, *cell_width, row_height().saturating_sub(style.line), back);
+            screen_text(inner_left.saturating_add(style.cell_left), inner_top.saturating_add(style.cell_top), cell, style.text_size, front);
+            cell_left = inner_left.saturating_add(*cell_width);
         }
-        top = top.saturating_add(row_height());
+        row_top = row_top.saturating_add(row_height());
     }
 }
 
-// Paints the table drawn last again, in the look in use. Does nothing while
-// no table was drawn since the start. The look calls it when it paints the
-// whole screen again.
+// Paints what the frame shows again, in the look in use: the table drawn
+// last, or the page shown of the document of text. Does nothing while the
+// frame shows nothing. The look calls it when it paints the whole screen
+// again.
 pub fn drawing_paint_again() {
-    let Some(table) = table_take() else {
+    let Some(shown) = frame_take() else {
         return;
     };
     if let Some((place, room)) = room() {
-        table_paint(&place, &room, &table);
+        match &shown {
+            InFrame::Table(table) => table_paint(&place, &room, table),
+            InFrame::Text(pages) => pages_paint(&place, &room, pages),
+        }
     }
-    table_put(table);
+    frame_put(shown);
+}
+
+// ---------- A document of text ----------
+//
+// The tool `write_document` (see `tools.rs` and `documents.rs`): paragraphs
+// and tables, in the order the model wrote them, laid out in the frame's room
+// and cut into pages, one page shown at a time. The rules are those of "A
+// document of text" in docs/screen.md.
+
+// How high a row of text is: a letter, and two dots below it.
+fn text_row() -> u32 {
+    TABLE_STYLE.text_size.saturating_mul(LETTER_HEIGHT + 1)
+}
+
+// A block of a document of text: a paragraph as the model wrote it, or a
+// table: its head, if it has one, and its rows, each row its cells.
+enum Block {
+    Paragraph(String),
+    Table { head: Option<Vec<String>>, rows: Vec<Vec<String>> },
+}
+
+// A document of text as the model wrote it, read line by line: which kept
+// document it changes, if it says (0 for a new one), its title, and its
+// blocks.
+struct WrittenLines {
+    document: Option<u64>,
+    title: Option<String>,
+    blocks: Vec<Block>,
+}
+
+// Reads the lines of a document of text: `document` and `title` count only
+// before anything else; `text` is a paragraph; `head` begins a new table;
+// `row` adds a row to the table begun last, or begins a table without a head
+// when a paragraph stands since. Any other line is skipped.
+fn writing_read(text: &str) -> WrittenLines {
+    let mut found = WrittenLines { document: None, title: None, blocks: Vec::new() };
+    for line in text.split('\n') {
+        let (word, rest) = line_parts(line);
+        if word.eq_ignore_ascii_case("text") {
+            found.blocks.push(Block::Paragraph(String::from(rest)));
+        } else if word.eq_ignore_ascii_case("head") {
+            found.blocks.push(Block::Table { head: Some(cells(rest)), rows: Vec::new() });
+        } else if word.eq_ignore_ascii_case("row") {
+            match found.blocks.last_mut() {
+                Some(Block::Table { rows, .. }) => rows.push(cells(rest)),
+                _ => found.blocks.push(Block::Table { head: None, rows: vec![cells(rest)] }),
+            }
+        } else if !found.blocks.is_empty() {
+            continue;
+        } else if word.eq_ignore_ascii_case("document") {
+            found.document = document_number(rest);
+        } else if word.eq_ignore_ascii_case("title") {
+            found.title = Some(String::from(rest));
+        }
+    }
+    found
+}
+
+// A part of a page: rows of text, or a table, so many dots below the top of
+// the page; a table with its columns' widths, its head (drawn again at the
+// top of every page it goes on to) and the rows on this page.
+enum PagePart {
+    Text { top: u32, rows: Vec<String> },
+    Table { top: u32, widths: Vec<u32>, head: Option<Vec<String>>, rows: Vec<Vec<String>> },
+}
+
+// A document of text laid out: its title as drawn, its pages, and the page
+// shown, counted from 0.
+struct Pages {
+    title: String,
+    pages: Vec<Vec<PagePart>>,
+    shown: usize,
+}
+
+// What came of writing a document of text: its title as the model wrote it,
+// if it gave one, and as drawn; how many pages it has; and whether a table in
+// it had more columns than fit, which were left out.
+pub struct Written {
+    pub title_written: Option<String>,
+    pub title: String,
+    pub pages: usize,
+    columns_left_out: bool,
+}
+
+impl Written {
+    // Whether all of it was drawn: every column of every table.
+    pub fn whole(&self) -> bool {
+        !self.columns_left_out
+    }
+}
+
+// A paragraph set into rows of at most `across` signs: parted into words at
+// runs of spaces and tabs, each word cleaned byte by byte; as many whole
+// words to a row as fit, parted by one space; a word longer than a row cut
+// into pieces as long as a row, each on a row of its own. A paragraph with no
+// words is one empty row.
+fn rows_of(text: &str, across: usize) -> Vec<String> {
+    let across = across.max(1);
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for word in text.split([' ', '\t']).filter(|word| !word.is_empty()) {
+        let word = shown(word, word.len());
+        if word.len() > across {
+            if !row.is_empty() {
+                rows.push(core::mem::take(&mut row));
+            }
+            // Only plain signs are left, one byte each, so the pieces are
+            // whole signs.
+            for piece in word.as_bytes().chunks(across) {
+                rows.push(String::from_utf8_lossy(piece).into_owned());
+            }
+            continue;
+        }
+        if row.is_empty() {
+            row = word;
+        } else if row.len() + 1 + word.len() <= across {
+            row.push(' ');
+            row.push_str(&word);
+        } else {
+            rows.push(core::mem::replace(&mut row, word));
+        }
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+// Lays the blocks out in pages of the room's height below the title's row:
+// one empty row between two blocks where the page has room for more below
+// it, none at the top of a page; a paragraph's rows that do not fit going on
+// at the top of the next page; a table beginning on the next page unless its
+// head and first row fit, and its rows that do not fit going on to the next
+// page under its head drawn again. Gives the pages, and whether a table had
+// more columns than fit.
+fn laid_out(found: &WrittenLines, room: &Room) -> (Vec<Vec<PagePart>>, bool) {
+    let style = TABLE_STYLE;
+    let height = room.bottom.saturating_sub(room.table_top);
+    let across = (room.width / sign_width().max(1)) as usize;
+    let mut pages: Vec<Vec<PagePart>> = vec![Vec::new()];
+    let mut used: u32 = 0;
+    let mut columns_left_out = false;
+    for (place, block) in found.blocks.iter().enumerate() {
+        if place > 0 && used > 0 {
+            if used.saturating_add(text_row()) >= height {
+                pages.push(Vec::new());
+                used = 0;
+            } else {
+                used = used.saturating_add(text_row());
+            }
+        }
+        match block {
+            Block::Paragraph(text) => {
+                for row in rows_of(text, across) {
+                    if used.saturating_add(text_row()) > height {
+                        pages.push(Vec::new());
+                        used = 0;
+                    }
+                    if let Some(page) = pages.last_mut() {
+                        match page.last_mut() {
+                            Some(PagePart::Text { top, rows }) if top.saturating_add(text_row().saturating_mul(rows.len() as u32)) == used => {
+                                rows.push(row)
+                            }
+                            _ => page.push(PagePart::Text { top: used, rows: vec![row] }),
+                        }
+                    }
+                    used = used.saturating_add(text_row());
+                }
+            }
+            Block::Table { head, rows } => {
+                // The head says how many columns the table has, or else its
+                // first row.
+                let columns = match (head, rows.first()) {
+                    (Some(head), _) => head.len(),
+                    (None, Some(row)) => row.len(),
+                    (None, None) => 0,
+                };
+                if columns == 0 {
+                    continue;
+                }
+                let drawn_columns = columns.min(style.columns_most);
+                columns_left_out = columns_left_out || columns > drawn_columns;
+                let mut longest = vec![0u32; drawn_columns];
+                for cells in head.iter().chain(rows.iter()) {
+                    for (column, cell) in cells.iter().take(drawn_columns).enumerate() {
+                        longest[column] = longest[column].max(cell.len() as u32);
+                    }
+                }
+                let widths = widths_worked_out(&None, &longest, signs_across(room.width, drawn_columns));
+                let fitted = |cells: &Vec<String>| -> Vec<String> {
+                    widths.iter().enumerate().map(|(column, width)| shown(cells.get(column).map(String::as_str).unwrap_or(""), *width as usize)).collect()
+                };
+                let head = head.as_ref().map(&fitted);
+                let rows: Vec<Vec<String>> = rows.iter().map(&fitted).collect();
+                let head_height = if head.is_some() { row_height() } else { 0 };
+                let first = if rows.is_empty() { 0 } else { row_height() };
+                if used > 0 && used.saturating_add(head_height).saturating_add(first).saturating_add(style.line) > height {
+                    pages.push(Vec::new());
+                    used = 0;
+                }
+                let mut from = 0;
+                loop {
+                    let room_rows =
+                        (height.saturating_sub(used).saturating_sub(head_height).saturating_sub(style.line) / row_height().max(1)) as usize;
+                    let mut take = room_rows.min(rows.len() - from);
+                    // A page that holds no row at all still takes one, so that
+                    // the laying out ends.
+                    if take == 0 && from < rows.len() && used == 0 {
+                        take = 1;
+                    }
+                    if let Some(page) = pages.last_mut() {
+                        page.push(PagePart::Table { top: used, widths: widths.clone(), head: head.clone(), rows: rows[from..from + take].to_vec() });
+                    }
+                    used = used
+                        .saturating_add(head_height)
+                        .saturating_add(row_height().saturating_mul(take as u32))
+                        .saturating_add(style.line);
+                    from += take;
+                    if from >= rows.len() {
+                        break;
+                    }
+                    pages.push(Vec::new());
+                    used = 0;
+                }
+            }
+        }
+    }
+    (pages, columns_left_out)
+}
+
+// The mark of the page shown, `page 2 of 5`, for a document of more than one
+// page.
+fn page_mark(shown: usize, count: usize) -> String {
+    format!("page {} of {}", shown + 1, count)
+}
+
+// Paints the frame, the title's row and the page shown of a document of text.
+// The frame is painted whole, which wipes out what it showed before. The page
+// mark stands at the right end of the title's row, its last sign in the
+// row's last place.
+fn pages_paint(place: &FramePlace, room: &Room, pages: &Pages) {
+    let style = TABLE_STYLE;
+    let look = look();
+    frame_paint(place);
+    screen_text(room.left, room.title_top, &pages.title, style.text_size, look.panel_text);
+    if pages.pages.len() > 1 {
+        let across = (room.width / sign_width().max(1)) as usize;
+        let mark = page_mark(pages.shown, pages.pages.len());
+        let left = room.left.saturating_add((across.saturating_sub(mark.len()) as u32).saturating_mul(sign_width()));
+        screen_text(left, room.title_top, &mark, style.text_size, look.panel_text);
+    }
+    let Some(page) = pages.pages.get(pages.shown) else {
+        return;
+    };
+    for part in page {
+        match part {
+            PagePart::Text { top, rows } => {
+                for (index, row) in rows.iter().enumerate() {
+                    let row_top = room.table_top.saturating_add(*top).saturating_add(text_row().saturating_mul(index as u32));
+                    screen_text(room.left, row_top, row, style.text_size, look.panel_text);
+                }
+            }
+            PagePart::Table { top, widths, head, rows } => {
+                grid_paint(room.left, room.table_top.saturating_add(*top), widths, head.as_ref(), rows, &[None; 5]);
+            }
+        }
+    }
+}
+
+// The room a page of a document of text has, which the tool `write_document`
+// tells the model: how many rows of text a page holds, and how many signs a
+// row. Gives nothing when this screen has no room for the frame.
+pub fn writing_room() -> Option<(usize, u32)> {
+    let (_, room) = room()?;
+    let rows = (room.bottom.saturating_sub(room.table_top) / text_row().max(1)) as usize;
+    Some((rows, room.width / sign_width().max(1)))
+}
+
+// The text the model gave `write_document`, as far as it counts, and whether
+// it came whole; or what the kernel says when it cannot be read. As for a
+// table: a piece of the key in it is starred, and of a text that was cut off
+// only the lines that came whole count.
+pub fn writing_text(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
+    if room().is_none() {
+        return Err(String::from("the model asked to write a document, but this screen has no room for one."));
+    }
+    let Some((text, whole)) = given_text(inputs, cut_off, "lines") else {
+        return Err(String::from("the model asked to write a document, but I could not read it."));
+    };
+    let mut text = key_starred_kept(&text);
+    if !whole {
+        let end = text.rfind('\n').unwrap_or(0);
+        text.truncate(end);
+    }
+    Ok((text, whole))
+}
+
+// What the model asked to be written, so that two requests for the same
+// document give the same text (see `drawing_wanted`).
+pub fn writing_wanted(inputs: &str, cut_off: bool) -> Option<String> {
+    given_text(inputs, cut_off, "lines").map(|(text, _)| text)
+}
+
+// The number on the document's `document` line, if it has one before
+// anything else: which kept document it changes, or 0 for a new one.
+pub fn writing_document(text: &str) -> Option<u64> {
+    writing_read(text).document
+}
+
+// A document of text as a document keeps it: every line as the model wrote
+// it, but the `document` lines before anything else, which say only which
+// document it is.
+pub fn writing_lines_kept(text: &str) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    let mut begun = false;
+    for line in text.split('\n') {
+        let (word, _) = line_parts(line);
+        begun = begun || ["text", "head", "row"].iter().any(|block| word.eq_ignore_ascii_case(block));
+        if !begun && word.eq_ignore_ascii_case("document") {
+            continue;
+        }
+        kept.push(line);
+    }
+    kept.join("\n")
+}
+
+// Reads a document of text, lays it out in pages, and shows its first page in
+// the frame, in place of what it showed, keeping it in memory. A document
+// that cannot be written changes nothing.
+pub fn writing_show(text: &str) -> Result<Written, NotDrawn> {
+    let Some((place, room)) = room() else {
+        return Err(NotDrawn::NoRoom);
+    };
+    let found = writing_read(text);
+    if found.blocks.is_empty() {
+        return Err(NotDrawn::Empty);
+    }
+    let (pages, columns_left_out) = laid_out(&found, &room);
+    let count = pages.len();
+    // The title is cut so that it leaves room for the longest page mark, that
+    // of the last page, and one sign more: so it stays the same as the pages
+    // are turned.
+    let across = (room.width / sign_width().max(1)) as usize;
+    let mark_room = if count > 1 { page_mark(count - 1, count).len() + 1 } else { 0 };
+    let title = found.title.as_deref().map(|title| shown(title, across.saturating_sub(mark_room))).unwrap_or_default();
+    let laid = Pages { title: title.clone(), pages, shown: 0 };
+    pages_paint(&place, &room, &laid);
+    frame_put(InFrame::Text(laid));
+    Ok(Written { title_written: found.title, title, pages: count, columns_left_out })
+}
+
+// What the kernel says about a document of text it wrote: the document, by
+// its title, how many pages it has, and what of it did not fit or did not
+// come.
+pub fn writing_said(written: &Written, whole: bool) -> String {
+    let pages = counted(written.pages, "page", "pages");
+    let mut said = if written.title.is_empty() {
+        format!("I wrote a document of {}", pages)
+    } else {
+        format!("I wrote the document \"{}\", {}", written.title, pages)
+    };
+    said.push_str(&writing_fit(written));
+    if !whole {
+        said.push_str("; it was cut off, so I wrote only the lines that came whole");
+    }
+    said.push('.');
+    said
+}
+
+// What of a document of text did not fit, as the kernel says it behind what
+// it wrote or opened: columns past the most it draws. Nothing when all of it
+// fit.
+pub fn writing_fit(written: &Written) -> String {
+    if written.columns_left_out {
+        format!("; a table had more columns than fit, and only its first {} were drawn", TABLE_STYLE.columns_most)
+    } else {
+        String::new()
+    }
+}
+
+// How the kernel says what it opened of a document of text: its pages, and
+// what did not fit.
+pub fn writing_pages(written: &Written) -> String {
+    format!(", {}{}", counted(written.pages, "page", "pages"), writing_fit(written))
+}
+
+// What the kernel says when the model's document of text was not written, for
+// a text that came whole or one that was cut off.
+pub fn writing_refused(not: NotDrawn, whole: bool) -> String {
+    String::from(match not {
+        NotDrawn::NoRoom => "the model asked to write a document, but this screen has no room for one.",
+        NotDrawn::Empty if whole => "the model asked to write a document, but it has nothing in it.",
+        NotDrawn::Empty => "the model asked to write a document, but it was cut off before any of its lines came whole.",
+    })
+}
+
+// Page Down and Page Up: shows the next page of the document of text the
+// frame shows, or the one before, at once. Nothing changes at the last page
+// or the first, or when the frame shows no document of text.
+pub fn drawing_page_turn(forward: bool) {
+    let Some(mut shown) = frame_take() else {
+        return;
+    };
+    if let InFrame::Text(pages) = &mut shown {
+        let next = if forward { pages.shown.checked_add(1) } else { pages.shown.checked_sub(1) };
+        if let Some(next) = next.filter(|next| *next < pages.pages.len()) {
+            pages.shown = next;
+            if let Some((place, room)) = room() {
+                pages_paint(&place, &room, pages);
+            }
+        }
+    }
+    frame_put(shown);
 }
 
 // How bright a colour is to the eye: its relative luminance, as WCAG 2 (the

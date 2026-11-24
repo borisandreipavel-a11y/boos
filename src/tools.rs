@@ -19,8 +19,8 @@ use crate::apps::{app_make, app_run};
 use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps_pages};
 use crate::chat::{chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
-use crate::documents::{document_draw, document_open, document_reopen, documents_listed, documents_usable, documents_wanted};
-use crate::drawing::{drawing_room, drawing_table, drawing_wanted};
+use crate::documents::{document_draw, document_open, document_reopen, document_written, documents_listed, documents_usable, documents_wanted};
+use crate::drawing::{drawing_room, drawing_table, drawing_wanted, writing_room, writing_wanted};
 use crate::files::{download_start, file_open_start, files_listed, files_openable, files_usable, remove_ask};
 use crate::json::{Step, json_find_number, json_find_text, json_text};
 use crate::look::{look_paint, look_pick, looks_told};
@@ -214,6 +214,44 @@ const TABLE_EXAMPLE: &str = concat!(
     "row Banana | yellow"
 );
 
+// The tool that writes a document of text and tables in the frame and keeps
+// it (see "A document of text" in docs/screen.md, and `documents.rs`): how it
+// is written, with the room a page has on this screen, and an example. It is
+// offered only where documents can be kept. It asks for clearly less than
+// the bound on what it is given (8,192 bytes, see `model.rs`), so that the
+// document fits in the answer's tokens with the model's thinking.
+fn write_document_tool(rows: usize, signs: u32) -> String {
+    let told = format!(
+        concat!(
+            "Writes a document of text and tables in the frame on the screen, beside the panel of apps, in place of what it shows, ",
+            "and keeps it on the disk as a document, named by its title. ",
+            "Use it when the person wants something written down to keep or read: notes, a summary, a guide, with tables where they fit. ",
+            "The document is written as lines, one thing to a line, each beginning with the word that says what it is: ",
+            "title and the document's name; text and a paragraph; head and a table's head's cells; then row and a row's cells, one line for each row. ",
+            "Cells are parted by |, and a new head begins another table. ",
+            "Begin a new document with the line document 0; to change a kept document, write it whole again, beginning with document and its number. ",
+            "Keep it under 6000 signs. The screen shows it a page at a time, {} rows of {} signs, and the person turns the pages."
+        ),
+        rows, signs
+    );
+    format!(
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"write_document\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"lines\":{{\"type\":\"string\",\"description\":{}}}}},\"required\":[\"lines\"]}}}}}}",
+        json_text(&told),
+        json_text(DOCUMENT_EXAMPLE)
+    )
+}
+
+// The example of a document that the tool `write_document` gives the model.
+const DOCUMENT_EXAMPLE: &str = concat!(
+    "The document, as lines, such as:\n",
+    "document 0\n",
+    "title The Moon\n",
+    "text The Moon is Earth's only natural satellite.\n",
+    "head Fact | Value\n",
+    "row Distance | 384,400 km\n",
+    "row Diameter | 3,474 km"
+);
+
 // The tool that opens a kept document in the frame (see `documents.rs`), with
 // the kept documents by number and name, the one used last first. It is
 // offered while any document is kept where documents can be kept.
@@ -314,8 +352,8 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 
 // The list of tools that goes to the model with a line, as JSON: `make_app`
 // and `pick_look` always; `run_app` while any app is kept; `draw_table` while
-// the screen has room for a table, and `open_document` while any document is
-// kept; `download_file` while files can be kept, `remove_file` while any
+// the screen has room for a table, `write_document` with it where documents
+// can be kept, and `open_document` while any document is kept; `download_file` while files can be kept, `remove_file` while any
 // file is kept, and `open_file` while a CSV file is kept where documents can
 // be kept; `turn_page` while the panel of apps has more than one page;
 // `forget` while anything that was said is remembered.
@@ -332,6 +370,10 @@ pub fn chat_tools() -> String {
     if let Some((rows, columns, signs)) = drawing_room() {
         tools.push(',');
         tools.push_str(&draw_table_tool(rows, columns, signs, documents_usable()));
+        if let (true, Some((rows, signs))) = (documents_usable(), writing_room()) {
+            tools.push(',');
+            tools.push_str(&write_document_tool(rows, signs));
+        }
         let documents = documents_listed();
         if !documents.is_empty() {
             tools.push(',');
@@ -559,6 +601,15 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             }
             Err(said) => said,
         },
+        // A document of text written whole ends the line, as a table does;
+        // one with columns that did not fit, or cut off, goes back.
+        "write_document" => match document_written(&call.inputs, call.cut_off) {
+            Ok((said, whole)) => {
+                chat_say(&said);
+                return if whole { ToolDone::Ended } else { ToolDone::Back };
+            }
+            Err(said) => said,
+        },
         // A kept document opened goes back, so that the model, which sees its
         // lines with the next ask, can change it in the same line, or say
         // what it opened.
@@ -632,6 +683,7 @@ pub fn tool_wanted(call: &ToolCall) -> String {
         "pick_look" => input_number(&call.inputs, "look").map(|number| format!("{}", number)),
         "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
         "draw_table" => drawing_wanted(&call.inputs, call.cut_off),
+        "write_document" => writing_wanted(&call.inputs, call.cut_off),
         "open_document" => input_number(&call.inputs, "document").map(|number| format!("{}", number)),
         "download_file" => input_text(&call.inputs, "address").map(|address| String::from(address.trim())),
         "remove_file" => input_number(&call.inputs, "file").map(|number| format!("{}", number)),
@@ -640,7 +692,7 @@ pub fn tool_wanted(call: &ToolCall) -> String {
     };
     // A change of a kept document counts as the same thing again only while
     // the same document is open (see `documents.rs`).
-    let given = if call.name == "draw_table" { given.map(documents_wanted) } else { given };
+    let given = given.map(|text| documents_wanted(&call.name, text));
     match given {
         Some(given) => format!("{}: {}", call.name, given),
         None => call.name.clone(),

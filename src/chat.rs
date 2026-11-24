@@ -18,9 +18,10 @@ use crate::conversation::{
     conversation_again, conversation_forget, conversation_line, conversation_record, conversation_row, conversation_sent, conversation_split,
 };
 use crate::documents::{documents_begin, documents_setup, documents_told};
+use crate::drawing::drawing_page_turn;
 use crate::errand::{Answer, Errand, errand_ask, errand_grown};
 use crate::files::{download_answer, file_opening_forget, file_text_take, files_answer, files_asking, files_setup};
-use crate::keyboard::{BACKSPACE, DELETE_KEY, DOWN_KEY, END_KEY, HOME_KEY, LEFT_KEY, RIGHT_KEY, UP_KEY};
+use crate::keyboard::{BACKSPACE, DELETE_KEY, DOWN_KEY, END_KEY, HOME_KEY, LEFT_KEY, PAGE_DOWN_KEY, PAGE_UP_KEY, RIGHT_KEY, UP_KEY};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
 use crate::look::{look, look_answer, look_asking, look_begin, look_paint};
 use crate::notebook::{notebook_find, notebook_keep, notebook_ready};
@@ -812,9 +813,10 @@ pub fn chat_answer(answer: Answer) {
             serial_print(&format!("Tool: {} {}\r\n", call.name, plain_text(&call.inputs, TOOL_SHOWN)));
         }
         // An answer that broke off ends the line too. The tool asked for in
-        // it is not done, but for a table: its rows that came whole are drawn.
+        // it is not done, but for a table, whose rows that came whole are
+        // drawn, and a document of text, whose lines that came whole are.
         if reply.as_ref().is_some_and(|reply| reply.broken) {
-            if call.name == "draw_table" {
+            if call.name == "draw_table" || call.name == "write_document" {
                 tool_do(call);
             }
             return;
@@ -931,6 +933,13 @@ fn kernel_rows(rows: &[String]) {
 // `onboarding.rs`), for the number of a look (see `look.rs`), or for yes or
 // no about a file (see `files.rs`), the line that is sent is that answer.
 pub fn chat_key(letter: u8) {
+    // Page Up and Page Down turn the pages of the document of text the frame
+    // shows, whatever else is being typed, and go nowhere else: not into a
+    // secret, not into the line (see `drawing.rs`).
+    if letter == PAGE_UP_KEY || letter == PAGE_DOWN_KEY {
+        drawing_page_turn(letter == PAGE_DOWN_KEY);
+        return;
+    }
     // While the kernel waits for a secret, a key or a password, the keys go
     // there and nowhere else.
     if stars_wanted() {

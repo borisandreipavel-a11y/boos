@@ -100,25 +100,30 @@ const RIGHT_SHIFT_LET_GO: u8 = RIGHT_SHIFT + 128;
 const MARK: u8 = 224;
 
 // What `key_letter` gives for the keys that move inside the line being typed,
-// for Delete, and for Up and Down: numbers that no sign has (the signs are 32
-// to 126, Enter is 10 and Backspace 8). The chat box acts on them (see
-// `chat.rs`).
+// for Delete, for Up and Down, and for Page Up and Page Down: numbers that no
+// sign has (the signs are 32 to 126, Enter is 10 and Backspace 8). The chat
+// box acts on them (see `chat.rs`); Page Up and Page Down turn the pages of
+// the document the frame shows (see `drawing.rs`).
 pub const HOME_KEY: u8 = 1;
 pub const LEFT_KEY: u8 = 2;
 pub const END_KEY: u8 = 5;
 pub const RIGHT_KEY: u8 = 6;
+pub const PAGE_UP_KEY: u8 = 11;
+pub const PAGE_DOWN_KEY: u8 = 12;
 pub const DOWN_KEY: u8 = 14;
 pub const UP_KEY: u8 = 16;
 pub const DELETE_KEY: u8 = 127;
 
-// The numbers those seven keys send behind the mark. The keys of the number
+// The numbers those nine keys send behind the mark. The keys of the number
 // pad send the same numbers without the mark; they stay without a letter.
 const HOME_NUMBER: u8 = 71;
 const UP_NUMBER: u8 = 72;
+const PAGE_UP_NUMBER: u8 = 73;
 const LEFT_NUMBER: u8 = 75;
 const RIGHT_NUMBER: u8 = 77;
 const END_NUMBER: u8 = 79;
 const DOWN_NUMBER: u8 = 80;
+const PAGE_DOWN_NUMBER: u8 = 81;
 const DELETE_NUMBER: u8 = 83;
 
 // Whether each Shift key is held down right now, and whether the number
@@ -133,7 +138,7 @@ static mut AFTER_MARK: bool = false;
 // Letting a key go sends its number plus 128, which has no letter here.
 // Enter and Backspace have no letter either; they come back as the numbers
 // that stand for them, `b'\n'` and `BACKSPACE`, and so do the arrows, Home,
-// End and Delete (`LEFT_KEY` and the others above).
+// End, Page Up, Page Down and Delete (`LEFT_KEY` and the others above).
 //
 // While a Shift key is held down, a key gives its second sign: a capital
 // letter, or the sign printed above a digit. The Shift keys give no letter
@@ -162,16 +167,18 @@ pub fn key_letter(key: u8) -> Option<u8> {
     }
     let shift = unsafe { LEFT_SHIFT_HELD || RIGHT_SHIFT_HELD };
 
-    // The arrows, Home, End and Delete, which send the mark first. Shift
-    // makes no difference to them.
+    // The arrows, Home, End, Page Up, Page Down and Delete, which send the
+    // mark first. Shift makes no difference to them.
     if after_mark {
         match key {
             HOME_NUMBER => return Some(HOME_KEY),
             UP_NUMBER => return Some(UP_KEY),
+            PAGE_UP_NUMBER => return Some(PAGE_UP_KEY),
             LEFT_NUMBER => return Some(LEFT_KEY),
             RIGHT_NUMBER => return Some(RIGHT_KEY),
             END_NUMBER => return Some(END_KEY),
             DOWN_NUMBER => return Some(DOWN_KEY),
+            PAGE_DOWN_NUMBER => return Some(PAGE_DOWN_KEY),
             DELETE_NUMBER => return Some(DELETE_KEY),
             _ => {}
         }
