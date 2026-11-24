@@ -3,6 +3,7 @@ docs/model.md): the request a line is sent with (the instruction text with the r
 the line, the list of tools for what the disk holds and whether anything is remembered, the limit), the rows the
 kernel says at once and when the answer comes, and the chat box where every line but `key` and `setup` goes to the
 model. Nothing runs when this file is imported."""
+import os
 import re
 
 import documents_model
@@ -95,12 +96,23 @@ def remove_file_tool(files):
 
 def openable(files):
     """The kept files that open_file lists, of `files` as remove_file lists them ((number, "name, a CSV table of 5 KB"),
-    the one kept last first): the CSV files."""
-    return [(number, words) for number, words in files if ", a CSV table of " in words]
+    the one kept last first): the CSV files, and while Anthropic is the provider (ANTHROPIC) the PDFs, every one of which
+    keeps its address in these tests."""
+    return [(number, words) for number, words in files if ", a CSV table of " in words or (ANTHROPIC and ", a PDF of " in words)]
+
+
+# Whether every line goes to Anthropic in these tests (BOOS_PROVIDER, read by net_copy.py too).
+ANTHROPIC = os.environ.get("BOOS_PROVIDER") == "anthropic"
 
 
 def open_file_tool(files):
-    """`files`: (number, "name, a CSV table of 5 KB") of the kept CSV files, the one kept last first."""
+    """`files`: (number, "name, a CSV table of 5 KB") of the kept files that open, the one kept last first. While a PDF
+    is among them, the sentence says what comes of opening one (pdf_model.OPEN_TOLD)."""
+    if any(", a PDF of " in file for _, file in files):
+        import pdf_model
+        told = pdf_model.OPEN_TOLD + "; ".join("%d: %s" % (number, file) for number, file in files) + "."
+        return tool("open_file", told, {"file": {"type": "integer", "enum": [number for number, _ in files],
+                                                "description": "The number of the kept file"}}, ["file"])
     told = ("Opens one of the kept CSV files as a table: its text, at most its first 64 KB, is sent to you once, with the next ask, "
             "and you then draw it with draw_table as a new table, which is kept as a document; "
             "a file opened before opens its table again. The kept CSV files, by number: "

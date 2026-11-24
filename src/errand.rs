@@ -30,8 +30,10 @@ pub enum Errand {
     // what the model is told about the open document (`documents_told` in
     // `documents.rs`), empty while none is open; and, when the model is asked
     // about the line again, with what came of it so far
-    // (`conversation_split`), which is empty for the line's first ask.
-    ChatLine { line: String, tools: String, record: String, document: String, done: String },
+    // (`conversation_split`), which is empty for the line's first ask; and the
+    // address of a PDF opened for the line, which goes to Anthropic before the
+    // line, empty when none goes (see `files.rs`).
+    ChatLine { line: String, tools: String, record: String, document: String, done: String, pdf: String },
     // Ask the model to write an app: the request the model gave with the tool
     // `make_app` (see `tools.rs`), and the app's inputs, which the model that
     // writes it is told; and the values its first run is given, which stay

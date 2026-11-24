@@ -37,7 +37,7 @@ from chat_tools_model import ToolsChat, body_again, body_meant, model_row
 from documents_model import kept_row, lines_kept, listed as document_listed, name_of, note, screen
 from net_copy import build
 from open_file_breaks import BREAKS
-from open_file_model import (CANNOT_READ_FILE, file_part, listed, long_line_row, no_such_file_row, not_csv_row, not_plain_row,
+from open_file_model import (CANNOT_READ_FILE, file_part, listed, long_line_row, no_such_file_row, not_plain_row, pdf_not_here_row,
                              note_from_file, put_files, reading_row, reopened_row)
 from table_model import drawn
 from test_apps_kept import KEY, PORT, Run, answered_disk, failures, give_key, report
@@ -216,7 +216,7 @@ def scenario_big():
     print("time: 'open big.csv' (three asks, the second with 64 KB) answered after %.1f s" % run.answered_after)
 
     # Each turned down, and each goes back.
-    for line, row in [("open the long one", long_line_row(2, "long.csv")), ("open the pdf", not_csv_row(3, "a.pdf", "pdf")),
+    for line, row in [("open the long one", long_line_row(2, "long.csv")), ("open the pdf", pdf_not_here_row(3, "a.pdf")),
                       ("open odd", not_plain_row(4, "odd.csv")), ("open file nine", no_such_file_row(9)), ("open that file", CANNOT_READ_FILE)]:
         exchange(run, chat, line, [T, row] + back())
         meant.line(line, files, [rows], rows)
