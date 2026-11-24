@@ -46,7 +46,8 @@ What is known to be missing, limited or waiting. Nothing here is done. Remove a 
 
 ## Pictures
 
-- **PNG only.** JPEG, most of the photos on the web, comes next, then the pictures inside PDFs; GIF and WebP are not planned. A JPEG or GIF is not kept at all today. See [pictures.md](pictures.md).
+- **PNG only, in the kernel.** The pictures crate reads JPEG photos too, baseline and progressive, but the kernel does not keep or show them yet: that comes next, then the pictures inside PDFs; GIF and WebP are not planned. A JPEG or GIF is not kept at all today. See [pictures.md](pictures.md).
+- **A JPEG photo's own turn is not applied yet:** a photo a phone took upright, whose Exif note says to turn it a quarter, would show lying on its side. Its colour profile is not applied either, nor any colour that is not grey or JFIF's YCbCr: CMYK photos are turned down. Subsampled colour is taken from the nearest sample, where other readers smooth it.
 - **A picture is read whole, in the main loop,** when its document is written, opened or changed: the machine waits meanwhile, at the limit of 9,000,000 dots some 5 s for the slowest kind (measured in QEMU), up to some 20 s for a document of four such pictures. Nothing shows that it is busy. Keys typed meanwhile wait.
 - **The limits** (9,000,000 dots, 16,384 on a side, 4,000,000 interlaced) were set from times measured in QEMU; how long a real PC takes was not measured. A larger picture is turned down, not read at a smaller size.
 - **Colours are shown as they are written:** gamma, colour profiles and the colour of the screen it was made on are not applied; 16-bit colours keep their high byte. A picture is shrunk by averaging, never enlarged, and stands at the left of the page.

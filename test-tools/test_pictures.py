@@ -3,7 +3,8 @@ own that turns a picture file into dots (docs/pictures.md), and it needs no mach
 
     python test_pictures.py                  its tests, clippy, and a build for the kernel's target
     python test_pictures.py --cross-check    also: PNG pictures made by other programs on this computer, read by the
-                                             crate and by the second reader (png_reference.py) and compared dot for dot
+                                             crate and by the second reader (png_reference.py) and compared dot for dot;
+                                             and JPEG photos here, read by the crate and by Windows' own reader
 
 1. `cargo test` for this computer (x86_64-pc-windows-msvc): the tests in pictures/src/tests.rs, with the test
    pictures and streams of pictures/test-data/, and the count of memory in pictures/tests/memory.rs. They are
@@ -22,9 +23,16 @@ suites.py and reads its last line: "FAILURES: none", or the steps that failed, e
 "FAILED: ...". It ends with 0 only when every step passed.
 
 The cross-check reads only: the PNG files that come with Python, with Git and with QEMU here (QEMU's many icons
-sampled), each at most 4 MB and two million dots. Nothing of them is kept but in the work folder."""
+sampled), each at most 4 MB and two million dots; and the JPEG files of Windows' own folders of wallpapers and of
+apps (Web, SystemApps) and of the programs installed (Program Files), and the sample photos fetched once into the work
+folder (jpeg-samples), if any, each at most 16 MB and read once however often it is found. Windows' reader (WIC,
+through PowerShell, with colour profiles left out) writes each photo's dots, a batch at a time; the crate's test
+compares them (pictures/src/jpeg_tests.rs, jpeg_cross_check), and the batch's dots are removed. Nothing of them is
+kept but in the work folder."""
 import argparse
+import hashlib
 import os
+import struct
 import subprocess
 import sys
 
@@ -35,7 +43,37 @@ CRATE = os.path.join(places.PROJECT, "pictures")
 MANIFEST = os.path.join(CRATE, "Cargo.toml")
 TARGET = os.path.join(places.WORK, "pictures-target")
 CROSS = os.path.join(places.WORK, "pictures-cross-check")
+JPEG_CROSS = os.path.join(places.WORK, "pictures-jpeg-cross-check")
+SAMPLES = os.path.join(places.WORK, "jpeg-samples")
 HOST = "x86_64-pc-windows-msvc"
+# The most dots of one batch of the JPEG cross-check: WIC's dots take four bytes each in the work folder.
+BATCH_DOTS = 100_000_000
+
+# Reads pictures with Windows' own reader (WIC, through WPF), colour profiles left out, and writes each one's dots as
+# raw bytes, four a dot: blue, green, red, alpha. It reads a file of lines "picture<TAB>output" and prints
+# "picture<TAB>width<TAB>height" for each, or "picture<TAB>ERROR<TAB>message".
+WIC = r"""param([string]$List)
+Add-Type -AssemblyName PresentationCore
+$options = [System.Windows.Media.Imaging.BitmapCreateOptions]::IgnoreColorProfile -bor [System.Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat
+foreach ($line in [System.IO.File]::ReadAllLines($List)) {
+    $parts = $line.Split("`t")
+    $picture = $parts[0]; $output = $parts[1]
+    try {
+        $stream = [System.IO.File]::OpenRead($picture)
+        try {
+            $decoder = [System.Windows.Media.Imaging.BitmapDecoder]::Create($stream, $options, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+            $converted = New-Object System.Windows.Media.Imaging.FormatConvertedBitmap($decoder.Frames[0], [System.Windows.Media.PixelFormats]::Bgra32, $null, 0)
+            $width = $converted.PixelWidth; $height = $converted.PixelHeight
+            $bytes = New-Object byte[] ($width * 4 * $height)
+            $converted.CopyPixels($bytes, $width * 4, 0)
+            [System.IO.File]::WriteAllBytes($output, $bytes)
+            Write-Output ("{0}`t{1}`t{2}" -f $picture, $width, $height)
+        } finally { $stream.Dispose() }
+    } catch {
+        Write-Output ("{0}`tERROR`t{1}" -f $picture, $_.Exception.Message)
+    }
+}
+"""
 
 
 def cargo(title, args, extra_env=None, no_warnings=False):
@@ -49,7 +87,8 @@ def cargo(title, args, extra_env=None, no_warnings=False):
     warned = no_warnings and any(line.lstrip().startswith("warning") for line in lines)
     passed = done.returncode == 0 and not warned
     print("== %s: %s" % (title, "passed" if passed else "FAILED"), flush=True)
-    for line in lines[-25:] if not passed else [l for l in lines if "test result" in l or "held" in l]:
+    for line in lines[-25:] if not passed else [l for l in lines if "test result" in l or "held" in l or
+                                                 "cross-checked" in l or "turned down" in l]:
         print("   " + line, flush=True)
     if not passed:
         print("FAILED: %s%s" % (title, ", with a warning" if warned and done.returncode == 0 else ""), flush=True)
@@ -108,6 +147,94 @@ def cross_check_prepare():
     return len(listed)
 
 
+def jpegs_here():
+    """The JPEG files of Windows' folders of wallpapers and apps, of the programs installed, and the samples, each
+    at most 16 MB, the same bytes once; with the dots each one's frame says it has."""
+    windows = os.environ.get("WINDIR", r"C:\Windows")
+    roots = [os.path.join(windows, "Web"), os.path.join(windows, "SystemApps"),
+             os.environ.get("ProgramFiles", r"C:\Program Files"), SAMPLES]
+    found, seen = [], set()
+    for root in roots:
+        files = []
+        for folder, _, names in os.walk(root):
+            files += [os.path.join(folder, n) for n in names if n.lower().endswith((".jpg", ".jpeg"))]
+        for path in sorted(files):
+            try:
+                if os.path.getsize(path) > 16 * 1024 * 1024:
+                    continue
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            mark = hashlib.sha1(data).hexdigest()
+            if mark not in seen:
+                seen.add(mark)
+                found.append((path, frame_dots(data)))
+    return found
+
+
+def frame_dots(data):
+    """The dots a JPEG's frame says it has (its width times its height), or 0 if none is found."""
+    at = 2
+    while at + 4 <= len(data) and data[at] == 0xFF:
+        code = data[at + 1]
+        if code == 0xFF:
+            at += 1
+            continue
+        length = struct.unpack(">H", data[at + 2:at + 4])[0]
+        if 0xC0 <= code <= 0xCF and code not in (0xC4, 0xC8, 0xCC) and at + 9 <= len(data):
+            height, width = struct.unpack(">HH", data[at + 5:at + 9])
+            return width * height
+        if code == 0xDA:
+            break
+        at += 2 + length
+    return 0
+
+
+def jpeg_cross_check():
+    """Reads the JPEG photos here with WIC, a batch at a time, and runs the crate's test on each batch."""
+    os.makedirs(JPEG_CROSS, exist_ok=True)
+    script = os.path.join(JPEG_CROSS, "wic.ps1")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(WIC)
+    photos = jpegs_here()
+    batches, batch, dots = [], [], 0
+    for path, size in photos:
+        if batch and dots + size > BATCH_DOTS:
+            batches.append(batch)
+            batch, dots = [], 0
+        batch.append(path)
+        dots += size
+    if batch:
+        batches.append(batch)
+    print("== JPEG cross-check: %d photos, in %d batches" % (len(photos), len(batches)), flush=True)
+    passed = True
+    for number, batch in enumerate(batches):
+        wic_list = os.path.join(JPEG_CROSS, "wic-list.txt")
+        with open(wic_list, "w", encoding="utf-8", newline="\n") as f:
+            for n, path in enumerate(batch):
+                f.write("%s\t%s\n" % (path, os.path.join(JPEG_CROSS, "%d.bgra" % n)))
+        done = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-List",
+                               wic_list], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        listed = []
+        for n, line in enumerate(done.stdout.splitlines()):
+            words = line.split("\t")
+            if len(words) == 3 and words[1] != "ERROR":
+                listed.append("%s\t%s\t%s\t%d.bgra" % (words[0], words[1], words[2], n))
+            else:
+                print("   WIC did not read: %s" % line, flush=True)
+        with open(os.path.join(JPEG_CROSS, "list.txt"), "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(listed) + "\n")
+        passed &= cargo("JPEG cross-check, batch %d of %d" % (number + 1, len(batches)),
+                        ["test", "--offline", "--release", "--manifest-path", MANIFEST, "--target", HOST,
+                         "jpeg_cross_check", "--", "--ignored", "--nocapture"],
+                        extra_env={"PICTURES_JPEG_CROSS_CHECK": JPEG_CROSS})
+        for name in os.listdir(JPEG_CROSS):
+            if name.endswith(".bgra"):
+                os.remove(os.path.join(JPEG_CROSS, name))
+    return passed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--cross-check", action="store_true", help="also compare with pictures made by other programs")
@@ -128,8 +255,9 @@ def main():
         if options.cross_check:
             if cross_check_prepare():
                 results["cross-check"] = cargo("cross-check", ["test", "--offline", "--manifest-path", MANIFEST,
-                                                               "--target", HOST, "cross_check", "--", "--ignored",
+                                                               "--target", HOST, "tests::cross_check", "--", "--ignored",
                                                                "--nocapture"], extra_env={"PICTURES_CROSS_CHECK": CROSS})
+            results["JPEG cross-check"] = jpeg_cross_check()
     finally:
         if not had_lock and os.path.exists(lock):
             os.remove(lock)
