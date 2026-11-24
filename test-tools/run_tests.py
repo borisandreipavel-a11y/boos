@@ -7,7 +7,9 @@
              --base REF (compare with REF instead of master), --files PATH... (run what a change to these files
              needs, whatever git says), --to-the-end (breaks run to the end, not stopped at their first failure),
              --only NAME... (only the jobs whose names start so), --share I/N (only the I-th of N shares of the
-             jobs picked, dealt the same way on every computer, so that N computers together run each job once)
+             jobs picked, dealt the same way on every computer, so that N computers together run each job once),
+             --own-breaks (of the breaks on purpose, only the change's own and the first of each list; with `all`,
+             everything still runs)
 
 No window, no question. Folders and ports come from the environment as for every test (places.py, ports.py): each
 test machine gets a work folder of its own under this checkout's (w1, w2, ...) and a range of stand-in ports of its
@@ -399,6 +401,117 @@ def plan_changed(jobs, files, point):
     return chosen
 
 
+# ---------------------------------------------------------------- a change's own breaks on purpose (--own-breaks)
+
+def listed(text):
+    """What a file of test-tools sets at its top level: every entry of a dict with words for keys, as {(dict, key):
+    (its text, the names it uses)}, and the text of every other function or name it sets, as {name: text}. A list of
+    breaks names each break so, with its change and the scenario that must catch it."""
+    text = text.replace("\r\n", "\n")
+    entries, others = {}, {}
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return entries, others
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    for key, value in zip(node.value.keys, node.value.values):
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                            uses = {name.id for name in ast.walk(value) if isinstance(name, ast.Name)}
+                            entries[(target.id, key.value)] = (ast.get_source_segment(text, value), uses)
+        elif isinstance(node, (ast.FunctionDef, ast.Assign)):
+            names = [node.name] if isinstance(node, ast.FunctionDef) else [t.id for t in node.targets if isinstance(t, ast.Name)]
+            for name in names:
+                others[name] = ast.get_source_segment(text, node)
+    return entries, others
+
+
+def text_at(commit, path):
+    """A file of the project as it is at `commit`, or as it is now (None), read as UTF-8 both ways, so that the same
+    text compares equal; empty if it is not there."""
+    try:
+        if commit is None:
+            data = open(os.path.join(PROJECT, *path.split("/")), "rb").read()
+        else:
+            shown = subprocess.run(["git", "show", "%s:%s" % (commit, path)], cwd=PROJECT, capture_output=True)
+            if shown.returncode != 0:
+                return ""
+            data = shown.stdout
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
+def own_breaks(jobs, files, point, head=None):
+    """The breaks on purpose that are a change's own, as {name: (job, reason)}, comparing `point` with `head` (None:
+    the files as they are now):
+    - its line in a list changed: an entry under its name, in a dict at the top of a test-tools file it uses, is new,
+      or its text changed, or a function or name of that file that the entry uses (a new break is so, recorded or
+      not; a break of another list with the same name comes along);
+    - its first failure or its known miss in suites.py is new or changed.
+    A change inside a helper that a list imports from another file shows only when every break runs."""
+    lines = {}
+    for path in files:
+        if path.startswith("test-tools/") and path.endswith(".py") and path != "test-tools/suites.py":
+            then_entries, then_others = listed(text_at(point, path))
+            now_entries, now_others = listed(text_at(head, path))
+            moved = {name for name in set(then_others) | set(now_others) if then_others.get(name) != now_others.get(name)}
+            keys = set()
+            for entry in set(then_entries) | set(now_entries):
+                was, now = then_entries.get(entry), now_entries.get(entry)
+                if was is None or now is None or was[0] != now[0] or now[1] & moved:
+                    keys.add(entry[1])
+            lines[path[len("test-tools/"):-3]] = keys
+    _, caught_then, misses_then = table_on(point)
+    if head is None:
+        caught_now, misses_now = suites.CAUGHT_BY, suites.KNOWN_MISSES
+    else:
+        _, caught_now, misses_now = table_on(head)
+    own = {}
+    for job in jobs:
+        if job.kind != "break":
+            continue
+        where = sorted(module for module, keys in lines.items() if module in job.needs and job.brk in keys)
+        if where:
+            own[job.name] = (job, "its line in %s.py is new or changed" % where[0])
+        elif caught_now.get(job.name) != caught_then.get(job.name):
+            own[job.name] = (job, "its first failure in suites.py changed")
+        elif misses_now.get(job.name) != misses_then.get(job.name):
+            own[job.name] = (job, "its known miss in suites.py changed")
+    return own
+
+
+def sample_breaks(jobs):
+    """The first break by name of each list, among those meant to be caught: a change to what makes and judges
+    breaks then shows without running them all."""
+    first = {}
+    for job in sorted((job for job in jobs if job.kind == "break" and job.expect == "caught"), key=lambda job: job.name):
+        first.setdefault(job.catalogue, job)
+    return list(first.values())
+
+
+def keep_own(jobs, picked, files, point):
+    """For --own-breaks: of what the change needs, every suite, and of the breaks on purpose only its own, with the
+    sample of every list when anything at all is picked. Every other break runs when everything runs."""
+    chosen = [job for job in picked if job.kind == "suite"]
+    mine = own_breaks(jobs, files, point)
+    for job, why in mine.values():
+        job.reason = why
+        chosen.append(job)
+    if chosen:
+        for job in sample_breaks(jobs):
+            if job.name not in mine:
+                job.reason = "the sample of its list"
+                chosen.append(job)
+    names = {job.name for job in chosen}
+    left = len([job for job in picked if job.kind == "break" and job.name not in names])
+    say("--own-breaks: %d break(s) of the change's own and %d of the sample; %d other break(s) it touches are left for "
+        "the whole set" % (len(mine), len(chosen) - len(mine) - sum(job.kind == "suite" for job in chosen), left))
+    return chosen
+
+
 # ---------------------------------------------------------------- running one job
 
 def kill_tree(process):
@@ -722,6 +835,7 @@ def main():
     everything = "all" in args
     listing = "--list" in args
     to_the_end = "--to-the-end" in args
+    own = "--own-breaks" in args
     workers = int(args[args.index("--workers") + 1]) if "--workers" in args else None
     base = args[args.index("--base") + 1] if "--base" in args else "master"
 
@@ -743,6 +857,8 @@ def main():
         for job in picked:
             job.reason = "everything"
     elif given:
+        if own:
+            raise SystemExit("--own-breaks compares the lists of breaks with a branch (--base), not with --files")
         say("as if these files changed: %s" % ", ".join(given))
         picked = plan_changed(jobs, given, None)
     else:
@@ -754,6 +870,8 @@ def main():
         else:
             say("changed since %s (%s): %s" % (base, point[:7], ", ".join(files) if files else "nothing"))
             picked = plan_changed(jobs, files, point)
+            if own:
+                picked = keep_own(jobs, picked, files, point)
     if only:
         picked = [job for job in picked if any(job.name.startswith(word) for word in only)]
     if share:

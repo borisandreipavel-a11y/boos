@@ -1,11 +1,12 @@
 # The boot tests. GitHub boots the kernel in QEMU on one of its own Windows computers and runs the tests of
 # test-tools/ there through test-tools/run_tests.py:
-# - for a pull request into master, what its changes need (the runner's own pick, as on any other computer), on
-#   the pull request merged with master as master is when the run starts. A pull request that changes this file
-#   gets the whole set, since the runner's table boots nothing for a change under .github/;
+# - for a pull request into master, every suite its changes need (the runner's own pick, as on any other computer)
+#   and, of the breaks on purpose, only its own and the first of each list (--own-breaks), on the pull request
+#   merged with master as master is when the run starts. A pull request that changes this file gets the whole set,
+#   since the runner's table boots nothing for a change under .github/;
 # - after each change that lands on master, the whole set: every suite and every break on purpose.
-# The jobs are spread over three of GitHub's computers at once, each running one share of them (run_tests.py
-# --share N/3); the job "boot" is the one check for all three, green only when all three are.
+# The jobs are spread over four of GitHub's computers at once, each running one share of them (run_tests.py
+# --share N/4); the job "boot" is the one check for all four, green only when all four are.
 # See docs/testing.md, "Boot tests on GitHub".
 #
 # QEMU comes from the installer for 64-bit Windows that qemu.org names (qemu.weilnetz.de), version 11.1.0. The
@@ -34,16 +35,16 @@ concurrency:
 
 jobs:
   share:
-    name: boot ${{ matrix.share }} of 3
+    name: boot ${{ matrix.share }} of 4
     runs-on: windows-latest
-    # About twice what the slowest share of the whole set took (47 to 49 minutes); what a pull request needs is
-    # the whole set at most.
+    # About one and a half times what the slowest share of the whole set is worked out to take on four computers
+    # (about 57 minutes); what a pull request needs is the whole set at most.
     timeout-minutes: 90
     strategy:
-      # A share that fails does not stop the other two: their results are wanted too.
+      # A share that fails does not stop the other three: their results are wanted too.
       fail-fast: false
       matrix:
-        share: [1, 2, 3]
+        share: [1, 2, 3, 4]
     env:
       QEMU_INSTALLER: qemu-w64-setup-20260811.exe
       QEMU_SHA512: 5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543
@@ -77,7 +78,7 @@ jobs:
           Write-Output $hash
           if ($hash -cne $env:QEMU_SHA512) { exit 1 }
 
-      # The three computers may all try to keep it at once; one is enough, so a refused save is no failure.
+      # The four computers may all try to keep it at once; one is enough, so a refused save is no failure.
       - name: Keep the installer for later runs
         if: steps.kept.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -126,11 +127,12 @@ jobs:
 
       # This computer's share of the jobs, with two test machines side by side. What the tests make (disk files,
       # pictures, logs, copies of the project) goes to the runner's temporary folder. In a pull request's trial
-      # merge, HEAD^1 is master as the merge took it.
+      # merge, HEAD^1 is master as the merge took it. A pull request's other breaks on purpose run on master after
+      # its merge, with the whole set.
       - name: Boot the kernel and run this share of the tests
         env:
           BOOS_TEST_WORK: ${{ runner.temp }}\boos-tests
-          SHARE: ${{ matrix.share }}/3
+          SHARE: ${{ matrix.share }}/4
         run: |
           if ($env:GITHUB_EVENT_NAME -ne "pull_request") {
             Write-Output "A change on master: the whole set."
@@ -142,7 +144,7 @@ jobs:
               Write-Output "This pull request changes the boot tests themselves: the whole set."
               python test-tools/run_tests.py all --workers 2 --share $env:SHARE
             } else {
-              python test-tools/run_tests.py --base HEAD^1 --workers 2 --share $env:SHARE
+              python test-tools/run_tests.py --base HEAD^1 --own-breaks --workers 2 --share $env:SHARE
             }
           }
 
@@ -176,17 +178,17 @@ jobs:
             !${{ runner.temp }}\boos-tests\**\*.efi
           if-no-files-found: ignore
 
-  # The one check for the whole run: it waits for the three shares, also when one failed, and is green only when
-  # all three passed.
+  # The one check for the whole run: it waits for the four shares, also when one failed, and is green only when
+  # all four passed.
   boot:
     needs: share
     if: always()
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - name: See that all three shares passed
+      - name: See that all four shares passed
         env:
           SHARES: ${{ needs.share.result }}
         run: |
-          Write-Output "The three shares together: $env:SHARES"
+          Write-Output "The four shares together: $env:SHARES"
           if ($env:SHARES -ne "success") { exit 1 }

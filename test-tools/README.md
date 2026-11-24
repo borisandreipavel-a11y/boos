@@ -21,7 +21,19 @@ and at most one for each two processors), `--base REF` (compare with another bra
 PATH...` (run what a change to those files needs), `--to-the-end` (breaks on purpose run to the end instead of
 stopping at their first failure), `--only NAME...` (only the jobs whose names begin so), `--share I/N` (only the
 I-th of N shares of the jobs it picked, dealt longest first by the table's seconds in the same way on every
-computer, so that N computers together run each job once; the boot tests on GitHub use three).
+computer, so that N computers together run each job once; the boot tests on GitHub use four), `--own-breaks` (of
+the breaks on purpose, only the change's own: a break whose line in its list is new or changed, or whose first
+failure or known miss in `suites.py` is new or changed; and, when anything runs, the first break of each list, so
+that a change to what makes and judges breaks shows too. The boot tests on GitHub use it for a pull request, and
+run every break after the merge).
+
+**What to run before a push.** On the computer a change is made on, run only what the change adds or changes: its
+own suites or scenarios, its own breaks on purpose, and what was sorted out by hand when `master` was taken in,
+picked by name with `--only`, for example `python run_tests.py all --only "chat tools stream" "break tools: nodone"`.
+Run each new break once with `--to-the-end` and put the first failure the runner prints for it into
+`suites.CAUGHT_BY`: on GitHub a break without one is run again, alone and to the end. Every suite the change needs
+and its own breaks then run on GitHub with its pull request, and every other break after the merge into `master`
+([../docs/testing.md](../docs/testing.md), "Boot tests on GitHub").
 
 It builds the interpreter and the kernel once, then runs the jobs longest first: each suite once (the long ones
 split into their scenarios), and each break on purpose alone in a copy of the project. It opens no window and asks
