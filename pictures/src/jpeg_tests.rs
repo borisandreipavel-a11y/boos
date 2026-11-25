@@ -116,12 +116,13 @@ fn jpegs_read_whole() {
     assert!(photos.len() >= 30);
     for words in photos {
         let name = &words[1];
-        let numbers: Vec<u32> = words[2..6].iter().map(|word| word.parse().unwrap()).collect();
+        let numbers: Vec<u32> = words[2..7].iter().map(|word| word.parse().unwrap()).collect();
         let file = read(&format!("{}.jpg", name));
         let head = jpeg_head(&file).unwrap();
+        let seen = head.seen();
         assert_eq!(
-            (head.width, head.height, u32::from(head.components), u32::from(head.progressive)),
-            (numbers[0], numbers[1], numbers[2], numbers[3]),
+            (seen.0, seen.1, u32::from(head.components), u32::from(head.progressive), u32::from(head.turn)),
+            (numbers[0], numbers[1], numbers[2], numbers[3], numbers[4]),
             "{}",
             name
         );
@@ -565,7 +566,9 @@ fn jpeg_reasons_in_words() {
 ///   WIC clips more dots to 0 than the crate does, which raises its
 ///   averages).
 ///
-/// Run only when asked.
+/// WIC gives a photo's dots as they are stored; one whose Exif note turns it
+/// is compared with WIC's dots turned the same way (`turned_apart`), so this
+/// checks the reading, and `jpeg_turn_samples` the turn. Run only when asked.
 #[test]
 #[ignore]
 fn jpeg_cross_check() {
@@ -590,17 +593,21 @@ fn jpeg_cross_check() {
             }
             Err(refusal) => panic!("{}: WIC reads it, but it is turned down because {}", path, refusal.because()),
         };
-        assert_eq!((whole.width, whole.height), (width, height), "{}", path);
-        let off_whole = squares_off(&whole.dots, &wic, width as usize, height as usize);
-        let (luma_most, luma_over) = luma_off(&whole.dots, &wic);
+        let turn = jpeg_head(&file).unwrap().turn;
+        let (wic_seen, seen_width, seen_height) = turned_apart(&wic, width as usize, height as usize, turn);
+        assert_eq!((whole.width as usize, whole.height as usize), (seen_width, seen_height), "{}", path);
+        let off_whole = squares_off(&whole.dots, &wic_seen, seen_width, seen_height);
+        let (luma_most, luma_over) = luma_off(&whole.dots, &wic_seen);
         let luma_checked = brightness_whole(&file);
 
         // At a frame's size, as the kernel shows it on a screen of 1280 by
         // 800. The crate reads it at n dots a block side; WIC's dots are
         // brought to the same grid by averaging each 8 / n by 8 / n of them,
-        // and both are shrunk the same way.
+        // and both are shrunk the same way, as stored, in the room with its
+        // sides swapped for a quarter turn, and turned last.
         let shown = jpeg_picture(&file, 554, 400, &ROOMY).unwrap();
-        let (shown_width, shown_height) = fitted_size(width, height, 554, 400);
+        let room = if turn >= 5 { (400, 554) } else { (554, 400) };
+        let (shown_width, shown_height) = fitted_size(width, height, room.0, room.1);
         let side = |size: u32, n: u32| (size * n).div_ceil(8);
         let n = [1, 2, 4, 8].into_iter().find(|n| side(width, *n) >= shown_width && side(height, *n) >= shown_height).unwrap();
         let (step, read_width, read_height) = ((8 / n) as usize, side(width, n), side(height, n));
@@ -626,8 +633,10 @@ fn jpeg_cross_check() {
             shrink.take_row(read_y as u32, &row);
         }
         let wic_shown = shrink.finish();
-        assert_eq!((shown.width, shown.height), (wic_shown.width, wic_shown.height), "{}", path);
-        let off_shown = squares_off(&shown.dots, &wic_shown.dots, shown.width as usize, shown.height as usize);
+        let (wic_shown, wic_width, wic_height) =
+            turned_apart(&wic_shown.dots, wic_shown.width as usize, wic_shown.height as usize, turn);
+        assert_eq!((shown.width as usize, shown.height as usize), (wic_width, wic_height), "{}", path);
+        let off_shown = squares_off(&shown.dots, &wic_shown, wic_width, wic_height);
         println!(
             "{}\t{}x{}\twhole {:.2}\tshown {:.2}\tbrightness most {}{}\tover 4 {:.4}%",
             path,
@@ -661,6 +670,32 @@ fn jpeg_cross_check() {
         worst_luma,
         worst_over
     );
+}
+
+/// Dots of a picture of `width` by `height` as stored, turned as an Exif
+/// turn says (CIPA DC-008, Figure 13), written here apart from the crate's
+/// own turning: each seen dot (x, y) is the stored one named below. Gives
+/// the dots and the size as seen.
+fn turned_apart(dots: &[u8], width: usize, height: usize, turn: u8) -> (Vec<u8>, usize, usize) {
+    let (seen_width, seen_height) = if turn >= 5 { (height, width) } else { (width, height) };
+    let mut seen = Vec::with_capacity(dots.len());
+    for y in 0..seen_height {
+        for x in 0..seen_width {
+            let (from_x, from_y) = match turn {
+                2 => (width - 1 - x, y),
+                3 => (width - 1 - x, height - 1 - y),
+                4 => (x, height - 1 - y),
+                5 => (y, x),
+                6 => (y, height - 1 - x),
+                7 => (width - 1 - y, height - 1 - x),
+                8 => (width - 1 - y, x),
+                _ => (x, y),
+            };
+            let at = (from_y * width + from_x) * 4;
+            seen.extend_from_slice(&dots[at..at + 4]);
+        }
+    }
+    (seen, seen_width, seen_height)
 }
 
 /// Whether a photo's brightness is not subsampled: a grey photo, or a YCbCr
@@ -715,6 +750,48 @@ fn luma_off(ours: &[u8], theirs: &[u8]) -> (u32, f64) {
         count += 1;
     }
     (most, over as f64 * 100.0 / count.max(1) as f64)
+}
+
+/// The eight photos of a public set made to show Exif's turns: one landscape
+/// stored in each of the eight ways, with its turn in its Exif note, fetched
+/// once into the tests' work folder (test_pictures.py --cross-check names the
+/// folder). Read in one room and turned as their notes say, each must look
+/// like the first, which is stored as it is seen: the landscape, and the
+/// words top, left, right and bottom at its edges. Each has its own number
+/// painted large in its middle, so the squares there are left out; the eight
+/// were packed apart, so their dots differ a little elsewhere. This is the
+/// check of the turns that does not rest on this project's own reading of
+/// Exif. Run only when asked.
+#[test]
+#[ignore]
+fn jpeg_turn_samples() {
+    let folder = PathBuf::from(env::var("PICTURES_JPEG_TURNS").expect("PICTURES_JPEG_TURNS names the folder"));
+    let first = jpeg_picture(&fs::read(folder.join("Landscape_1.jpg")).unwrap(), 300, 300, &ROOMY).unwrap();
+    let mut worst = 0.0f64;
+    for turn in 1..=8u8 {
+        let file = fs::read(folder.join(format!("Landscape_{}.jpg", turn))).unwrap();
+        assert_eq!(jpeg_head(&file).unwrap().turn, turn, "Landscape_{}", turn);
+        let picture = jpeg_picture(&file, 300, 300, &ROOMY).unwrap();
+        assert_eq!((picture.width, picture.height), (first.width, first.height), "Landscape_{}", turn);
+        // The middle, where each photo's own number stands: a fifth of the
+        // width and a quarter of the height, around the centre.
+        let (width, height) = (first.width as usize, first.height as usize);
+        let middle = (width * 2 / 5, height * 3 / 8, width * 3 / 5, height * 5 / 8);
+        let mut ours = picture.dots.clone();
+        let mut theirs = first.dots.clone();
+        for y in middle.1..middle.3 {
+            for x in middle.0..middle.2 {
+                let at = (y * width + x) * 4;
+                ours[at..at + 4].copy_from_slice(&[0, 0, 0, 255]);
+                theirs[at..at + 4].copy_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+        let off = squares_off(&ours, &theirs, width, height);
+        println!("Landscape_{}\tturn {}\t{}x{}\tsquares off {:.2}", turn, turn, picture.width, picture.height, off);
+        assert!(off <= 10.0, "Landscape_{}: a square's average is {:.2} off the first", turn, off);
+        worst = worst.max(off);
+    }
+    println!("turned-checked 8 photos; worst {:.2}", worst);
 }
 
 /// The most that the average of a colour over a square of 16 by 16 dots

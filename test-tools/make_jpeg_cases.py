@@ -11,7 +11,8 @@ shows here; each photo that must be turned down must be turned down by it too. T
 sequence of numbers, so every run makes the same files.
 
 Lines of jpeg-cases.txt:
-    jpeg NAME WIDTH HEIGHT COMPONENTS PROGRESSIVE      NAME.jpg, and NAME.rgba: its dots at its whole size
+    jpeg NAME WIDTH HEIGHT COMPONENTS PROGRESSIVE TURN NAME.jpg, and NAME.rgba: its dots at its whole size, as seen
+                                                       (WIDTH and HEIGHT swapped for a turn of 5 to 8)
     jshrunk NAME ROOM_W ROOM_H SHOWN_W SHOWN_H          NAME-ROOM_WxROOM_H.rgba: NAME.jpg shown in that room
     jrefused NAME REASON...                             NAME.jpg is turned down, because REASON
     file NAME AT LENGTH                                 the file NAME is the LENGTH bytes of jpeg-cases.bin from AT on
@@ -127,9 +128,12 @@ def main():
         return geometry, blocks
 
     def made(name, width, height, factors, scans, frame=0xC0, quant16=False, ids=None, places=None,
-             extreme=False, shown_in=(), **options):
+             extreme=False, shown_in=(), turn=1, note=None, **options):
         """A photo written from blocks; its dots at its whole size and in each room, checked by the second
-        reader."""
+        reader. `turn`: the turn the Exif note `note` gives (the bytes of an APP1 body, put before the frame), which
+        must be the turn the second reader finds in it."""
+        if note is not None:
+            options["before"] = [(0xE1, note)] + list(options.get("before", []))
         count = len(factors)
         quants_of = [LUMA if c == 0 else CHROMA for c in range(count)]
         if extreme:
@@ -144,16 +148,17 @@ def main():
         data = jpeg.jpeg_write(width, height, components, blocks, quants, scans, frame=frame, **options)
         meant = jpeg.sent_blocks(geometry, blocks, scans)
         read = jpeg.jpeg_read(data)
-        assert read["blocks"] == meant, name
+        assert read["blocks"] == meant and read["turn"] == turn, name
         colour = read["colour"]
         write(name + ".jpg", data)
-        _, _, dots = jpeg.shown_dots(geometry, meant, quants_of, colour, width, height)
-        assert jpeg.jpeg_dots(data, width, height) == (width, height, dots), name
+        seen = (height, width) if turn >= 5 else (width, height)
+        _, _, dots = jpeg.shown_dots(geometry, meant, quants_of, colour, seen[0], seen[1], turn)
+        assert jpeg.jpeg_dots(data, seen[0], seen[1]) == (seen[0], seen[1], dots), name
         write(name + ".rgba", dots)
-        lines.append("jpeg %s %d %d %d %d" % (name, width, height, count, frame == 0xC2))
+        lines.append("jpeg %s %d %d %d %d %d" % (name, seen[0], seen[1], count, frame == 0xC2, turn))
         for room_width, room_height in shown_in:
             shown_width, shown_height, dots = jpeg.shown_dots(geometry, meant, quants_of, colour, room_width,
-                                                              room_height)
+                                                              room_height, turn)
             assert jpeg.jpeg_dots(data, room_width, room_height) == (shown_width, shown_height, dots), name
             write("%s-%dx%d.rgba" % (name, room_width, room_height), dots)
             lines.append("jshrunk %s %d %d %d %d" % (name, room_width, room_height, shown_width, shown_height))
@@ -203,6 +208,18 @@ def main():
     made("eight", 8, 8, [(1, 1)] * 3, SEQUENTIAL, shown_in=[(1, 1), (2, 2), (3, 3)])
     made("big", 160, 120, [(2, 2), (1, 1), (1, 1)], with_restart(SEQUENTIAL, 9),
          shown_in=[(64, 64), (100, 30), (20, 15), (160, 119)])
+    # The turn an Exif note gives (CIPA DC-008, 4.6.5.1.6): each of the eight on a photo wider than tall, whole and in
+    # a room that shrinks it; one in a note whose bytes come highest first; and notes that give no turn.
+    for turn in range(1, 9):
+        made("turn%d" % turn, 37, 21, [(2, 2), (1, 1), (1, 1)], SEQUENTIAL, turn=turn, note=jpeg.exif_note(turn),
+             shown_in=[(10, 12), (25, 6)])
+    made("turn6mm", 37, 21, [(2, 2), (1, 1), (1, 1)], SEQUENTIAL, turn=6, note=jpeg.exif_note(6, b"MM"), shown_in=[(9, 9)])
+    made("turnprog", 77, 45, [(2, 2), (1, 1), (1, 1)], PROGRESSIVE, frame=0xC2, turn=8, note=jpeg.exif_note(8),
+         shown_in=[(30, 30)])
+    made("turn9", 37, 21, [(2, 2), (1, 1), (1, 1)], SEQUENTIAL, turn=1, note=jpeg.exif_note(9))
+    made("turncut", 37, 21, [(2, 2), (1, 1), (1, 1)], SEQUENTIAL, turn=1, note=jpeg.exif_note(6)[:20])
+    made("turnxmp", 37, 21, [(2, 2), (1, 1), (1, 1)], SEQUENTIAL, turn=3, note=b"http://ns.adobe.com/xap/1.0/\x00<x/>",
+         before=[(0xE1, jpeg.exif_note(3))])
 
     # ---------- Photos that are turned down ----------
     def refused(name, data, reason):

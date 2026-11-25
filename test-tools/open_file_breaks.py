@@ -20,7 +20,7 @@ BREAKS = {
                                      "    // A file opened for an earlier line never goes with this one.\n    if false {\n        file_opening_forget();\n    }\n")},
     # --- Which files ---
     # open_file lists every kept file, the PDF among them.
-    "anykind": {"files.rs": swap("        .filter(|file| file.kind == Kind::Csv || pdf_openable(file) || file.kind == Kind::Png)\n",
+    "anykind": {"files.rs": swap("        .filter(|file| file.kind == Kind::Csv || pdf_openable(file) || file.kind.picture())\n",
                                  "        .filter(|_| true)\n")},
     # --- The document made from a file ---
     # The document's note does not say which file it was made from.

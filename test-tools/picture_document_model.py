@@ -13,6 +13,7 @@ The files a document may name are a dict, number -> (kind, data): the kind as a 
 ...). A number below `next_number` that is not in it was removed."""
 import struct
 
+import jpeg_reference
 import png_reference
 import table_model
 import text_document_model as text_model
@@ -92,15 +93,37 @@ def picture_of(file, files, next_number, room_width, room_height, reasons=None):
     if file not in files:
         return "it was removed" if 0 < file < next_number else "no kept file has that number"
     kind, data = files[file]
-    if kind != "png":
+    if kind not in ("png", "jpeg"):
         return "it is %s, not a picture" % KINDS[kind]
     if len(data) > FILE_MOST:
         return "it is larger than the 4 MB I take"
     if reasons and file in reasons:
         return reasons[file]
+    if kind == "jpeg":
+        return photo_of(data, room_width, room_height)
     width, height, rgba = png_reference.png_read(data)
     shown_width, shown_height, dots = png_reference.shrink(width, height, rgba, room_width, room_height)
     return width, height, shown_width, shown_height, dots
+
+
+_photos = {}
+
+
+def photo_of(data, room_width, room_height):
+    """A JPEG photo as the kernel shows it in a room of this size, read by jpeg_reference.py, the second reader, and
+    turned as its Exif note says: (its own width and height as seen, the width and height shown, the dots shown). Each
+    photo is read once, and each room worked out once, since the second reader is slow."""
+    key = (data, room_width, room_height)
+    if key not in _photos:
+        if data not in _photos:
+            _photos[data] = jpeg_reference.jpeg_read(data)
+        frame = _photos[data]
+        geometry = frame["geometry"]
+        shown_width, shown_height, dots = jpeg_reference.shown_dots(geometry, frame["blocks"], frame["quants"], frame["colour"],
+                                                                    room_width, room_height, frame["turn"])
+        seen = (geometry.height, geometry.width) if frame["turn"] >= 5 else (geometry.width, geometry.height)
+        _photos[key] = (seen[0], seen[1], shown_width, shown_height, dots)
+    return _photos[key]
 
 
 # ---------- Pages ----------
@@ -230,8 +253,9 @@ def picture_lines(file, name):
     return "title %s\npicture %d" % (name, file)
 
 
-def opened_row(file, name, width, height, number):
-    return 'Kernel: I opened file %d, "%s", a PNG picture of %d by %d dots, as document %d.' % (file, name, width, height, number)
+def opened_row(file, name, width, height, number, told="a PNG picture"):
+    """The kernel's row for a picture opened: `told` is its kind in words, "a PNG picture" or "a JPEG photo"."""
+    return 'Kernel: I opened file %d, "%s", %s of %d by %d dots, as document %d.' % (file, name, told, width, height, number)
 
 
 def not_opened_row(file, name, why):

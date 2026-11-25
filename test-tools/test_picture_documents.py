@@ -25,6 +25,11 @@ Made-up key, site and pictures only.
             Page Down shows each page.
   broken    damaged pictures put on the disk from outside, each turned down with the reader's reason, the frame and the
             open document as they were; then a good one opens.
+  photos    JPEG photos: a baseline one fetched from the made-up site and kept, by its first bytes, as a JPEG photo;
+            opened in the frame, shrunk to fit; a document of a progressive and a grey photo put on the disk, a PNG
+            picture, and a photo whose Exif note says it was taken turned, turned back, with write_document naming
+            both kinds; F1 and a key, and another look; photos that must be turned down, each with the reader's
+            reason; after a restart, the photo opened again.
 
 Usage: python test_picture_documents.py [scenario ...]        (with none: all)
 Environment: BREAK (a break on purpose, picture_document_breaks.py), BOOS_PORT_BASE, BOOS_PROVIDER ("anthropic": every
@@ -422,12 +427,122 @@ def scenario_broken():
     no_key_in("broken", lines_seen)
 
 
+def scenario_photos():
+    print("photos: a JPEG photo fetched and kept, opened in the frame; photos and a PNG picture in a document; F1, another"
+          " look; damaged photos turned down; after a restart with photos alone kept, the photo opened again")
+    outside = ([("photoprog", "jpeg"), ("photogrey", "jpeg"), ("small", "png"), ("phototurned", "jpeg")]
+               + [(name, "jpeg") for name in picture_files.PHOTOS_REFUSED])
+    first_refused = 5
+    names = [name + (".png" if kind == "png" else ".jpg") for name, kind in outside]
+    disk, _ = answered_disk("pd-photos", [("site 1", SITE)])
+    put_files(disk, [(number + 1, names[number], kind, picture_files.picture(name)) for number, (name, kind) in enumerate(outside)])
+    kept_files = {number + 1: (kind, picture_files.picture(name)) for number, (name, kind) in enumerate(outside)}
+    files = [listed(number + 1, names[number], kind, picture_files.picture(name)) for number, (name, kind) in enumerate(outside)][::-1]
+    photo = picture_files.picture("photo")
+    fetched = len(outside) + 1
+    refused = list(picture_files.PHOTOS_REFUSED)
+    behaviours = (["fetch=https://%s/pictures/photo.jpg" % SITE, "openfile=%d" % fetched, "picdoc=photos:0", "look=2"]
+                  + ["openfile=%d" % (first_refused + place) for place in range(len(refused))])
+    run = start("pd-photos", disk, behaviours)
+    chat = new_chat()
+    give_key(run, chat)
+    meant = Requests(chat)
+
+    # The photo from the made-up site: kept as a JPEG photo, by its first bytes.
+    line = "get the photo"
+    kept = download_cases.kept("photo.jpg", fetched, "jpeg", photo, SITE)
+    got = exchange(run, chat, line, [T, download_cases.fetching("photo.jpg", SITE), kept], timeout=180)
+    meant.line(line, files, [])
+    if kept not in got:
+        # Without the photo kept, every line after this one would only wait in vain: the scenario ends here.
+        run.end()
+        return
+    files = [listed(fetched, "photo.jpg", "jpeg", photo)] + files
+    kept_files[fetched] = ("jpeg", photo)
+
+    # Opened: shown in the frame as document 1, shrunk to fit, and the line ends.
+    line = "show me the photo"
+    lines = model.picture_lines(fetched, "photo.jpg")
+    laid, _, whole = model.written(lines, kept_files, fetched + 1)
+    report("photos the photo is meant whole, shrunk to 554 by 416", whole and laid["pages"][0][0][2:4] == (554, 416),
+           "%r" % (laid["pages"][0][0][:4],))
+    opened = dict(number=1, version=1, name="photo.jpg", lines=lines, kind=KIND_TEXT)
+    exchange(run, chat, line, [T, model.opened_row(fetched, "photo.jpg", 1200, 900, 1, "a JPEG photo"), holds(laid)])
+    ends(run, "photos open")
+    meant.line(line, files, [])
+    run.shot("opened", meant_screen(chat, [opened], 1))
+
+    # A document of photos and a PNG picture: write_document names both kinds, and each is shown at its own size.
+    line = "lay the photos out"
+    written = cases.text("photos", 0)
+    laid, said, whole = model.written(written, kept_files, fetched + 1)
+    report("photos the document is meant whole", whole, said)
+    laidout = document(2, 1, written)
+    exchange(run, chat, line, [T, kept_row(said, 2), holds(laid)])
+    ends(run, "photos document")
+    meant.line(line, files, [opened], opened)
+    run.shot("document", meant_screen(chat, [laidout, opened], 2))
+    # Its other pages, the turned photo among them.
+    for page in range(2, len(laid["pages"]) + 1):
+        turn(run, chat, "pgdn", "document-page-%d" % page, [laidout, opened], 2)
+
+    # F1 and a key: painted again from the dots kept; then another look.
+    run.m.named_key("f1", pause=1)
+    run.m.named_key("backspace", pause=1)
+    run.shot("after-f1", meant_screen(chat, [laidout, opened], 2))
+    line = "make it dark"
+    exchange(run, chat, line, [T, NIGHT])
+    chat.look, chat.look_kept = "Night", "Night"
+    meant.line(line, files, [laidout, opened], laidout)
+    run.shot("night", meant_screen(chat, [laidout, opened], 2))
+
+    # Each damaged photo: turned down with the reader's reason, and back to the model; the frame and the open
+    # document stay as they were.
+    for place, name in enumerate(refused):
+        line = "open %s" % name
+        row = model.not_opened_row(first_refused + place, name + ".jpg", picture_files.PHOTOS_REFUSED[name])
+        got = exchange(run, chat, line, [T, row] + back())
+        meant.line(line, files, [laidout, opened], laidout)
+        meant.again(line, files, [laidout, opened], laidout)
+        if row not in got:
+            # A refusal that did not come leaves the stand-in's answers out of step with the lines: the scenario ends.
+            run.end()
+            return
+    run.shot("refused", meant_screen(chat, [laidout, opened], 2))
+    lines_seen = run.end()
+    meant.check("photos", run)
+    no_key_in("photos", lines_seen)
+
+    # After a restart on the same disk, the PNG picture (file 3) removed from outside, so that photos alone are kept:
+    # open_file and write_document then say their words for photos alone; the photo opened again opens its document,
+    # read from the file kept.
+    put_removed(disk, 3)
+    files = [(number, words) for number, words in files if number != 3]
+    del kept_files[3]
+    again = start("pd-photos-2", disk, ["openfile=%d" % fetched])
+    chat = new_chat(("open %s" % refused[-1]).encode(), kept_look=b"Night")
+    give_key(again, chat)
+    meant = Requests(chat)
+    line = "open the photo again"
+    laid, _, _ = model.written(lines, kept_files, fetched + 1)
+    exchange(again, chat, line, [T, model.reopened_row(opened, fetched, laid), holds(laid)])
+    ends(again, "photos restart open")
+    meant.line(line, files, [laidout, opened])
+    again.shot("reopened", meant_screen(chat, [opened, laidout], 1))
+    lines_seen = again.end()
+    meant.check("photos restart", again)
+    check_notes("photos", disk, {1: (model.note_from_picture(1, "photo.jpg", fetched), 1, lines),
+                                 2: (documents_model.note(1, "Photos", KIND_TEXT), 1, laidout["lines"])})
+    no_key_in("photos restart", lines_seen)
+
+
 SCENARIOS = {
     "fetch": scenario_fetch,
     "reopen": scenario_reopen,
     "kinds": scenario_kinds,
     "layout": scenario_layout,
     "broken": scenario_broken,
+    "photos": scenario_photos,
 }
 
 

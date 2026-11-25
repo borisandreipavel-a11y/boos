@@ -8,7 +8,7 @@ docs/pictures.md ("JPEG") writes down.
 - `jpeg_read` is a second reader, written apart from the crate's: it keeps every coefficient of every block, and it
   reads the test photos again, so that a mistake of the writer shows here before the crate sees the file.
 - `jpeg_dots` turns a photo into dots for a room as the crate does: the size it is read at, the inverse transforms
-  in whole numbers, the colours, and the shrinking.
+  in whole numbers, the colours, the shrinking, and the turn its Exif note gives (`exif_note` writes one).
 
 Every rule follows ITU-T T.81 and JFIF 1.02, as the page says. Nothing here reads a file but those it is given."""
 import math
@@ -192,11 +192,64 @@ def shrink_to(width, height, rgba, to_width, to_height):
     return bytes(out)
 
 
-def shown_dots(geometry, blocks, quants, colour, room_width, room_height):
-    """What the crate shows in a room: read at the smallest n that is still large enough, then shrunk."""
+def shown_dots(geometry, blocks, quants, colour, room_width, room_height, turn=1):
+    """What the crate shows in a room: read at the smallest n that is still large enough, then shrunk, then turned as
+    the Exif note says; a photo turned a quarter is fitted to the room with the room's sides swapped."""
+    if turn >= 5:
+        room_width, room_height = room_height, room_width
     shown, n, _ = read_size(geometry.width, geometry.height, room_width, room_height)
     width, height, dots = render(geometry, blocks, quants, colour, n)
-    return shown[0], shown[1], shrink_to(width, height, dots, shown[0], shown[1])
+    return turned(shown[0], shown[1], shrink_to(width, height, dots, shown[0], shown[1]), turn)
+
+
+# ---------- The turn (CIPA DC-008, Exif 3.1) ----------
+
+def exif_turn(body):
+    """The turn an Exif note (an APP1 segment's body) gives, 1 to 8, or None: "Exif" and two zero bytes, a TIFF head
+    (its byte order, 42, where its 0th IFD begins), and in that IFD the entry of tag 274, type SHORT (3), count 1."""
+    if not body.startswith(b"Exif\x00\x00"):
+        return None
+    tiff = body[6:]
+    order = {b"II": "<", b"MM": ">"}.get(tiff[:2])
+    if order is None:
+        return None
+    try:
+        if struct.unpack(order + "H", tiff[2:4])[0] != 42:
+            return None
+        ifd = struct.unpack(order + "I", tiff[4:8])[0]
+        for number in range(struct.unpack(order + "H", tiff[ifd:ifd + 2])[0]):
+            at = ifd + 2 + 12 * number
+            tag, kind, count = struct.unpack(order + "HHI", tiff[at:at + 8])
+            if tag == 274 and kind == 3 and count == 1:
+                turn = struct.unpack(order + "H", tiff[at + 8:at + 10])[0]
+                return turn if 1 <= turn <= 8 else None
+    except struct.error:
+        return None
+    return None
+
+
+def exif_note(turn, order=b"II"):
+    """An Exif note that gives this turn: a TIFF head in this byte order and a 0th IFD of one entry, Orientation."""
+    sign = "<" if order == b"II" else ">"
+    return (b"Exif\x00\x00" + order + struct.pack(sign + "HI", 42, 8) + struct.pack(sign + "H", 1)
+            + struct.pack(sign + "HHIH", 274, 3, 1, turn) + b"\x00\x00" + struct.pack(sign + "I", 0))
+
+
+def turned(width, height, rgba, turn):
+    """The picture as it is seen (Figure 13): the dot (x, y) seen comes from the stored one given below; a quarter
+    turn swaps the sides. Gives (width, height, dots)."""
+    if turn not in range(2, 9):
+        return width, height, rgba
+    seen_width, seen_height = (height, width) if turn >= 5 else (width, height)
+    out = bytearray()
+    for y in range(seen_height):
+        for x in range(seen_width):
+            from_x, from_y = {2: (width - 1 - x, y), 3: (width - 1 - x, height - 1 - y), 4: (x, height - 1 - y),
+                              5: (y, x), 6: (y, height - 1 - x), 7: (width - 1 - y, height - 1 - x),
+                              8: (width - 1 - y, x)}[turn]
+            at = (from_y * width + from_x) * 4
+            out += rgba[at:at + 4]
+    return seen_width, seen_height, bytes(out)
 
 
 # ---------- Making blocks ----------
@@ -778,6 +831,7 @@ def jpeg_read(data):
     huffman = {}
     interval = 0
     jfif, adobe = False, None
+    turn = None
     frame = None
     while True:
         if at >= len(data) or data[at] != 0xFF:
@@ -839,6 +893,8 @@ def jpeg_read(data):
         elif code == 0xEE and body.startswith(b"Adobe") and len(body) >= 12:
             if frame is None or not frame["scanned"]:
                 adobe = body[11]
+        elif code == 0xE1 and frame is None and turn is None:
+            turn = exif_turn(body)
         elif code == 0xE0 and body.startswith(b"JFIF\x00"):
             if frame is None or not frame["scanned"]:
                 jfif = True
@@ -857,7 +913,7 @@ def jpeg_read(data):
             if count > 1 and any(h_most % h or v_most % v for h, v in factors):
                 raise Refused("sampling ratios that are not whole")
             geometry = Geometry(width, height, factors)
-            frame = dict(progressive=code == 0xC2, ids=ids, tables=tables, geometry=geometry, scanned=False,
+            frame = dict(progressive=code == 0xC2, ids=ids, tables=tables, geometry=geometry, scanned=False, turn=turn or 1,
                          blocks=empty_blocks(geometry), quants=[None] * count, sent=[[None] * 64 for _ in ids])
         elif code == 0xDA:
             if frame is None:
@@ -930,4 +986,5 @@ def jpeg_read(data):
 def jpeg_dots(data, room_width, room_height):
     """What the crate shows of a JPEG file in a room: (width, height, dots)."""
     frame = jpeg_read(data)
-    return shown_dots(frame["geometry"], frame["blocks"], frame["quants"], frame["colour"], room_width, room_height)
+    return shown_dots(frame["geometry"], frame["blocks"], frame["quants"], frame["colour"], room_width, room_height,
+                      frame["turn"])

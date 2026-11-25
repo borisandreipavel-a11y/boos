@@ -24,7 +24,7 @@ use crate::documents::{
 };
 use crate::drawing::{drawing_room, drawing_table, drawing_wanted, writing_room, writing_wanted};
 use crate::files::{
-    download_start, file_is_pdf, file_open_start, file_picture_name, files_listed, files_open_csv, files_open_pdf, files_open_png, files_openable,
+    download_start, file_is_pdf, file_open_start, file_picture_name, files_listed, files_open_csv, files_open_jpeg, files_open_pdf, files_open_png, files_openable,
     files_usable, pdf_open_ask, remove_ask,
 };
 use crate::json::{Step, json_find_number, json_find_text, json_text};
@@ -224,9 +224,10 @@ const TABLE_EXAMPLE: &str = concat!(
 // is written, with the room a page has on this screen, and an example. It is
 // offered only where documents can be kept. It asks for clearly less than
 // the bound on what it is given (8,192 bytes, see `model.rs`), so that the
-// document fits in the answer's tokens with the model's thinking. While a PNG
-// picture is kept (`pictures`), it says how one is shown in a document too.
-fn write_document_tool(rows: usize, signs: u32, pictures: bool) -> String {
+// document fits in the answer's tokens with the model's thinking. While a
+// picture is kept (`pictures`, the kinds kept, in words), it says how one is
+// shown in a document too.
+fn write_document_tool(rows: usize, signs: u32, pictures: Option<&str>) -> String {
     let mut told = format!(
         concat!(
             "Writes a document of text and tables in the frame on the screen, beside the panel of apps, in place of what it shows, ",
@@ -240,8 +241,11 @@ fn write_document_tool(rows: usize, signs: u32, pictures: bool) -> String {
         ),
         rows, signs
     );
-    if pictures {
-        told.push_str(DOCUMENT_PICTURES);
+    if let Some(kinds) = pictures {
+        told.push_str(&format!(
+            " A kept {} is shown with the line picture and the file's number, then | and a caption if wanted; it is shrunk to fit a page, and nothing of it is sent to you.",
+            kinds
+        ));
     }
     format!(
         "{{\"type\":\"function\",\"function\":{{\"name\":\"write_document\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"lines\":{{\"type\":\"string\",\"description\":{}}}}},\"required\":[\"lines\"]}}}}}}",
@@ -250,12 +254,17 @@ fn write_document_tool(rows: usize, signs: u32, pictures: bool) -> String {
     )
 }
 
-// What the tool `write_document` says about pictures while a PNG picture is
-// kept (see "A document of text" in docs/screen.md).
-const DOCUMENT_PICTURES: &str = concat!(
-    " A kept PNG picture is shown with the line picture and the file's number, then | and a caption if wanted; ",
-    "it is shrunk to fit a page, and nothing of it is sent to you."
-);
+// The kinds of picture kept, in the words the tool `write_document` names
+// them with (see "A document of text" in docs/screen.md): with PNG pictures
+// alone its words are as they were before photos were kept.
+fn pictures_kept() -> Option<&'static str> {
+    match (files_open_png(), files_open_jpeg()) {
+        (true, false) => Some("PNG picture"),
+        (false, true) => Some("JPEG photo"),
+        (true, true) => Some("PNG picture or JPEG photo"),
+        (false, false) => None,
+    }
+}
 
 // The example of a document that the tool `write_document` gives the model.
 const DOCUMENT_EXAMPLE: &str = concat!(
@@ -298,7 +307,7 @@ fn open_document_tool(documents: &[(u32, String)]) -> String {
 const DOWNLOAD_FILE: &str = concat!(
     "{\"type\":\"function\",\"function\":{\"name\":\"download_file\",",
     "\"description\":\"Fetches a file from the internet over an encrypted link and keeps it on the disk: ",
-    "a PDF, a Word or Excel file (.docx, .xlsx), plain text, CSV or a PNG picture, of at most 4 MB. ",
+    "a PDF, a Word or Excel file (.docx, .xlsx), plain text, CSV, a PNG picture or a JPEG photo, of at most 4 MB. ",
     "Use it when the person wants a file fetched or downloaded from an address, and give the address exactly as the person gave it. ",
     "The person is asked before a site is contacted for the first time.\",",
     "\"parameters\":{\"type\":\"object\",\"properties\":{\"address\":{\"type\":\"string\",",
@@ -378,6 +387,20 @@ const OPENED_PNG: OpenedKind = OpenedKind {
     ),
 };
 
+// A kept JPEG photo: the same as a PNG picture, in its own words, so that
+// the words with PNG pictures alone stay as they were.
+const OPENED_JPEG: OpenedKind = OpenedKind {
+    alone: concat!(
+        "Opens one of the kept JPEG photos in the frame on the screen, as a document of its own that holds the line picture and the file's number, ",
+        "and the line ends; nothing of the photo is sent to you. A photo opened before opens its document again. ",
+        "The kept JPEG photos, by number: "
+    ),
+    among: concat!(
+        "A JPEG photo opens in the frame on the screen, as a document of its own that holds the line picture and the file's number, ",
+        "and the line ends; nothing of the photo is sent to you. "
+    ),
+};
+
 // The tool that opens a kept file as a document. `files` are the kept files
 // that open, each by number, name, kind and size, the one kept last first,
 // and `kinds` the kinds among them, in turn. What it says names only those
@@ -429,8 +452,8 @@ fn turn_page_tool(pages: usize, shown: usize) -> String {
 // the screen has room for a table, `write_document` with it where documents
 // can be kept, and `open_document` while any document is kept;
 // `download_file` while files can be kept, `remove_file` while any file is
-// kept, and `open_file` while a CSV file or a PNG picture is kept where
-// documents can be kept, or a PDF while Anthropic is the provider;
+// kept, and `open_file` while a CSV file, a PNG picture or a JPEG photo is
+// kept where documents can be kept, or a PDF while Anthropic is the provider;
 // `turn_page` while the panel of apps has more than one page; `forget` while
 // anything that was said is remembered.
 pub fn chat_tools() -> String {
@@ -448,7 +471,7 @@ pub fn chat_tools() -> String {
         tools.push_str(&draw_table_tool(rows, columns, signs, documents_usable()));
         if let (true, Some((rows, signs))) = (documents_usable(), writing_room()) {
             tools.push(',');
-            tools.push_str(&write_document_tool(rows, signs, files_open_png()));
+            tools.push_str(&write_document_tool(rows, signs, pictures_kept()));
         }
         let documents = documents_listed();
         if !documents.is_empty() {
@@ -468,7 +491,7 @@ pub fn chat_tools() -> String {
         if !openable.is_empty() {
             // What it says names each kind of file kept that it opens, in
             // this order.
-            let kinds: Vec<&OpenedKind> = [(files_open_csv(), &OPENED_CSV), (files_open_pdf(), &OPENED_PDF), (files_open_png(), &OPENED_PNG)]
+            let kinds: Vec<&OpenedKind> = [(files_open_csv(), &OPENED_CSV), (files_open_pdf(), &OPENED_PDF), (files_open_png(), &OPENED_PNG), (files_open_jpeg(), &OPENED_JPEG)]
                 .into_iter()
                 .filter_map(|(kept, kind)| kept.then_some(kind))
                 .collect();
@@ -716,12 +739,12 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             Some(number) => return remove_ask(number),
             None => String::from("the model asked to remove a kept file, but I could not read which one."),
         },
-        // A kept PNG picture opened: shown in the frame as a document of its
-        // own, and nothing of it goes to the model, so the line ends; one
-        // that cannot be shown goes back (see `documents.rs`).
+        // A kept PNG picture or JPEG photo opened: shown in the frame as a
+        // document of its own, and nothing of it goes to the model, so the
+        // line ends; one that cannot be shown goes back (see `documents.rs`).
         "open_file" if picture_asked(call).is_some() => {
-            let (number, name) = picture_asked(call).unwrap_or_default();
-            match document_of_picture(number, &name) {
+            let (number, name, told) = picture_asked(call).unwrap_or_default();
+            match document_of_picture(number, &name, told) {
                 Ok(said) => {
                     chat_say(&said);
                     return ToolDone::Ended;
@@ -769,15 +792,16 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
     ToolDone::Back
 }
 
-// The kept PNG picture that `open_file` asks for, by its number and name,
-// where documents can be kept; nothing for any other file.
-fn picture_asked(call: &ToolCall) -> Option<(u32, String)> {
+// The kept picture, a PNG picture or a JPEG photo, that `open_file` asks for,
+// by its number, its name and its kind in words, where documents can be
+// kept; nothing for any other file.
+fn picture_asked(call: &ToolCall) -> Option<(u32, String, &'static str)> {
     if !documents_usable() {
         return None;
     }
     let number = input_number(&call.inputs, "file")?;
-    let name = file_picture_name(number)?;
-    Some((u32::try_from(number).ok()?, name))
+    let (name, told) = file_picture_name(number)?;
+    Some((u32::try_from(number).ok()?, name, told))
 }
 
 // What the model asks the kernel to do with a tool, written so that two

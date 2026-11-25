@@ -1,5 +1,5 @@
-"""Breaks made on purpose in the code that keeps PNG pictures, opens them as documents, lays them out in documents of text
-and paints them, each in the stand-in copy of the project only (through net_copy.build's `more`). BREAKS maps a name to
+"""Breaks made on purpose in the code that keeps PNG pictures and JPEG photos, opens them as documents, lays them out in
+documents of text and paints them, each in the stand-in copy of the project only (through net_copy.build's `more`). BREAKS maps a name to
 {file: change}. CATCH names the scenario of test_picture_documents.py that must catch each break when it runs with BREAK
 set to its name."""
 from apps_kept_breaks import swap
@@ -9,10 +9,9 @@ BREAKS = {
     # A PNG picture is not known by its first bytes, so it is not kept.
     "pngnotkept": {"files.rs": swap("    if bytes.starts_with(&PNG_SIGNATURE) {\n        return Ok(Kind::Png);\n    }\n", "")},
     # A kept picture's note is not read at a start, so the picture is forgotten.
-    "pngforgotten": {"files.rs": swap("[Kind::Pdf, Kind::Word, Kind::Excel, Kind::Text, Kind::Csv, Kind::Png]",
-                                      "[Kind::Pdf, Kind::Word, Kind::Excel, Kind::Text, Kind::Csv]")},
+    "pngforgotten": {"files.rs": swap("Kind::Csv, Kind::Png, Kind::Jpeg]", "Kind::Csv, Kind::Jpeg]")},
     # open_file does not list the PNG pictures, though its words name them.
-    "picturesnotlisted": {"files.rs": swap(" || pdf_openable(file) || file.kind == Kind::Png)\n", " || pdf_openable(file))\n")},
+    "picturesnotlisted": {"files.rs": swap(" || pdf_openable(file) || file.kind.picture())\n", " || pdf_openable(file))\n")},
     # A removed file is said to be a number never kept.
     "removednotsaid": {"files.rs": swap("        let removed = number > 0 && number < u64::from(unsafe { NEXT_FILE });\n",
                                         "        let removed = false;\n")},
@@ -48,10 +47,25 @@ BREAKS = {
     # A picture opened before makes a new document.
     "noreopen": {"documents.rs": swap("    if let Some(reopened) = document_reopen(file) {\n        return reopened;\n    }\n", "")},
     # Opening a picture goes back to the model.
-    "picturegoesback": {"tools.rs": swap("            match document_of_picture(number, &name) {\n                Ok(said) => {\n                    chat_say(&said);\n                    return ToolDone::Ended;\n",
-                                         "            match document_of_picture(number, &name) {\n                Ok(said) => {\n                    chat_say(&said);\n                    return ToolDone::Back;\n")},
+    "picturegoesback": {"tools.rs": swap("            match document_of_picture(number, &name, told) {\n                Ok(said) => {\n                    chat_say(&said);\n                    return ToolDone::Ended;\n",
+                                         "            match document_of_picture(number, &name, told) {\n                Ok(said) => {\n                    chat_say(&said);\n                    return ToolDone::Back;\n")},
     # write_document does not say how a picture is shown.
-    "nottold": {"tools.rs": swap("    if pictures {\n        told.push_str(DOCUMENT_PICTURES);\n    }\n", "")},
+    "nottold": {"tools.rs": swap("    if let Some(kinds) = pictures {\n", "    if let Some(kinds) = pictures.filter(|_| false) {\n")},
+    # --- JPEG photos ---
+    # A JPEG photo is not known by its first bytes, so it is not kept.
+    "jpegnotkept": {"files.rs": swap("    if bytes.starts_with(&JPEG_START) {\n        return Ok(Kind::Jpeg);\n    }\n", "")},
+    # A kept photo's note is not read at a start, so the photo is forgotten.
+    "jpegforgotten": {"files.rs": swap("Kind::Csv, Kind::Png, Kind::Jpeg]", "Kind::Csv, Kind::Png]")},
+    # open_file lists the PNG pictures only.
+    "photosnotlisted": {"files.rs": swap(" || pdf_openable(file) || file.kind.picture())\n", " || pdf_openable(file) || file.kind == Kind::Png)\n")},
+    # A photo is read as a PNG picture.
+    "jpegaspng": {"files.rs": swap("    if kind == Kind::Jpeg {\n        // Its size as it is seen", "    if false {\n        // Its size as it is seen")},
+    # More dots are taken than the notes say.
+    "photolimitslarger": {"files.rs": swap("JpegLimits { dots_most: 100_000_000,", "JpegLimits { dots_most: 200_000_000,")},
+    # A progressive photo keeps as many blocks as it has.
+    "photoheldlarger": {"files.rs": swap("held_most: 16 * 1024 * 1024 }", "held_most: 64 * 1024 * 1024 }")},
+    # open_file's words say a photo is a PNG picture.
+    "photowords": {"tools.rs": swap('"Opens one of the kept JPEG photos in the frame on the screen,', '"Opens one of the kept PNG pictures in the frame on the screen,')},
 }
 
 CATCH = {
@@ -73,4 +87,11 @@ CATCH = {
     "noreopen": "reopen",
     "picturegoesback": "fetch",
     "nottold": "fetch",
+    "jpegnotkept": "photos",
+    "jpegforgotten": "photos",
+    "photosnotlisted": "photos",
+    "jpegaspng": "photos",
+    "photolimitslarger": "photos",
+    "photoheldlarger": "photos",
+    "photowords": "photos",
 }
