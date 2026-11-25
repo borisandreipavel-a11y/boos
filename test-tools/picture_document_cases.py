@@ -30,6 +30,13 @@ TEXTS = {
                "picture 4 | One too many\n"
                "picture three | a line without a number\n"
                "text The end."),
+    # Photos: the progressive and the grey one put on the disk (files 1 and 2), a PNG picture among them (file 3), and
+    # a photo taken turned (file 4).
+    "photos": ("title Photos\n"
+               "picture 1 | A progressive photo, in ten scans\n"
+               "picture 2 | A grey one\n"
+               "picture 3 | And a PNG picture among them\n"
+               "picture 4 | One taken turned, turned back"),
 }
 
 

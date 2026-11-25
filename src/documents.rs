@@ -543,7 +543,8 @@ pub fn document_reopen(file: u32) -> Option<Result<String, String>> {
     }))
 }
 
-// The tool `open_file` for a kept PNG picture: a picture opened before opens
+// The tool `open_file` for a kept picture, a PNG picture or a JPEG photo
+// (`told`, its kind in words): a picture opened before opens
 // the newest document made from it, as any file does (`document_reopen`).
 // Otherwise the picture is shown in the frame as a new document of text of
 // its own, its title the file's name and its one block the line `picture`
@@ -552,7 +553,7 @@ pub fn document_reopen(file: u32) -> Option<Result<String, String>> {
 // model. Gives back what the kernel says, or, when the picture cannot be
 // shown, why: then nothing is kept, and the frame and the open document stay
 // as they were.
-pub fn document_of_picture(file: u32, name: &str) -> Result<String, String> {
+pub fn document_of_picture(file: u32, name: &str, told: &str) -> Result<String, String> {
     if let Some(reopened) = document_reopen(file) {
         return reopened;
     }
@@ -567,7 +568,7 @@ pub fn document_of_picture(file: u32, name: &str) -> Result<String, String> {
     }
     let written = writing_put(laid);
     let size = match written.pictures.first() {
-        Some((_, width, height)) => format!(", a PNG picture of {} by {} dots", width, height),
+        Some((_, width, height)) => format!(", {} of {} by {} dots", told, width, height),
         None => String::new(),
     };
     let said = match version_keep(Kind::Text, None, &name_cleaned(name.as_bytes()), &lines, Some(file)) {

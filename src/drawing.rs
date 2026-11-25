@@ -9,8 +9,8 @@
 //! the frame. Where documents can be kept, the description itself is kept on
 //! the disk too and drawn again from there (see `documents.rs`). A document of
 //! text, laid out in pages in the same frame, is drawn here too, with the kept
-//! PNG pictures it names. Only the startup code and the main loop may call
-//! these functions.
+//! pictures it names, PNG pictures and JPEG photos. Only the startup code and
+//! the main loop may call these functions.
 //! Notes: `docs/screen.md` ("The table", "A document of text", "Documents"),
 //! `docs/tools.md` (`draw_table`, `write_document`) and `docs/pictures.md`.
 
