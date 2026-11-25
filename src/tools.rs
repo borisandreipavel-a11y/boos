@@ -20,9 +20,10 @@ use crate::apps_kept::{REQUEST_MOST, app_kept, apps_listed, apps_page_turn, apps
 use crate::chat::{chat_next_ask_last, chat_remember, chat_say};
 use crate::conversation::{conversation_forget, conversation_remembers};
 use crate::documents::{
-    document_draw, document_of_picture, document_open, document_reopen, document_written, documents_listed, documents_usable, documents_wanted,
+    document_charted, document_draw, document_of_picture, document_open, document_reopen, document_written, documents_listed, documents_usable,
+    documents_wanted,
 };
-use crate::drawing::{drawing_room, drawing_table, drawing_wanted, writing_room, writing_wanted};
+use crate::drawing::{charting_room, charting_wanted, drawing_room, drawing_table, drawing_wanted, writing_room, writing_wanted};
 use crate::files::{
     download_start, file_is_pdf, file_open_start, file_picture_name, files_listed, files_open_csv, files_open_jpeg, files_open_pdf, files_open_png, files_openable,
     files_usable, pdf_open_ask, remove_ask,
@@ -277,6 +278,43 @@ const DOCUMENT_EXAMPLE: &str = concat!(
     "row Diameter | 3,474 km"
 );
 
+// The tool that draws a bar chart in the frame and keeps it (see "A bar
+// chart" in docs/screen.md, and `documents.rs`): how it is written, with the
+// room this screen has for bars, and an example. It is offered only where
+// documents can be kept. A number takes no unit, which the model is told,
+// since a model is apt to write one.
+fn draw_chart_tool(bars: usize, signs: usize) -> String {
+    let told = format!(
+        concat!(
+            "Draws a bar chart in the frame on the screen, beside the panel of apps, in place of what it shows, ",
+            "and keeps it on the disk as a document, named by its title. Use it when the person wants numbers shown as a chart. ",
+            "The chart is written as lines, one thing to a line, each beginning with the word that says what it is: ",
+            "title and the chart's name; colours bars and a colour as # and six hex digits, picked to fit the wish; ",
+            "then bar and a bar's label and its number, parted by |, one line for each bar. ",
+            "A number is plain, with no unit: a sign, digits, commas and a point; put the unit in the title. ",
+            "Begin a new chart with the line document 0; to change a kept document, write it whole again, beginning with document and its number. ",
+            "This screen has room for {} bars, with labels of {} signs; bars that do not fit are left out."
+        ),
+        bars, signs
+    );
+    format!(
+        "{{\"type\":\"function\",\"function\":{{\"name\":\"draw_chart\",\"description\":{},\"parameters\":{{\"type\":\"object\",\"properties\":{{\"chart\":{{\"type\":\"string\",\"description\":{}}}}},\"required\":[\"chart\"]}}}}}}",
+        json_text(&told),
+        json_text(CHART_EXAMPLE)
+    )
+}
+
+// The example of a chart that the tool `draw_chart` gives the model.
+const CHART_EXAMPLE: &str = concat!(
+    "The chart, as lines, such as:\n",
+    "document 0\n",
+    "title Moons of the planets\n",
+    "colours bars #2e7d32\n",
+    "bar Earth | 1\n",
+    "bar Mars | 2\n",
+    "bar Jupiter | 95"
+);
+
 // The tool that opens a kept document in the frame (see `documents.rs`), with
 // the kept documents by number and name, the one used last first. It is
 // offered while any document is kept where documents can be kept.
@@ -472,6 +510,10 @@ pub fn chat_tools() -> String {
         if let (true, Some((rows, signs))) = (documents_usable(), writing_room()) {
             tools.push(',');
             tools.push_str(&write_document_tool(rows, signs, pictures_kept()));
+        }
+        if let (true, Some((bars, signs))) = (documents_usable(), charting_room()) {
+            tools.push(',');
+            tools.push_str(&draw_chart_tool(bars, signs));
         }
         let documents = documents_listed();
         if !documents.is_empty() {
@@ -715,6 +757,15 @@ pub fn tool_do(call: &ToolCall) -> ToolDone {
             }
             Err(said) => said,
         },
+        // A chart drawn whole ends the line, as a table does; one with bars
+        // left out, or cut off, goes back.
+        "draw_chart" => match document_charted(&call.inputs, call.cut_off) {
+            Ok((said, whole)) => {
+                chat_say(&said);
+                return if whole { ToolDone::Ended } else { ToolDone::Back };
+            }
+            Err(said) => said,
+        },
         // A kept document opened goes back, so that the model, which sees its
         // lines with the next ask, can change it in the same line, or say
         // what it opened.
@@ -818,6 +869,7 @@ pub fn tool_wanted(call: &ToolCall) -> String {
         "turn_page" => input_number(&call.inputs, "page").map(|number| format!("{}", number)),
         "draw_table" => drawing_wanted(&call.inputs, call.cut_off),
         "write_document" => writing_wanted(&call.inputs, call.cut_off),
+        "draw_chart" => charting_wanted(&call.inputs, call.cut_off),
         "open_document" => input_number(&call.inputs, "document").map(|number| format!("{}", number)),
         "download_file" => input_text(&call.inputs, "address").map(|address| String::from(address.trim())),
         "remove_file" => input_number(&call.inputs, "file").map(|number| format!("{}", number)),

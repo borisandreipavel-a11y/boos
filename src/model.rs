@@ -861,9 +861,10 @@ const SECOND_TOOL: &[Step<'static>] =
 // the model gives the tool. Every tool of this kernel's has a short name and
 // needs a few words at most, but for an app's inputs with their values, which
 // come to about 1,070 bytes at the most the kernel takes (see
-// `app_inputs.rs`), for the table that `draw_table` is given, and for the
-// document of text that `write_document` is given; what is longer is given
-// to the tool as nothing, and a table or a document is cut off at its bound.
+// `app_inputs.rs`), for the table that `draw_table` is given and the chart
+// that `draw_chart` is given (the same bound), and for the document of text
+// that `write_document` is given; what is longer is given to the tool as
+// nothing, and a table, a chart or a document is cut off at its bound.
 // An answer piece by piece keeps what a tool is given up to the largest of
 // them and one byte more, so that any past its bound shows.
 const TOOL_NAME_LONGEST: usize = 64;
@@ -926,7 +927,7 @@ fn chat_reply(provider: Provider, answer: &[u8], whole: bool, key: &[u8]) -> (St
 // reached its limit of tokens (`cut_off`) or broke off.
 fn tool_made(name: &str, mut inputs: Vec<u8>, mut cut_off: bool, key: &[u8]) -> ToolCall {
     let bound = match name {
-        "draw_table" => Some(TABLE_INPUTS_LONGEST),
+        "draw_table" | "draw_chart" => Some(TABLE_INPUTS_LONGEST),
         "write_document" => Some(DOCUMENT_INPUTS_LONGEST),
         _ => None,
     };
@@ -1796,7 +1797,7 @@ fn stream_reply(stream: &Stream, key: &[u8]) -> (String, ChatReply, String) {
     let cut_short = if whole { "" } else { " Its answer did not come whole." };
 
     let sentence = if let Some(broke) = broke {
-        let drawn_anyway = tool.as_ref().is_some_and(|tool| tool.name == "draw_table" || tool.name == "write_document");
+        let drawn_anyway = tool.as_ref().is_some_and(|tool| ["draw_table", "write_document", "draw_chart"].contains(&tool.name.as_str()));
         let undone = if tool.is_some() && !drawn_anyway { ", so I did not do what it asked for" } else { "" };
         format!("{}{}.", broke, undone)
     } else if checked {
