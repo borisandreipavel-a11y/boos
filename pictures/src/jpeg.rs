@@ -12,8 +12,9 @@
 //! first n by n coefficients of each block (`transform.rs`), and then shrunk
 //! the rest of the way (`shrink.rs`). A picture whose first scan holds all
 //! its components is read a row of units at a time, as it comes; any other
-//! keeps its blocks' coefficients until its last scan has come. Notes:
-//! `docs/pictures.md`.
+//! keeps its blocks' coefficients until its last scan has come. A photo
+//! whose Exif note says it was taken turned is turned back, so that it is
+//! seen as it was taken (`turned`). Notes: `docs/pictures.md`.
 //!
 //! The section of T.81 that each step follows is named beside it.
 
@@ -62,16 +63,26 @@ const RATIOS: &str = "its colour components are sampled at ratios that are not w
 const LATE_HEIGHT: &str = "its height comes after its first scan";
 const UNKNOWN_MARKER: &str = "it holds a marker I do not know";
 
-/// What a JPEG's frame says (B.2.2).
+/// What a JPEG's frame says (B.2.2), and its Exif note's turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct JpegHead {
-    /// Its size in dots.
+    /// Its size in dots, as it is stored.
     pub width: u32,
     pub height: u32,
     /// How many colour components it has: 1 (grey) or 3.
     pub components: u8,
     /// Whether it comes in progressive scans.
     pub progressive: bool,
+    /// How it is turned to be seen as it was taken: Exif's orientation, 1
+    /// to 8 (see `turned`); 1, as it is stored, when it has none.
+    pub turn: u8,
+}
+
+impl JpegHead {
+    /// Its size in dots as it is seen: the sides swapped for a quarter turn.
+    pub fn seen(&self) -> (u32, u32) {
+        if self.turn >= 5 { (self.height, self.width) } else { (self.width, self.height) }
+    }
 }
 
 // ---------- Segments ----------
@@ -266,12 +277,13 @@ struct Frame {
 }
 
 impl Frame {
-    fn head(&self) -> JpegHead {
+    fn head(&self, turn: u8) -> JpegHead {
         JpegHead {
             width: self.width,
             height: self.height,
             components: self.components.len() as u8,
             progressive: self.progressive,
+            turn,
         }
     }
 }
@@ -617,15 +629,99 @@ pub fn jpeg_head(file: &[u8]) -> Result<JpegHead, Refusal> {
         return Err(Refusal::NotJpeg);
     }
     let mut at = 2;
+    let mut turn = None;
     loop {
         let (code, after) = marker_at(file, at)?;
         at = match marker_kind(code)? {
-            Marker::Frame(code) => return Ok(frame_of(code, segment_at(file, after)?.0)?.head()),
+            Marker::Frame(code) => return Ok(frame_of(code, segment_at(file, after)?.0)?.head(turn.unwrap_or(1))),
             Marker::Scan | Marker::End => return Err(Refusal::Damaged(NO_FRAME)),
             Marker::Alone => after,
+            Marker::App(1) => {
+                let (body, end) = segment_at(file, after)?;
+                turn = turn.or_else(|| exif_turn(body));
+                end
+            }
             _ => segment_at(file, after)?.1,
         };
     }
+}
+
+// ---------- The turn ----------
+
+/// The turn an Exif note gives (CIPA DC-008, Exif 3.1): an APP1 segment
+/// that begins with "Exif" and two zero bytes (4.7.2) holds a TIFF head, its
+/// byte order ("II", lowest byte first, or "MM", highest first), 42, and
+/// where its 0th IFD begins, counted from the head's first byte; the IFD is
+/// a count of entries, then 12 bytes each: a tag, a type, a count and a
+/// value (4.6.2). The entry of tag 274 (Orientation), of type SHORT and count
+/// 1, holds the turn in the first two bytes of its value (4.6.5.1.6). A
+/// note that is not whole, or a turn other than 1 to 8, gives nothing: the
+/// photo is shown as it is stored.
+fn exif_turn(body: &[u8]) -> Option<u8> {
+    let tiff = body.strip_prefix(b"Exif\x00\x00")?;
+    let big = match tiff.get(..2)? {
+        b"MM" => true,
+        b"II" => false,
+        _ => return None,
+    };
+    let two = |at: usize| -> Option<u16> {
+        let bytes = [*tiff.get(at)?, *tiff.get(at.checked_add(1)?)?];
+        Some(if big { u16::from_be_bytes(bytes) } else { u16::from_le_bytes(bytes) })
+    };
+    let four = |at: usize| -> Option<u32> {
+        let bytes = [*tiff.get(at)?, *tiff.get(at.checked_add(1)?)?, *tiff.get(at.checked_add(2)?)?, *tiff.get(at.checked_add(3)?)?];
+        Some(if big { u32::from_be_bytes(bytes) } else { u32::from_le_bytes(bytes) })
+    };
+    if two(2)? != 42 {
+        return None;
+    }
+    let ifd = usize::try_from(four(4)?).ok()?;
+    let entries = usize::from(two(ifd)?);
+    for number in 0..entries {
+        let entry = ifd.checked_add(2)?.checked_add(number.checked_mul(12)?)?;
+        if two(entry)? == 274 && two(entry.checked_add(2)?)? == 3 && four(entry.checked_add(4)?)? == 1 {
+            let turn = two(entry.checked_add(8)?)?;
+            return u8::try_from(turn).ok().filter(|turn| (1..=8).contains(turn));
+        }
+    }
+    None
+}
+
+/// The picture turned as the Exif note says, so that it is seen as it was
+/// taken (CIPA DC-008, 4.6.5.1.6, Figure 13). A turn of 2 mirrors it left to
+/// right, 3 turns it a half turn, 4 mirrors it top to bottom; 5 to 8 turn
+/// it a quarter, so that its sides swap: 6 a quarter turn clockwise, 8 one
+/// the other way, and 5 and 7 those of 6 and 8 mirrored. The dot (x, y) as
+/// seen comes from the stored picture of W by H dots at: 2 (W - 1 - x, y);
+/// 3 (W - 1 - x, H - 1 - y); 4 (x, H - 1 - y); 5 (y, x); 6 (y, H - 1 - x);
+/// 7 (W - 1 - y, H - 1 - x); 8 (W - 1 - y, x).
+fn turned(picture: Picture, turn: u8) -> Picture {
+    if !(2..=8).contains(&turn) {
+        return picture;
+    }
+    let (width, height) = (picture.width as usize, picture.height as usize);
+    let (seen_width, seen_height) = if turn >= 5 { (height, width) } else { (width, height) };
+    let mut dots = vec![0u8; picture.dots.len()];
+    for (y, row) in dots.chunks_mut(seen_width.max(1) * 4).enumerate() {
+        for (x, dot) in row.chunks_mut(4).enumerate() {
+            let (from_x, from_y) = match turn {
+                2 => (width.saturating_sub(1 + x), y),
+                3 => (width.saturating_sub(1 + x), height.saturating_sub(1 + y)),
+                4 => (x, height.saturating_sub(1 + y)),
+                5 => (y, x),
+                6 => (y, height.saturating_sub(1 + x)),
+                7 => (width.saturating_sub(1 + y), height.saturating_sub(1 + x)),
+                _ => (width.saturating_sub(1 + y), x),
+            };
+            let at = (from_y * width + from_x) * 4;
+            if let Some(from) = picture.dots.get(at..at + 4) {
+                for (to, from) in dot.iter_mut().zip(from) {
+                    *to = *from;
+                }
+            }
+        }
+    }
+    Picture { width: seen_width as u32, height: seen_height as u32, dots }
 }
 
 /// What is known while a picture is read.
@@ -640,6 +736,8 @@ struct Reading<'a> {
     /// Adobe's APP14 segment names, if it has come.
     jfif: bool,
     adobe: Option<u8>,
+    /// The turn the first Exif note before the frame gives, if any.
+    turn: Option<u8>,
     frame: Option<Frame>,
     /// The picture is read at n dots a block side, at the size `read`, and
     /// shown at the size `shown`.
@@ -666,6 +764,7 @@ pub fn jpeg_picture(file: &[u8], room_width: u32, room_height: u32, limits: &Jpe
         interval: 0,
         jfif: false,
         adobe: None,
+        turn: None,
         frame: None,
         n: 8,
         keep: Keep::new(8),
@@ -701,6 +800,10 @@ pub fn jpeg_picture(file: &[u8], room_width: u32, room_height: u32, limits: &Jpe
             // its colour transform (0 none, 1 YCbCr); a shorter one says
             // nothing.
             Marker::App(0) if body.starts_with(b"JFIF\x00") => reading.jfif = true,
+            // The Exif note's turn counts only before the frame, where the
+            // size the photo is read at is chosen; the first note that gives
+            // one counts.
+            Marker::App(1) if reading.frame.is_none() && reading.turn.is_none() => reading.turn = exif_turn(body),
             Marker::App(14) if body.starts_with(b"Adobe") => {
                 if let Some(transform) = body.get(11) {
                     reading.adobe = Some(*transform);
@@ -728,7 +831,10 @@ impl Reading<'_> {
         if self.room.0 == 0 || self.room.1 == 0 {
             return Err(Refusal::NoRoom);
         }
-        self.shown = fitted_size(width, height, self.room.0, self.room.1);
+        // A photo turned a quarter is shown with its sides swapped, so it is
+        // fitted to the room with the room's sides swapped, and turned last.
+        let room = if self.turn.unwrap_or(1) >= 5 { (self.room.1, self.room.0) } else { self.room };
+        self.shown = fitted_size(width, height, room.0, room.1);
         let side = |size: u32, n: usize| (u64::from(size) * n as u64).div_ceil(8) as u32;
         // A picture shown at its whole size is read whole: for a photo of one
         // dot an eighth would be as large, but its dot would be the block's
@@ -862,8 +968,15 @@ impl Reading<'_> {
     }
 
     /// The end marker: every component must have come. Kept blocks are
-    /// turned into dots now, a row of units at a time.
+    /// turned into dots now, a row of units at a time. Then the picture is
+    /// turned as the Exif note says.
     fn finish(self) -> Result<Picture, Refusal> {
+        let turn = self.turn.unwrap_or(1);
+        self.dots().map(|picture| turned(picture, turn))
+    }
+
+    /// The picture's dots, as it is stored.
+    fn dots(self) -> Result<Picture, Refusal> {
         let frame = self.frame.ok_or(Refusal::Damaged(NO_FRAME))?;
         if frame.components.iter().any(|component| component.sent.first().is_none_or(|sent| *sent < 0)) {
             return Err(Refusal::Damaged(MISSING));

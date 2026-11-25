@@ -106,7 +106,7 @@ def answer_get(site, path):
         import picture_files
         data = picture_files.served(path)
         if data is not None:
-            return plain(data, "image/png"), "goodbye"
+            return plain(data, "image/jpeg" if path.endswith(".jpg") else "image/png"), "goodbye"
     return plain(b"<html><body>No such file here</body></html>\n", "text/html", first=b"HTTP/1.1 404 Not Found"), "goodbye"
 
 
@@ -124,7 +124,7 @@ def size_words(length):
     return "%d MB" % (tenths // 10) if tenths % 10 == 0 else "%d.%d MB" % (tenths // 10, tenths % 10)
 
 
-KINDS = {"pdf": "a PDF", "docx": "a Word file", "xlsx": "an Excel file", "txt": "a text", "csv": "a CSV table", "png": "a PNG picture"}
+KINDS = {"pdf": "a PDF", "docx": "a Word file", "xlsx": "an Excel file", "txt": "a text", "csv": "a CSV table", "png": "a PNG picture", "jpeg": "a JPEG photo"}
 
 
 def new_site(name, site):

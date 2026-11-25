@@ -88,7 +88,7 @@ def cargo(title, args, extra_env=None, no_warnings=False):
     passed = done.returncode == 0 and not warned
     print("== %s: %s" % (title, "passed" if passed else "FAILED"), flush=True)
     for line in lines[-25:] if not passed else [l for l in lines if "test result" in l or "held" in l or
-                                                 "cross-checked" in l or "turned down" in l]:
+                                                 "cross-checked" in l or "turned down" in l or "turned-checked" in l]:
         print("   " + line, flush=True)
     if not passed:
         print("FAILED: %s%s" % (title, ", with a warning" if warned and done.returncode == 0 else ""), flush=True)
@@ -232,6 +232,14 @@ def jpeg_cross_check():
         for name in os.listdir(JPEG_CROSS):
             if name.endswith(".bgra"):
                 os.remove(os.path.join(JPEG_CROSS, name))
+    # The sample photos of Exif's eight turns, if they were fetched: turned, each must look like the first.
+    turns = os.path.join(SAMPLES, "exif")
+    if all(os.path.exists(os.path.join(turns, "Landscape_%d.jpg" % n)) for n in range(1, 9)):
+        passed &= cargo("Exif's eight turns", ["test", "--offline", "--release", "--manifest-path", MANIFEST, "--target", HOST,
+                                               "jpeg_turn_samples", "--", "--ignored", "--nocapture"],
+                        extra_env={"PICTURES_JPEG_TURNS": turns})
+    else:
+        print("== Exif's eight turns: the sample photos are not in the work folder, so not checked", flush=True)
     return passed
 
 

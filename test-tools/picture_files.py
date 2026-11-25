@@ -1,14 +1,17 @@
-"""Made-up PNG pictures for the tests of pictures in documents (test_picture_documents.py): the files the stand-in serves
-on the made-up site (download_cases.py hands it every address under /pictures/) and the files the tests put on the
-disk from outside. Each is made here, with Python's own zlib (png_reference.py), the first time it is asked for, so
-that a stand-in that serves none of them does not pay for them. What the kernel is meant to make of each comes from
+"""Made-up PNG pictures and JPEG photos for the tests of pictures in documents (test_picture_documents.py): the files the
+stand-in serves on the made-up site (download_cases.py hands it every address under /pictures/) and the files the tests
+put on the disk from outside. Each is made here, the PNG pictures with Python's own zlib (png_reference.py) and the
+photos with the project's own JPEG writer (jpeg_reference.py), the first time one is asked for, so that a stand-in that
+serves none of them does not pay for them. What the kernel is meant to make of each comes from
 picture_document_model.py; for the damaged ones, the reader's words are the crate's own (docs/pictures.md).
 
     data = picture("harbour")           # the bytes of the file
-    data = served("/pictures/harbour.png")"""
+    data = served("/pictures/harbour.png")
+    data = served("/pictures/photo.jpg")"""
 import struct
 import zlib
 
+import jpeg_reference
 from png_reference import SIGNATURE, part, png_write
 
 _made = {}
@@ -98,20 +101,115 @@ REFUSED = {
 }
 
 
+# ---------- JPEG photos ----------
+
+def _photo(width, height, factors, scans, frame=0xC0, seed=1, turn=None):
+    """A made-up photo from blocks made straight away, without the forward transform, so that it is made fast: each
+    block's DC follows a slope across the photo, and eight of its first AC coefficients come from a fixed sequence of
+    numbers (xorshift32). T.81's example quantization tables (K.1)."""
+    from make_jpeg_cases import CHROMA, LUMA
+    state = [seed]
+
+    def below(n):
+        x = state[0]
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        state[0] = x
+        return x % n
+
+    geometry = jpeg_reference.Geometry(width, height, factors)
+    blocks = []
+    for c, component in enumerate(geometry.components):
+        rows = []
+        for y in range(component["down"]):
+            row = []
+            for x in range(component["across"]):
+                block = [0] * 64
+                block[0] = (x * 5 + y * 3 + c * 30) % 120 - 60
+                for place in (1, 2, 3, 8, 9, 10, 16, 17):
+                    block[place] = below(9) - 4
+                row.append(block)
+            rows.append(row)
+        blocks.append(rows)
+    components = [(c + 1, h, v, min(c, 1), min(c, 1), min(c, 1)) for c, (h, v) in enumerate(factors)]
+    quants = {0: (0, LUMA)}
+    if len(factors) > 1:
+        quants[1] = (0, CHROMA)
+    before = [(0xE1, jpeg_reference.exif_note(turn))] if turn else []
+    return jpeg_reference.jpeg_write(width, height, components, blocks, quants, scans, frame=frame, before=before)
+
+
+def _flat_progressive(width, height):
+    """A progressive colour photo, 4:2:0, with its DC scan only and every block flat grey: one code in its table, a
+    zero bit a block. Small, however large it says it is."""
+    def segment(code, body):
+        return bytes([0xFF, code]) + struct.pack(">H", len(body) + 2) + body
+    out = b"\xff\xd8" + segment(0xDB, b"\x00" + b"\x01" * 64)
+    out += segment(0xC2, struct.pack(">BHHB", 8, height, width, 3) + bytes([1, 0x22, 0, 2, 0x11, 0, 3, 0x11, 0]))
+    out += segment(0xC4, bytes([0, 1] + [0] * 15 + [0]))
+    out += segment(0xDA, bytes([3, 1, 0, 2, 0, 3, 0, 0, 0, 0]))
+    bits = -(-width // 16) * -(-height // 16) * 6
+    out += bytes(bits // 8) + (bytes([0xFF >> (bits % 8)]) if bits % 8 else b"")
+    return out + b"\xff\xd9"
+
+
+def _photos():
+    """The photos: a baseline one to fetch, shrunk to fit a page; a progressive and a grey one shown at their own size;
+    and those that must be turned down."""
+    from make_jpeg_cases import PROGRESSIVE
+    made = {}
+    made["photo"] = _photo(1200, 900, [(2, 2), (1, 1), (1, 1)], [dict(parts=[0, 1, 2], kind="sequential", restart=4)])
+    made["photoprog"] = _photo(400, 260, [(2, 2), (1, 1), (1, 1)], [dict(scan, restart=3) for scan in PROGRESSIVE], frame=0xC2,
+                               seed=2)
+    grey = _photo(300, 200, [(1, 1)], [dict(parts=[0], kind="sequential")], seed=3)
+    made["photogrey"] = grey
+    # Taken turned, as a phone keeps a photo taken upright: stored 300 by 200, its Exif note says turn 6, a quarter
+    # turn clockwise, so it is seen 200 by 300.
+    made["phototurned"] = _photo(300, 200, [(2, 2), (1, 1), (1, 1)], [dict(parts=[0, 1, 2], kind="sequential")], seed=4, turn=6)
+    # Turned down: four components, as CMYK has; cut in the middle; a head that says 10000 by 10001 dots, just over the
+    # kernel's limit of 100 million; a progressive photo of 10000 by 10000 dots, every block flat, whose blocks would
+    # take 23 MB, more than the kernel lets it keep; a restart marker out of turn; and a GIF kept as a JPEG.
+    made["cmyk"] = jpeg_reference.jpeg_write(8, 8, [(c + 1, 1, 1, 0, 0, 0) for c in range(4)], [[[[0] * 64]]] * 4,
+                                             {0: (0, [1] * 64)}, [dict(parts=[0, 1, 2, 3], kind="sequential")])
+    made["photocut"] = grey[:len(grey) // 2]
+    frame = grey.index(b"\xff\xc0")
+    made["photohuge"] = grey[:frame + 5] + struct.pack(">HH", 10001, 10000) + grey[frame + 9:]
+    made["photobig"] = _flat_progressive(10000, 10000)
+    restarted = made["photo"]
+    marker = restarted.index(b"\xff\xd0", restarted.index(b"\xff\xda"))
+    made["photorst"] = restarted[:marker + 1] + b"\xd5" + restarted[marker + 2:]
+    made["notjpeg"] = b"GIF89a" + bytes(range(200))
+    return made
+
+
+# The reader's words for each photo that must be turned down (docs/pictures.md, "What it offers"), to stand after
+# "because".
+PHOTOS_REFUSED = {
+    "cmyk": "it is a kind of JPEG I do not read: its colours are in other than 1 or 3 components, as CMYK's are in 4",
+    "photocut": "the file ends before the picture does",
+    "photohuge": "it is 10000 by 10001 dots, more than I show",
+    "photobig": "it is 10000 by 10000 dots, more than I show",
+    "photorst": "it is damaged: a restart marker is missing or out of turn",
+    "notjpeg": "it does not begin as a JPEG photo does",
+}
+
+
 def picture(name):
-    """The bytes of the made-up picture `name`."""
+    """The bytes of the made-up picture or photo `name`."""
     if not _made:
         _made["harbour"] = _harbour()
         _made.update(_kinds())
+    if name not in _made and "photo" not in _made:
+        _made.update(_photos())
     return _made[name]
 
 
 def served(path):
-    """The picture the made-up site serves at /pictures/<name>.png, or None."""
-    name = path[len("/pictures/"):-len(".png")] if path.startswith("/pictures/") and path.endswith(".png") else ""
-    if not name:
+    """The picture the made-up site serves at /pictures/<name>.png, or the photo at /pictures/<name>.jpg, or None."""
+    if not path.startswith("/pictures/") or not path.endswith((".png", ".jpg")):
         return None
     try:
-        return picture(name)
+        return picture(path[len("/pictures/"):-len(".png")])
     except KeyError:
         return None

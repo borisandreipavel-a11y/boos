@@ -114,7 +114,7 @@ SUITES = [
     # its own, `picture` lines in documents of text, shrunk to fit a page and painted over the look's colour, and
     # pictures that cannot be shown, in the stand-in copy; the main flow with Anthropic's form too.
     dict(name="picture documents", command=["test_picture_documents.py"], split=True, watches=STAND_IN + FILES + DOCUMENTS + PICTURES,
-         seconds=dict(fetch=170, reopen=110, kinds=110, layout=100, broken=150)),
+         seconds=dict(fetch=170, reopen=110, kinds=110, layout=100, broken=150, photos=160)),
     dict(name="picture documents with Anthropic", command=["test_picture_documents.py"], split=["fetch"],
          env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + FILES + DOCUMENTS + PICTURES, seconds=dict(fetch=170)),
     # Bar charts: drawn in the frame from the model's lines, in whole numbers, kept as documents, opened and changed by
@@ -187,7 +187,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
                 "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16, "pdf": 11,
-                "picture documents": 18, "charts": 23}
+                "picture documents": 25, "charts": 23}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -478,6 +478,13 @@ CAUGHT_BY = {
     'break picture documents: nolimit': "pd-layout 'lay some pictures out'",
     'break picture documents: notpainted': 'pd-fetch opened',
     'break picture documents: refusedopened': "pd-broken 'open badcheck'",
+    'break picture documents: jpegnotkept': "pd-photos 'get the photo'",
+    'break picture documents: jpegforgotten': "pd-photos 'lay the photos out'",
+    'break picture documents: photosnotlisted': 'photos request 1',
+    'break picture documents: jpegaspng': "pd-photos 'show me the photo'",
+    'break picture documents: photolimitslarger': "pd-photos 'open photohuge'",
+    'break picture documents: photoheldlarger': "pd-photos 'open photobig'",
+    'break picture documents: photowords': 'photos restart request 1',
     'break charts: unreadnotcounted': "chart-odd 'many bars please'",
     'break charts: commasnotread': "chart-odd 'the coldest days'",
     'break charts: lateritems': "chart-odd 'many bars please'",

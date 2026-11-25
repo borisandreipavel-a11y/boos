@@ -1,65 +1,96 @@
-jpeg seq444 61 37 3 0
+jpeg seq444 61 37 3 0 1
 jshrunk seq444 20 20 20 12
 jshrunk seq444 7 5 7 4
 jshrunk seq444 61 10 16 10
-jpeg seq420 77 45 3 0
+jpeg seq420 77 45 3 0 1
 jshrunk seq420 40 40 40 23
 jshrunk seq420 10 10 10 6
 jshrunk seq420 77 12 21 12
 jshrunk seq420 1 1 1 1
-jpeg seq422 50 33 3 0
+jpeg seq422 50 33 3 0 1
 jshrunk seq422 13 9 13 9
-jpeg seq440 33 50 3 0
+jpeg seq440 33 50 3 0 1
 jshrunk seq440 9 13 9 13
-jpeg seq411 90 21 3 0
+jpeg seq411 90 21 3 0 1
 jshrunk seq411 23 6 23 5
-jpeg seq311 70 20 3 0
-jpeg mixed 45 45 3 0
+jpeg seq311 70 20 3 0 1
+jpeg mixed 45 45 3 0 1
 jshrunk mixed 12 12 12 12
-jpeg odd121 64 64 3 0
+jpeg odd121 64 64 3 0 1
 jshrunk odd121 32 32 32 32
-jpeg grey 50 30 1 0
+jpeg grey 50 30 1 0 1
 jshrunk grey 13 13 13 8
-jpeg grey22 50 30 1 0
-jpeg greyprog 50 30 1 1
+jpeg grey22 50 30 1 0 1
+jpeg greyprog 50 30 1 1 1
 jshrunk greyprog 25 15 25 15
-jpeg multiscan 70 40 3 0
+jpeg multiscan 70 40 3 0 1
 jshrunk multiscan 35 20 35 20
-jpeg multi3 70 40 3 0
-jpeg tables23 40 24 3 0
-jpeg prog420 77 45 3 1
+jpeg multi3 70 40 3 0 1
+jpeg tables23 40 24 3 0 1
+jpeg prog420 77 45 3 1 1
 jshrunk prog420 30 30 30 18
 jshrunk prog420 19 11 19 11
 jshrunk prog420 5 5 5 3
-jpeg prog420r 77 45 3 1
-jpeg prog411r 90 21 3 1
+jpeg prog420r 77 45 3 1 1
+jpeg prog411r 90 21 3 1 1
 jshrunk prog411r 45 11 45 11
-jpeg proglong 64 64 3 1
-jpeg progpart 77 45 3 1
+jpeg proglong 64 64 3 1 1
+jpeg progpart 77 45 3 1 1
 jshrunk progpart 39 23 39 23
-jpeg rgbadobe 40 24 3 0
-jpeg rgbids 40 24 3 0
-jpeg jfifwins 40 24 3 0
-jpeg adobewins 40 24 3 0
-jpeg extras 24 16 3 0
-jpeg extreme 16 16 1 0
-jpeg extreme3 16 8 3 0
-jpeg one 1 1 1 0
-jpeg one420 1 1 3 0
-jpeg nine 9 9 3 1
+jpeg rgbadobe 40 24 3 0 1
+jpeg rgbids 40 24 3 0 1
+jpeg jfifwins 40 24 3 0 1
+jpeg adobewins 40 24 3 0 1
+jpeg extras 24 16 3 0 1
+jpeg extreme 16 16 1 0 1
+jpeg extreme3 16 8 3 0 1
+jpeg one 1 1 1 0 1
+jpeg one420 1 1 3 0 1
+jpeg nine 9 9 3 1 1
 jshrunk nine 4 4 4 4
-jpeg eight 8 8 3 0
+jpeg eight 8 8 3 0 1
 jshrunk eight 1 1 1 1
 jshrunk eight 2 2 2 2
 jshrunk eight 3 3 3 3
-jpeg big 160 120 3 0
+jpeg big 160 120 3 0 1
 jshrunk big 64 64 64 48
 jshrunk big 100 30 40 30
 jshrunk big 20 15 20 15
 jshrunk big 160 119 159 119
-jpeg sound 20 12 3 0
-jpeg soundprog 20 12 3 1
-jpeg soundgrey 20 12 1 0
+jpeg turn1 37 21 3 0 1
+jshrunk turn1 10 12 10 6
+jshrunk turn1 25 6 11 6
+jpeg turn2 37 21 3 0 2
+jshrunk turn2 10 12 10 6
+jshrunk turn2 25 6 11 6
+jpeg turn3 37 21 3 0 3
+jshrunk turn3 10 12 10 6
+jshrunk turn3 25 6 11 6
+jpeg turn4 37 21 3 0 4
+jshrunk turn4 10 12 10 6
+jshrunk turn4 25 6 11 6
+jpeg turn5 21 37 3 0 5
+jshrunk turn5 10 12 7 12
+jshrunk turn5 25 6 3 6
+jpeg turn6 21 37 3 0 6
+jshrunk turn6 10 12 7 12
+jshrunk turn6 25 6 3 6
+jpeg turn7 21 37 3 0 7
+jshrunk turn7 10 12 7 12
+jshrunk turn7 25 6 3 6
+jpeg turn8 21 37 3 0 8
+jshrunk turn8 10 12 7 12
+jshrunk turn8 25 6 3 6
+jpeg turn6mm 21 37 3 0 6
+jshrunk turn6mm 9 9 5 9
+jpeg turnprog 45 77 3 1 8
+jshrunk turnprog 30 30 18 30
+jpeg turn9 37 21 3 0 1
+jpeg turncut 37 21 3 0 1
+jpeg turnxmp 37 21 3 0 3
+jpeg sound 20 12 3 0 1
+jpeg soundprog 20 12 3 1 1
+jpeg soundgrey 20 12 1 0 1
 jrefused arith it is a kind of JPEG I do not read: its data is packed with arithmetic coding
 jrefused lossless it is a kind of JPEG I do not read: it is lossless
 jrefused hier it is a kind of JPEG I do not read: it is hierarchical
@@ -196,55 +227,99 @@ file big-64x64.rgba 332256 12288
 file big-100x30.rgba 344544 4800
 file big-20x15.rgba 349344 1200
 file big-160x119.rgba 350544 75684
-file sound.jpg 426228 420
-file sound.rgba 426648 960
-file soundprog.jpg 427608 653
-file soundprog.rgba 428261 960
-file soundgrey.jpg 429221 269
-file soundgrey.rgba 429490 960
-file arith.jpg 430450 420
-file lossless.jpg 430870 420
-file hier.jpg 431290 420
-file twelve.jpg 431710 420
-file twelvebase.jpg 432130 420
-file height0.jpg 432550 420
-file width0.jpg 432970 420
-file cmyk.jpg 433390 176
-file twocomp.jpg 433566 166
-file ratios.jpg 433732 172
-file dnl.jpg 433904 426
-file unknown.jpg 434330 426
-file notjpeg.jpg 434756 420
-file twoframes.jpg 435176 439
-file noframe.jpg 435615 401
-file twostarts.jpg 436016 422
-file notmarker.jpg 436438 421
-file strayrst.jpg 436859 422
-file factors.jpg 437281 420
-file tableplace.jpg 437701 420
-file samenames.jpg 438121 420
-file framelength.jpg 438541 420
-file quantprecision.jpg 438961 420
-file quantzero.jpg 439381 420
-file noquant.jpg 439801 351
-file notable.jpg 440152 313
-file overfull.jpg 440465 443
-file scansize.jpg 440908 420
-file notinframe.jpg 441328 420
-file scanorder.jpg 441748 420
-file manyblocks.jpg 442168 175
-file twoscans.jpg 442343 212
-file missing.jpg 442555 218
-file acfirst.jpg 442773 191
-file badrefine.jpg 442964 224
-file wrongah.jpg 443188 209
-file resent.jpg 443397 225
-file dcband.jpg 443622 143
-file rstorder.jpg 443765 420
-file rstmissing.jpg 444185 418
-file extradata.jpg 444603 421
-file extradataend.jpg 445024 421
-file rstatend.jpg 445445 422
-file noend.jpg 445867 418
-file climbing.jpg 446285 188
-file eobpast.jpg 446473 186
+file turn1.jpg 426228 565
+file turn1.rgba 426793 3108
+file turn1-10x12.rgba 429901 240
+file turn1-25x6.rgba 430141 264
+file turn2.jpg 430405 569
+file turn2.rgba 430974 3108
+file turn2-10x12.rgba 434082 240
+file turn2-25x6.rgba 434322 264
+file turn3.jpg 434586 562
+file turn3.rgba 435148 3108
+file turn3-10x12.rgba 438256 240
+file turn3-25x6.rgba 438496 264
+file turn4.jpg 438760 561
+file turn4.rgba 439321 3108
+file turn4-10x12.rgba 442429 240
+file turn4-25x6.rgba 442669 264
+file turn5.jpg 442933 559
+file turn5.rgba 443492 3108
+file turn5-10x12.rgba 446600 336
+file turn5-25x6.rgba 446936 72
+file turn6.jpg 447008 561
+file turn6.rgba 447569 3108
+file turn6-10x12.rgba 450677 336
+file turn6-25x6.rgba 451013 72
+file turn7.jpg 451085 570
+file turn7.rgba 451655 3108
+file turn7-10x12.rgba 454763 336
+file turn7-25x6.rgba 455099 72
+file turn8.jpg 455171 565
+file turn8.rgba 455736 3108
+file turn8-10x12.rgba 458844 336
+file turn8-25x6.rgba 459180 72
+file turn6mm.jpg 459252 574
+file turn6mm.rgba 459826 3108
+file turn6mm-9x9.rgba 462934 180
+file turnprog.jpg 463114 1217
+file turnprog.rgba 464331 13860
+file turnprog-30x30.rgba 478191 2160
+file turn9.jpg 480351 572
+file turn9.rgba 480923 3108
+file turncut.jpg 484031 559
+file turncut.rgba 484590 3108
+file turnxmp.jpg 487698 596
+file turnxmp.rgba 488294 3108
+file sound.jpg 491402 415
+file sound.rgba 491817 960
+file soundprog.jpg 492777 652
+file soundprog.rgba 493429 960
+file soundgrey.jpg 494389 265
+file soundgrey.rgba 494654 960
+file arith.jpg 495614 415
+file lossless.jpg 496029 415
+file hier.jpg 496444 415
+file twelve.jpg 496859 415
+file twelvebase.jpg 497274 415
+file height0.jpg 497689 415
+file width0.jpg 498104 415
+file cmyk.jpg 498519 176
+file twocomp.jpg 498695 166
+file ratios.jpg 498861 172
+file dnl.jpg 499033 421
+file unknown.jpg 499454 421
+file notjpeg.jpg 499875 415
+file twoframes.jpg 500290 434
+file noframe.jpg 500724 396
+file twostarts.jpg 501120 417
+file notmarker.jpg 501537 416
+file strayrst.jpg 501953 417
+file factors.jpg 502370 415
+file tableplace.jpg 502785 415
+file samenames.jpg 503200 415
+file framelength.jpg 503615 415
+file quantprecision.jpg 504030 415
+file quantzero.jpg 504445 415
+file noquant.jpg 504860 346
+file notable.jpg 505206 309
+file overfull.jpg 505515 438
+file scansize.jpg 505953 415
+file notinframe.jpg 506368 415
+file scanorder.jpg 506783 415
+file manyblocks.jpg 507198 175
+file twoscans.jpg 507373 212
+file missing.jpg 507585 218
+file acfirst.jpg 507803 191
+file badrefine.jpg 507994 224
+file wrongah.jpg 508218 209
+file resent.jpg 508427 225
+file dcband.jpg 508652 143
+file rstorder.jpg 508795 415
+file rstmissing.jpg 509210 413
+file extradata.jpg 509623 416
+file extradataend.jpg 510039 416
+file rstatend.jpg 510455 417
+file noend.jpg 510872 413
+file climbing.jpg 511285 188
+file eobpast.jpg 511473 186
