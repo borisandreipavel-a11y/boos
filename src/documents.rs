@@ -21,10 +21,9 @@ use alloc::vec::Vec;
 
 use crate::chat::chat_box_place;
 use crate::drawing::{
-    Charted, Drawn, NotDrawn, Written, charting_document, charting_fit, charting_lines_kept, charting_refused, charting_said, charting_show,
-    charting_text, drawing_clear, drawing_document, drawing_fit, drawing_lines_kept, drawing_refused, drawing_room, drawing_said, drawing_show,
-    drawing_text, writing_document, writing_laid, writing_lines_kept, writing_pages, writing_put, writing_refused, writing_said, writing_show,
-    writing_text,
+    Drawn, NotDrawn, Written, drawing_clear, drawing_document, drawing_fit, drawing_lines_kept, drawing_refused, drawing_room, drawing_said,
+    drawing_show, drawing_text, writing_document, writing_laid, writing_lines_kept, writing_pages, writing_put, writing_refused, writing_said,
+    writing_show, writing_text,
 };
 use crate::files::{file_opening_forget, file_opening_number};
 use crate::letters::{LETTER_HEIGHT, LETTER_WIDTH};
@@ -55,7 +54,11 @@ const NUMBER_MOST: u32 = 999_999_999;
 // file (see `files.rs`): the same, with the file's number in four bytes,
 // lowest first, between the version's number and the name. A document made
 // from no file is kept in form 1, as before form 2 existed. The kind is the
-// newest version's: a change written with the other tool changes it.
+// newest version's: a change written with the other tool changes it. Kind 3,
+// a bar chart drawn alone by the tool `draw_chart` before charts stood in
+// documents of text, is read as a document of text: its lines, `title`,
+// `colours bars` and `bar`, read as one that holds a chart. No version of
+// kind 3 is kept any more.
 const NOTE_FORM: u8 = 1;
 const NOTE_FORM_FILE: u8 = 2;
 const KIND_TABLE: u8 = 1;
@@ -69,7 +72,6 @@ const NOTE_HEAD_FILE: usize = 10;
 enum Kind {
     Table,
     Text,
-    Chart,
 }
 
 impl Kind {
@@ -77,37 +79,32 @@ impl Kind {
         match self {
             Kind::Table => KIND_TABLE,
             Kind::Text => KIND_TEXT,
-            Kind::Chart => KIND_CHART,
         }
     }
 
     fn of_byte(byte: u8) -> Option<Kind> {
         match byte {
             KIND_TABLE => Some(Kind::Table),
-            KIND_TEXT => Some(Kind::Text),
-            KIND_CHART => Some(Kind::Chart),
+            KIND_TEXT | KIND_CHART => Some(Kind::Text),
             _ => None,
         }
     }
 }
 
-// What came of drawing a kept document in the frame: a table, a document of
-// text laid out in pages, or a chart.
+// What came of drawing a kept document in the frame: a table, or a document
+// of text laid out in pages.
 enum Opened {
     Table(Drawn),
     Text(Written),
-    Chart(Charted),
 }
 
 impl Opened {
     // What the kernel says behind "I opened ...": rows or columns that did
-    // not fit, for a table; the pages, for a document of text; the bars,
-    // for a chart.
+    // not fit, for a table; the pages, for a document of text.
     fn fit(&self) -> String {
         match self {
             Opened::Table(drawn) => drawing_fit(drawn),
             Opened::Text(written) => writing_pages(written),
-            Opened::Chart(charted) => charting_fit(charted),
         }
     }
 }
@@ -330,15 +327,10 @@ pub fn documents_told() -> String {
             "\n\nThe document open on the screen is {}, a document of text and tables. To change it, write it whole again with write_document, beginning with the line document {}. Its lines now:\n{}",
             named, number, lines
         ),
-        Kind::Chart => format!(
-            "\n\nThe document open on the screen is {}, a bar chart. To change it, write it whole again with draw_chart, beginning with the line document {}. Its lines now:\n{}",
-            named, number, lines
-        ),
     }
 }
 
-// What the model asked for with `draw_table`, `write_document` or
-// `draw_chart`, as
+// What the model asked for with `draw_table` or `write_document`, as
 // `tool_wanted` in `tools.rs` compares it so that nothing is done twice for
 // one line: the text as the kernel reads it, and for a change of a kept
 // document, which document was open when it was asked for. So a change that
@@ -350,7 +342,6 @@ pub fn documents_wanted(tool: &str, text: String) -> String {
     let asked = match tool {
         "draw_table" => drawing_document(&text),
         "write_document" => writing_document(&text),
-        "draw_chart" => charting_document(&text),
         _ => return text,
     };
     match asked {
@@ -378,15 +369,6 @@ pub fn document_written(inputs: &str, cut_off: bool) -> Result<(String, bool), S
     document_made(Kind::Text, inputs, cut_off)
 }
 
-// The tool `draw_chart`: a bar chart. It is offered only where documents can
-// be kept (see `tools.rs`).
-pub fn document_charted(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
-    if !documents_usable() {
-        return Err(String::from("the model asked to draw a chart, but documents cannot be kept on this machine."));
-    }
-    document_made(Kind::Chart, inputs, cut_off)
-}
-
 // A document drawn or written by the model. Reads what the model gave the
 // tool. Lines whose `document` line names a kept document change it, and
 // only the open one: another is opened instead, and the model is asked again
@@ -401,12 +383,10 @@ fn document_made(kind: Kind, inputs: &str, cut_off: bool) -> Result<(String, boo
     let (text, whole) = match kind {
         Kind::Table => drawing_text(inputs, cut_off)?,
         Kind::Text => writing_text(inputs, cut_off)?,
-        Kind::Chart => charting_text(inputs, cut_off)?,
     };
     let asked = match kind {
         Kind::Table => drawing_document(&text),
         Kind::Text => writing_document(&text),
-        Kind::Chart => charting_document(&text),
     };
     let changes = match asked {
         Some(asked) if asked > 0 => match kept_number(asked) {
@@ -423,7 +403,6 @@ fn document_made(kind: Kind, inputs: &str, cut_off: bool) -> Result<(String, boo
             return Err(match kind {
                 Kind::Table => format!("the new table for document {} was cut off, so I left the document as it was.", number),
                 Kind::Text => format!("the new lines for document {} were cut off, so I left the document as it was.", number),
-                Kind::Chart => format!("the new chart for document {} was cut off, so I left the document as it was.", number),
             });
         }
         if open_number() != Some(number) {
@@ -447,12 +426,6 @@ fn document_made(kind: Kind, inputs: &str, cut_off: bool) -> Result<(String, boo
             let written_whole = written.whole();
             (said, written_whole, written.title_written)
         }
-        Kind::Chart => {
-            let charted = charting_show(&text).map_err(|not| charting_refused(not, whole))?;
-            let said = charting_said(&charted, whole);
-            let charted_whole = charted.whole();
-            (said, charted_whole, charted.title_written)
-        }
     };
     if !whole {
         open_put(None);
@@ -464,7 +437,6 @@ fn document_made(kind: Kind, inputs: &str, cut_off: bool) -> Result<(String, boo
     let lines = match kind {
         Kind::Table => drawing_lines_kept(&text),
         Kind::Text => writing_lines_kept(&text),
-        Kind::Chart => charting_lines_kept(&text),
     };
     // A new document drawn for a line that a kept file was opened for is
     // made from that file (see `files.rs`), and its note says so.
@@ -643,11 +615,6 @@ fn open_inner(number: u32) -> Result<Opened, String> {
             Ok(written) => Opened::Text(written),
             Err(NotDrawn::NoRoom) => return Err(no_room()),
             Err(NotDrawn::Empty) => return Err(format!("I could not open {}, because it has nothing in it.", named)),
-        },
-        Kind::Chart => match charting_show(&lines) {
-            Ok(charted) => Opened::Chart(charted),
-            Err(NotDrawn::NoRoom) => return Err(no_room()),
-            Err(NotDrawn::Empty) => return Err(format!("I could not open {}, because it has no bar with a number I could read.", named)),
         },
     };
     open_put(Some(OpenDocument { number, lines }));

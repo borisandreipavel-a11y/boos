@@ -5,11 +5,15 @@ keeps, and the picture of a page in a look. Nothing runs when this file is impor
 out by hand from the notes.
 
 A document as written and laid out is a dict: title (as drawn in the title's row), pages (each a list of what is drawn
-on it, ("row", top, text) for a row of text and ("table", top, widths, head, rows) for a table or a piece of one, `top`
-in dots below the top of the page, `head` None for a table without one), shown (the page shown, counted from 0) and
-columns_left_out (whether a table had more columns than fit)."""
+on it, ("row", top, text) for a row of text, ("table", top, widths, head, rows) for a table or a piece of one, and
+("chart", top, title, colour, bars) for a chart, `top` in dots below the top of the page, `head` None for a table without
+one, `title` None for a chart without one, `colour` the one asked for its bars or None, `bars` the bars drawn, as
+chart_model.py reads them), shown (the page shown, counted from 0) and fit (what was left out: columns, whether a table
+had more columns than fit; bars, whether a chart had more bars than a page holds; unread, how many bars of the charts
+drawn had no number that reads; empty, how many charts had no bar to draw)."""
 import re
 
+import chart_model
 import table_model
 from app_cases import hide
 from look_values import LOOKS
@@ -33,21 +37,27 @@ def room(width, height):
     _, top, _, frame_height = found["place"]
     bottom = top + frame_height - FRAME - table_model.PADDING
     page = bottom - found["table_top"]
-    return dict(found, height=page, rows_of_text=page // TEXT_ROW, signs=found["width"] // SIGN)
+    # A chart takes a row of 28 dots for each bar and one for the scale, under a row of text for its title.
+    return dict(found, height=page, rows_of_text=page // TEXT_ROW, signs=found["width"] // SIGN, bars=max((page - TEXT_ROW - ROW) // ROW, 1))
 
 
 # ---------- The tool ----------
 
-TOLD = ("Writes a document of text and tables in the frame on the screen, beside the panel of apps, in place of what it shows, "
+TOLD = ("Writes a document of text, tables and bar charts in the frame on the screen, beside the panel of apps, in place of what it shows, "
         "and keeps it on the disk as a document, named by its title. "
-        "Use it when the person wants something written down to keep or read: notes, a summary, a guide, with tables where they fit. "
+        "Use it when the person wants something written down to keep or read, or numbers shown as a chart: "
+        "notes, a summary, a guide, with tables and charts where they fit. "
         "The document is written as lines, one thing to a line, each beginning with the word that says what it is: "
         "title and the document's name; text and a paragraph; head and a table's head's cells; then row and a row's cells, one line for each row. "
         "Cells are parted by |, and a new head begins another table. "
+        "A chart is the line chart and its title; then colours bars and a colour as # and six hex digits, picked to fit the wish; "
+        "then bar and a bar's label and its number, parted by |, one line for each bar, at most %d bars. "
+        "A number is plain, with no unit: a sign, digits, commas and a point; put the unit in the chart's title. "
         "Begin a new document with the line document 0; to change a kept document, write it whole again, beginning with document and its number. "
         "Keep it under 6000 signs. The screen shows it a page at a time, %d rows of %d signs, and the person turns the pages.")
 EXAMPLE = ("The document, as lines, such as:\ndocument 0\ntitle The Moon\ntext The Moon is Earth's only natural satellite.\n"
-           "head Fact | Value\nrow Distance | 384,400 km\nrow Diameter | 3,474 km")
+           "head Fact | Value\nrow Distance | 384,400 km\nrow Diameter | 3,474 km\n"
+           "chart Moons of three planets\ncolours bars #2e7d32\nbar Earth | 1\nbar Mars | 2\nbar Jupiter | 95")
 
 
 def tool_meant(width=1280, height=800):
@@ -56,7 +66,7 @@ def tool_meant(width=1280, height=800):
     found = room(width, height)
     if found is None:
         return None
-    return {"type": "function", "function": {"name": "write_document", "description": TOLD % (found["rows_of_text"], found["signs"]),
+    return {"type": "function", "function": {"name": "write_document", "description": TOLD % (found["bars"], found["rows_of_text"], found["signs"]),
                                              "parameters": {"type": "object", "properties": {"lines": {"type": "string", "description": EXAMPLE}},
                                                             "required": ["lines"]}}}
 
@@ -82,13 +92,35 @@ def number_of(rest):
 
 def read(text):
     """The lines read as the notes say: (the number on the `document` line or None, the title or None, the blocks),
-    each block ["text", paragraph] or ["table", head or None, rows]. `document` and `title` count only before the first
-    block, the later of two; any other line is skipped."""
-    number, title, blocks = None, None, []
+    each block ["text", paragraph], ["table", head or None, rows] or ["chart", title or None, colour or None, bars,
+    how many bars had no number that reads]. `document` and `title` count only before the first block, the later of
+    two; a `bar` with no chart begun since the last other block begins one without a title; a colour for bars counts
+    for the chart begun last while it has no `bar` line yet, else for the next chart begun; any other line is
+    skipped."""
+    number, title, blocks, held = None, None, [], None
     for line in text.split("\n"):
         word, rest = line_parts(line)
         if word == "text":
             blocks.append(["text", rest])
+        elif word == "chart":
+            blocks.append(["chart", rest or None, held, [], 0])
+            held = None
+        elif word == "bar":
+            if not blocks or blocks[-1][0] != "chart":
+                blocks.append(["chart", None, held, [], 0])
+                held = None
+            bar = chart_model.bar_of(rest)
+            if bar is None:
+                blocks[-1][4] += 1
+            else:
+                blocks[-1][3].append(bar)
+        elif word in ("colours", "colors"):
+            colour = chart_model.bars_colour(rest)
+            if colour is not None:
+                if blocks and blocks[-1][0] == "chart" and not blocks[-1][3] and not blocks[-1][4]:
+                    blocks[-1][2] = colour
+                else:
+                    held = colour
         elif word == "head":
             blocks.append(["table", table_model.cells(rest), []])
         elif word == "row":
@@ -139,19 +171,37 @@ def rows_of(paragraph, across):
 # ---------- Pages ----------
 
 def laid_out(blocks, found_room):
-    """The blocks laid out in pages: (pages, whether a table had more columns than fit)."""
+    """The blocks laid out in pages: (pages, fit), fit as the document dict has it."""
     height, across = found_room["height"], found_room["signs"]
     pages, used, left_out = [[]], 0, False
+    fit = dict(columns=False, bars=False, unread=0, empty=0)
 
     def next_page():
         pages.append([])
         return 0
 
     for place, block in enumerate(blocks):
+        # A chart with no bar to draw is not drawn, and takes no room.
+        if block[0] == "chart" and not block[3]:
+            fit["empty"] += 1
+            continue
         # One empty row between two blocks when more than its 20 dots are left below the block before; else the next
         # block begins on the next page. None at the top of a page.
         if place > 0 and used > 0:
             used = used + TEXT_ROW if height - used > TEXT_ROW else next_page()
+        if block[0] == "chart":
+            # Its title's row, a row for each bar, the scale's row; as many bars as a whole page holds; never split.
+            _, title, colour, bars, unread = block
+            title_height = TEXT_ROW if title is not None else 0
+            take = min(len(bars), max((height - title_height - ROW) // ROW, 1))
+            fit["bars"] = fit["bars"] or len(bars) > take
+            fit["unread"] += unread
+            chart_height = title_height + (take + 1) * ROW
+            if used > 0 and used + chart_height > height:
+                used = next_page()
+            pages[-1].append(("chart", used, table_model.shown(title, across) if title is not None else None, colour, bars[:take]))
+            used += chart_height
+            continue
         if block[0] == "text":
             for row in rows_of(block[1], across):
                 if used + TEXT_ROW > height:
@@ -191,7 +241,8 @@ def laid_out(blocks, found_room):
             if start >= len(rows):
                 break
             used = next_page()
-    return pages, left_out
+    fit["columns"] = left_out
+    return pages, fit
 
 
 def page_mark(shown, count):
@@ -214,13 +265,33 @@ def cut_change_row(number):
     return "Kernel: the new lines for document %d were cut off, so I left the document as it was." % number
 
 
+def fit_said(fit):
+    """What of a document did not fit, as the kernel says it behind what it wrote or opened: columns, bars past what
+    a page holds, bars of the charts drawn without a number, and charts with no bar to draw."""
+    said = ""
+    if fit["columns"]:
+        said += "; a table had more columns than fit, and only its first %d were drawn" % COLUMNS_MOST
+    if fit["bars"]:
+        said += "; a chart had more bars than a page holds, and the rest were left out"
+    if fit["unread"]:
+        said += "; %s no number I could read and %s left out" % (counted(fit["unread"], "bar had", "bars had"), "was" if fit["unread"] == 1 else "were")
+    if fit["empty"]:
+        charts = "a chart had" if fit["empty"] == 1 else "%d charts had" % fit["empty"]
+        said += "; %s no bar with a number I could read and %s left out" % (charts, "was" if fit["empty"] == 1 else "were")
+    return said
+
+
+def whole_fit(fit):
+    """Whether nothing of a document was left out."""
+    return not fit["columns"] and not fit["bars"] and not fit["unread"] and not fit["empty"]
+
+
 def said_of(document, whole=True):
     """What the kernel says about a document it wrote: its title as drawn and its pages, what did not fit, and
     whether it was cut off."""
     pages = counted(len(document["pages"]), "page", "pages")
     said = ('I wrote the document "%s", %s' % (document["title"], pages)) if document["title"] else "I wrote a document of %s" % pages
-    if document["columns_left_out"]:
-        said += "; a table had more columns than fit, and only its first %d were drawn" % COLUMNS_MOST
+    said += fit_said(document["fit"])
     if not whole:
         said += "; it was cut off, so I wrote only the lines that came whole"
     return "Kernel: " + said + "."
@@ -228,10 +299,7 @@ def said_of(document, whole=True):
 
 def opened_fit(document):
     """What stands behind "I opened document 1, ..." for a document of text: its pages, and what did not fit."""
-    fit = ", " + counted(len(document["pages"]), "page", "pages")
-    if document["columns_left_out"]:
-        fit += "; a table had more columns than fit, and only its first %d were drawn" % COLUMNS_MOST
-    return fit
+    return ", " + counted(len(document["pages"]), "page", "pages") + fit_said(document["fit"])
 
 
 def written(text, whole=True, width=1280, height=800, key=""):
@@ -248,12 +316,12 @@ def written(text, whole=True, width=1280, height=800, key=""):
     _, title, blocks = read(text)
     if not blocks:
         return None, NOTHING if whole else CUT_EARLY, False
-    pages, left_out = laid_out(blocks, found_room)
+    pages, fit = laid_out(blocks, found_room)
     # The title is cut to leave room for the last page's mark and one sign more, when there is more than one page.
     mark_room = len(page_mark(len(pages) - 1, len(pages))) + 1 if len(pages) > 1 else 0
     drawn = table_model.shown(title, found_room["signs"] - mark_room) if title is not None else ""
-    document = dict(title=drawn, pages=pages, shown=0, columns_left_out=left_out)
-    return document, said_of(document, whole), whole and not left_out
+    document = dict(title=drawn, pages=pages, shown=0, fit=fit)
+    return document, said_of(document, whole), whole and whole_fit(fit)
 
 
 def turned(document, forward):
@@ -266,11 +334,11 @@ def turned(document, forward):
 
 def lines_kept(text):
     """The lines a document of text keeps: every line as the model wrote it, but the `document` lines before the
-    first paragraph or table."""
+    first paragraph, table or chart."""
     kept, begun = [], False
     for line in text.split("\n"):
         word, _ = line_parts(line)
-        begun = begun or word in ("text", "head", "row")
+        begun = begun or word in ("text", "head", "row", "chart", "bar")
         if not begun and word == "document":
             continue
         kept.append(line)
@@ -319,6 +387,13 @@ def paint(picture, document, look="Blue"):
     for item in document["pages"][document["shown"]]:
         if item[0] == "row":
             picture.text(found["left"], found["table_top"] + item[1], item[2], SIZE, colours["panel_text"])
+        elif item[0] == "chart":
+            _, at, title, colour, bars = item
+            top = found["table_top"] + at
+            if title is not None:
+                picture.text(found["left"], top, title, SIZE, colours["panel_text"])
+                top += TEXT_ROW
+            chart_model.paint(picture, found["left"], top, found["width"], colour, bars, look)
         else:
             _, at, widths, head, rows = item
             grid(picture, found["left"], found["table_top"] + at, widths, head, rows, colours)
@@ -357,7 +432,7 @@ assert name_of(_TEXT) == "second" and name_of("text a") == ""
 
 
 def _tops(text):
-    """Where each page's rows and tables stand: [[(kind, top, rows), ...] for each page]."""
+    """Where each page's rows, tables and charts stand: [[(kind, top, rows or bars), ...] for each page]."""
     pages, _ = laid_out(read(text)[2], _ROOM)
     return [[(item[0], item[1], 1 if item[0] == "row" else len(item[4])) for item in page] for page in pages]
 
@@ -397,3 +472,37 @@ _LONG, _SAID, _ = written("title " + "T" * 60 + "\n" + "\n".join(["text"] * 125)
 assert len(_LONG["pages"]) == 12 and _LONG["title"] == "T" * 32 and _SAID.startswith('Kernel: I wrote the document "' + "T" * 32 + '", 12 pages')
 assert written("title x")[1] == NOTHING and written("title x\ntext a", whole=False)[1] == CUT_EARLY
 assert written("text a\ntext b", whole=False)[1] == "Kernel: I wrote a document of 1 page; it was cut off, so I wrote only the lines that came whole."
+
+# Charts. A chart under its title on a page of 426 dots: 20 + (13 + 1) * 28 = 412, so 13 bars; without a title, (14 + 1)
+# * 28 = 420, so 14. Bars past those are left out, and said.
+assert _ROOM["bars"] == 13
+_BARS = "\n".join("bar n%d | %d" % (n, n) for n in range(1, 17))
+assert _tops("chart Many\n" + _BARS) == [[("chart", 0, 13)]] and _tops(_BARS) == [[("chart", 0, 14)]]
+_MANY, _SAID, _WHOLE = written("title T\nchart Many\n" + _BARS + "\nbar bad | x")
+assert not _WHOLE and _SAID == ('Kernel: I wrote the document "T", 1 page; a chart had more bars than a page holds, and the rest '
+                                "were left out; 1 bar had no number I could read and was left out.")
+# A chart never splits: behind a paragraph of 2 rows (40 dots, the empty row, 60) a chart of 13 bars under a title (412)
+# goes to the next page; one of 12 (384: 444 > 426) too; one of 11 (356: 416) stays.
+assert _tops(_paragraph(2) + "\nchart C\n" + "\n".join(_BARS.split("\n")[:13]))[1] == [("chart", 0, 13)]
+assert _tops(_paragraph(2) + "\nchart C\n" + "\n".join(_BARS.split("\n")[:12]))[1] == [("chart", 0, 12)]
+assert _tops(_paragraph(2) + "\nchart C\n" + "\n".join(_BARS.split("\n")[:11])) == [[("row", 0, 1), ("row", 20, 1), ("chart", 60, 11)]]
+# A bar after a paragraph begins a chart without a title; a colour given after a chart's bars waits for the next chart;
+# a chart with no bar that reads is left out, and takes no room; its bars are not counted again.
+_LINES = "\n".join(["title Colours", "colours bars #ff0000", "bar a | 1", "colours bars #00ff00", "text p", "bar b | 2",
+                    "chart Empty", "bar c | x", "text q"])
+_BLOCKS = read(_LINES)[2]
+assert [block[0] for block in _BLOCKS] == ["chart", "text", "chart", "chart", "text"]
+assert (_BLOCKS[0][1], _BLOCKS[0][2], _BLOCKS[2][1], _BLOCKS[2][2]) == (None, (255, 0, 0), None, (0, 255, 0))
+assert _BLOCKS[3][1:] == ["Empty", None, [], 1]
+_DOC, _SAID, _WHOLE = written(_LINES)
+assert [item[0] for item in _DOC["pages"][0]] == ["chart", "row", "chart", "row"] and not _WHOLE
+assert _SAID == 'Kernel: I wrote the document "Colours", 1 page; a chart had no bar with a number I could read and was left out.'
+# A colour right behind a chart's line counts for it; `document` and `title` lines after a chart's line do not count, and a
+# `document` line there is kept with the lines.
+_LINES = "document 4\nchart C\ncolours bars #0000ff\ntitle Late\ndocument 9\nbar a | 1"
+assert read(_LINES)[:2] == (4, None) and read(_LINES)[2][0][2] == (0, 0, 255) and len(read(_LINES)[2]) == 1
+assert lines_kept(_LINES) == "chart C\ncolours bars #0000ff\ntitle Late\ndocument 9\nbar a | 1"
+# A chart kept alone before charts stood in documents reads as a document of its title holding one chart without one.
+_OLD = "title Moons\ncolours bars #2e7d32\nbar Earth | 1\nbar Mars | 2"
+assert read(_OLD)[1] == "Moons" and read(_OLD)[2] == [["chart", None, (0x2E, 0x7D, 0x32), [chart_model.bar_of("Earth | 1"), chart_model.bar_of("Mars | 2")], 0]]
+assert written(_OLD)[1] == 'Kernel: I wrote the document "Moons", 1 page.'

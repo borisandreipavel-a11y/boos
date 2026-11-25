@@ -117,12 +117,13 @@ SUITES = [
          seconds=dict(fetch=170, reopen=110, kinds=110, layout=100, broken=150, photos=160)),
     dict(name="picture documents with Anthropic", command=["test_picture_documents.py"], split=["fetch"],
          env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + FILES + DOCUMENTS + PICTURES, seconds=dict(fetch=170)),
-    # Bar charts: drawn in the frame from the model's lines, in whole numbers, kept as documents, opened and changed by
-    # a wish, in the stand-in copy; the main flow and the cut-off ones with Anthropic's form too.
+    # Bar charts in documents of text: written among paragraphs and tables, laid out on pages in whole numbers, kept,
+    # opened and changed by a wish, and a chart kept alone before them read as a document, in the stand-in copy; the main
+    # flow and the cut-off ones with Anthropic's form too.
     dict(name="chart documents", command=["test_chart_documents.py"], split=True, watches=STAND_IN + DOCUMENTS,
-         seconds=dict(draw=200, odd=130, cut=160, broken=80, nodocs=45, small=45)),
-    dict(name="chart documents with Anthropic", command=["test_chart_documents.py"], split=["draw", "cut"],
-         env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + DOCUMENTS, seconds=dict(draw=200, cut=160)),
+         seconds=dict(guide=200, odd=150, cut=120, old=90)),
+    dict(name="chart documents with Anthropic", command=["test_chart_documents.py"], split=["guide", "cut"],
+         env={"BOOS_PROVIDER": "anthropic"}, watches=STAND_IN + DOCUMENTS, seconds=dict(guide=200, cut=120)),
     # Anthropic as a second provider: the question for the provider, each provider's key, and Anthropic's form, in the
     # stand-in copy, whose stand-in answers Anthropic's form too (anthropic_cases.py).
     dict(name="anthropic", command=["test_anthropic.py"], split=True, watches=STAND_IN + SECRET,
@@ -187,7 +188,7 @@ WORDS = [".md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE", ".gitignore", ".gita
 # The lists of breaks on purpose, and how many each must hold, so that a list that loses breaks is noticed.
 BREAK_COUNTS = {"apps": 17, "try": 10, "key": 25, "look": 23, "model": 17, "kept": 17, "reset": 8, "lines": 18, "tools": 50,
                 "intel": 10, "downloads": 10, "documents": 11, "open file": 8, "anthropic": 15, "text documents": 16, "pdf": 11,
-                "picture documents": 25, "charts": 23}
+                "picture documents": 25, "charts": 24}
 
 # Breaks on purpose known not to be caught, from any list, each with the reason (docs/testing.md tells more). The runner
 # still makes and runs them, and counts them as missed, as meant. The key's and the model's lists name their own
@@ -485,27 +486,28 @@ CAUGHT_BY = {
     'break picture documents: photolimitslarger': "pd-photos 'open photohuge'",
     'break picture documents: photoheldlarger': "pd-photos 'open photobig'",
     'break picture documents: photowords': 'photos restart request 1',
-    'break charts: unreadnotcounted': "chart-odd 'many bars please'",
-    'break charts: commasnotread': "chart-odd 'the coldest days'",
-    'break charts: lateritems': "chart-odd 'many bars please'",
-    'break charts: barsnotcut': "chart-odd 'many bars please'",
-    'break charts: zeroatleft': 'chart-odd temperatures',
-    'break charts: negativeright': 'chart-odd temperatures',
-    'break charts: lengthroundedup': 'chart-draw moons',
-    'break charts: nodecimals': "chart-odd 'the coldest days'",
-    'break charts: noaxis': 'chart-draw moons',
-    'break charts: scaletextsmeet': 'chart-odd wide',
-    'break charts: labelsnotcut': 'chart-odd many',
-    'break charts: colourunchecked': 'chart-odd temperatures',
-    'break charts: titlenotcut': "chart-odd 'many bars please'",
-    'break charts: noframecolour': 'chart-draw-2 night',
-    'break charts: chartdocumentkept': 'draw request 2',
-    'break charts: repaintnochart': 'chart-draw-2 after-f1',
-    'break charts: chartkeptastext': 'draw note of document 1',
-    'break charts: charttoldastext': 'draw request 2',
-    'break charts: chartnotfound': 'draw restart the lines about documents',
-    'break charts: nocharttool': 'draw request 1',
-    'break charts: chartbrokensaid': "chart-broken 'add pluto'",
-    'break charts: chartbound': "chart-cut 'a very long chart'",
-    'break charts: chartbrokennotdrawn': "chart-broken 'add pluto'",
+    'break charts: nodecimals': 'cd-odd numbers',
+    'break charts: commasnotread': "cd-odd 'charts of odd numbers'",
+    'break charts: noaxis': 'cd-guide guide',
+    'break charts: colournotheld': 'cd-odd many-2',
+    'break charts: chartlineskipped': 'cd-guide guide',
+    'break charts: chartnotblock': 'odd request 5',
+    'break charts: barnotbegun': 'cd-odd many-2',
+    'break charts: chartsplits': 'cd-odd numbers',
+    'break charts: emptychartdrawn': "cd-odd 'many bars please'",
+    'break charts: titlerowfree': 'cd-guide guide',
+    'break charts: chartnotwhole': "cd-odd 'many bars please'",
+    'break charts: chartnotpainted': 'cd-guide guide',
+    'break charts: kind3notread': 'old the start lists the old chart',
+    'break charts: toldbars': 'guide request 1',
+    'break charts: zeroatleft': 'cd-odd numbers',
+    'break charts: negativeright': 'cd-odd numbers',
+    'break charts: lengthroundedup': 'cd-guide guide',
+    'break charts: barsnotcut': "cd-odd 'many bars please'",
+    'break charts: titlenotcut': 'cd-odd many',
+    'break charts: noframecolour': 'cd-guide-2 night',
+    'break charts: unreadnotcounted': "cd-odd 'many bars please'",
+    'break charts: labelsnotcut': 'cd-odd numbers-2',
+    'break charts: scaletextsmeet': 'cd-odd numbers-2',
+    'break charts: colourunchecked': 'cd-odd numbers',
 }

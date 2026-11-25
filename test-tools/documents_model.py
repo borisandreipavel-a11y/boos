@@ -64,13 +64,10 @@ def called(document):
 
 
 def told(document):
-    """What stands behind the instruction text while this document is open: for a bar chart (kind 3, in the dict as
-    "kind"), changed with draw_chart; for a document of text and tables (kind 2), with write_document; for a table,
-    with draw_table."""
-    if document.get("kind") == KIND_CHART:
-        return ("\n\nThe document open on the screen is %s, a bar chart. To change it, write it whole again with draw_chart, "
-                "beginning with the line document %d. Its lines now:\n%s" % (called(document), document["number"], document["lines"]))
-    if document.get("kind") == KIND_TEXT:
+    """What stands behind the instruction text while this document is open: for a document of text and tables (kind
+    2, in the dict as "kind"), changed with write_document, and so for a bar chart kept alone before charts stood in
+    documents (kind 3), which is read as a document of text; for a table, with draw_table."""
+    if document.get("kind") in (KIND_TEXT, KIND_CHART):
         return ("\n\nThe document open on the screen is %s, a document of text and tables. To change it, write it whole again "
                 "with write_document, beginning with the line document %d. Its lines now:\n%s" % (called(document), document["number"], document["lines"]))
     return ("\n\nThe document open on the screen is %s. To change it, write its whole table again with draw_table, "

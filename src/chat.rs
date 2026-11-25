@@ -829,10 +829,9 @@ pub fn chat_answer(answer: Answer) {
         }
         // An answer that broke off ends the line too. The tool asked for in
         // it is not done, but for a table, whose rows that came whole are
-        // drawn, a document of text, whose lines that came whole are, and a
-        // chart, whose bars that came whole are.
+        // drawn, and a document of text, whose lines that came whole are.
         if reply.as_ref().is_some_and(|reply| reply.broken) {
-            if ["draw_table", "write_document", "draw_chart"].contains(&call.name.as_str()) {
+            if call.name == "draw_table" || call.name == "write_document" {
                 tool_do(call);
             }
             return;
