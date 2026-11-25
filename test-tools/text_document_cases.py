@@ -1,6 +1,7 @@
 """Documents of text and tables (docs/tools.md `write_document`), for test_text_documents.py: the stand-in's answers
 about them, in the shape of document_cases.py, whose chain hands it every behaviour no other file knows (through
-open_file_cases.py), and that hands on what it does not know itself to picture_document_cases.py; and the documents
+open_file_cases.py), and that hands on what it does not know itself to chart_cases.py, then to
+picture_document_cases.py; and the documents
 these answers write. Every text is made up. Nothing runs when this file is imported.
 
 Behaviours: "write=guide:0" asks for write_document with the document "guide" of DOCUMENTS behind the line "document 0"
@@ -170,6 +171,10 @@ def answer(kind, line, bearer):
         # stand-in turns into Anthropic's (anthropic_cases.whole).
         error = {"error": {"code": "", "message": UNFETCHABLE, "type": "invalid_request_error"}}
         return with_length(b"HTTP/1.1 400 Bad Request", json.dumps(error, separators=(",", ":")).encode()), "goodbye"
-    # The behaviours for pictures in documents are picture_document_cases.py's.
+    # The behaviours for charts are chart_cases.py's, and those for pictures in documents picture_document_cases.py's.
+    import chart_cases
+    found = chart_cases.answer(kind, line, bearer)
+    if found is not None:
+        return found
     import picture_document_cases
     return picture_document_cases.answer(kind, line, bearer)

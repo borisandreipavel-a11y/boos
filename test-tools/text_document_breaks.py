@@ -49,8 +49,8 @@ BREAKS = {
     "streambound": {"model.rs": swap("            if let Some(inputs) = inputs {\n                let room = (DOCUMENT_INPUTS_LONGEST + 1)",
                                      "            if let Some(inputs) = inputs {\n                let room = (TABLE_INPUTS_LONGEST + 1)")},
     # A document of text in an answer that broke off is not drawn.
-    "brokennotdrawn": {"chat.rs": swap("            if call.name == \"draw_table\" || call.name == \"write_document\" {\n",
-                                       "            if call.name == \"draw_table\" {\n")},
+    "brokennotdrawn": {"chat.rs": swap("            if [\"draw_table\", \"write_document\", \"draw_chart\"].contains(&call.name.as_str()) {\n",
+                                       "            if [\"draw_table\", \"draw_chart\"].contains(&call.name.as_str()) {\n")},
 }
 
 CATCH = {
