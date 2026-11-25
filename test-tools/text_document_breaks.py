@@ -40,8 +40,8 @@ BREAKS = {
                                          "    let kind = Kind::Table;\n    let open = open_take();\n")},
     # --- The tool ---
     # write_document is not offered.
-    "notool": {"tools.rs": swap("        if let (true, Some((rows, signs))) = (documents_usable(), writing_room()) {\n",
-                                "        if let (true, Some((rows, signs))) = (false, writing_room()) {\n")},
+    "notool": {"tools.rs": swap("        if let (true, Some((rows, signs, bars))) = (documents_usable(), writing_room()) {\n",
+                                "        if let (true, Some((rows, signs, bars))) = (false, writing_room()) {\n")},
     # What write_document is given is held to the table's bound, 4,096 bytes.
     "smallbound": {"model.rs": swap("        \"write_document\" => Some(DOCUMENT_INPUTS_LONGEST),\n",
                                     "        \"write_document\" => Some(TABLE_INPUTS_LONGEST),\n")},
@@ -49,8 +49,8 @@ BREAKS = {
     "streambound": {"model.rs": swap("            if let Some(inputs) = inputs {\n                let room = (DOCUMENT_INPUTS_LONGEST + 1)",
                                      "            if let Some(inputs) = inputs {\n                let room = (TABLE_INPUTS_LONGEST + 1)")},
     # A document of text in an answer that broke off is not drawn.
-    "brokennotdrawn": {"chat.rs": swap("            if [\"draw_table\", \"write_document\", \"draw_chart\"].contains(&call.name.as_str()) {\n",
-                                       "            if [\"draw_table\", \"draw_chart\"].contains(&call.name.as_str()) {\n")},
+    "brokennotdrawn": {"chat.rs": swap("            if call.name == \"draw_table\" || call.name == \"write_document\" {\n",
+                                       "            if call.name == \"draw_table\" {\n")},
 }
 
 CATCH = {

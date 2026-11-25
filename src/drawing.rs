@@ -343,16 +343,15 @@ struct Table {
     rows: Vec<Vec<String>>,
 }
 
-// What the frame shows: the table drawn last, the document of text written or
-// opened last, laid out in pages, with the page shown, or the chart drawn
-// last. One thing at a time: each takes the other's place. It is kept until
-// the machine is switched off, so that it can be painted again in another
-// look. Only the startup code and the main loop may touch it; it is taken out
-// of its place and put back by value.
+// What the frame shows: the table drawn last, or the document of text written
+// or opened last, laid out in pages, with the page shown. One thing at a
+// time: each takes the other's place. It is kept until the machine is
+// switched off, so that it can be painted again in another look. Only the
+// startup code and the main loop may touch it; it is taken out of its place
+// and put back by value.
 enum InFrame {
     Table(Table),
     Text(Pages),
-    Chart(Chart),
 }
 static mut IN_FRAME: Option<InFrame> = None;
 
@@ -662,9 +661,9 @@ fn grid_paint(left: u32, top: u32, widths: &[u32], head: Option<&Vec<String>>, r
 }
 
 // Paints what the frame shows again, in the look in use: the table drawn
-// last, the page shown of the document of text, or the chart. Does nothing
-// while the frame shows nothing. The look calls it when it paints the whole
-// screen again.
+// last, or the page shown of the document of text. Does nothing while the
+// frame shows nothing. The look calls it when it paints the whole screen
+// again.
 pub fn drawing_paint_again() {
     let Some(shown) = frame_take() else {
         return;
@@ -673,7 +672,6 @@ pub fn drawing_paint_again() {
         match &shown {
             InFrame::Table(table) => table_paint(&place, &room, table),
             InFrame::Text(pages) => pages_paint(&place, &room, pages),
-            InFrame::Chart(chart) => chart_paint(&place, &room, chart),
         }
     }
     frame_put(shown);
@@ -697,12 +695,14 @@ fn text_row() -> u32 {
 const PICTURES_MOST: usize = 4;
 
 // A block of a document of text: a paragraph as the model wrote it; a table:
-// its head, if it has one, and its rows, each row its cells; or a picture: the
-// number of the kept file it shows, and its caption, if it has one.
+// its head, if it has one, and its rows, each row its cells; a picture: the
+// number of the kept file it shows, and its caption, if it has one; or a bar
+// chart (see "A bar chart in a document" below).
 enum Block {
     Paragraph(String),
     Table { head: Option<Vec<String>>, rows: Vec<Vec<String>> },
     Picture { file: u64, caption: Option<String> },
+    Chart(ChartBlock),
 }
 
 // A document of text as the model wrote it, read line by line: which kept
@@ -717,15 +717,41 @@ struct WrittenLines {
 // Reads the lines of a document of text: `document` and `title` count only
 // before anything else; `text` is a paragraph; `head` begins a new table;
 // `row` adds a row to the table begun last, or begins a table without a head
-// when a paragraph or a picture stands since; `picture` is a picture (see
-// `picture_line`). Any other line is skipped. Nothing is read from the disk
-// here: the pictures are read when the document is laid out.
+// when a paragraph, a picture or a chart stands since; `picture` is a picture
+// (see `picture_line`); `chart` begins a chart, with its title; `bar` adds a
+// bar to the chart begun last, or begins a chart without a title when
+// another block stands since; and a `colours` line with a colour for bars
+// gives it to the chart begun last while that has no `bar` line yet, and
+// otherwise holds it for the next chart begun. Any other line is skipped.
+// Nothing is read from the disk here: the pictures are read when the document
+// is laid out.
 fn writing_read(text: &str) -> WrittenLines {
     let mut found = WrittenLines { document: None, title: None, blocks: Vec::new() };
+    let mut colour_held: Option<Colour> = None;
     for line in text.split('\n') {
         let (word, rest) = line_parts(line);
         if word.eq_ignore_ascii_case("text") {
             found.blocks.push(Block::Paragraph(String::from(rest)));
+        } else if word.eq_ignore_ascii_case("chart") {
+            let title = Some(rest).filter(|title| !title.is_empty()).map(String::from);
+            found.blocks.push(Block::Chart(ChartBlock { title, colour: colour_held.take(), bars: Vec::new(), unread: 0 }));
+        } else if word.eq_ignore_ascii_case("bar") {
+            if !matches!(found.blocks.last(), Some(Block::Chart(_))) {
+                found.blocks.push(Block::Chart(ChartBlock { title: None, colour: colour_held.take(), bars: Vec::new(), unread: 0 }));
+            }
+            if let Some(Block::Chart(chart)) = found.blocks.last_mut() {
+                match bar_read(rest) {
+                    Some(bar) => chart.bars.push(bar),
+                    None => chart.unread += 1,
+                }
+            }
+        } else if word.eq_ignore_ascii_case("colours") || word.eq_ignore_ascii_case("colors") {
+            if let Some(colour) = bars_colour(rest) {
+                match found.blocks.last_mut() {
+                    Some(Block::Chart(chart)) if chart.bars.is_empty() && chart.unread == 0 => chart.colour = Some(colour),
+                    _ => colour_held = Some(colour),
+                }
+            }
         } else if word.eq_ignore_ascii_case("picture") {
             if let Some(picture) = picture_line(rest) {
                 found.blocks.push(picture);
@@ -763,14 +789,16 @@ fn picture_line(rest: &str) -> Option<Block> {
     Some(Block::Picture { file, caption })
 }
 
-// A part of a page: rows of text, a table, or a picture, so many dots below
-// the top of the page; a table with its columns' widths, its head (drawn
-// again at the top of every page it goes on to) and the rows on this page; a
-// picture with its dots as shown, shrunk to fit.
+// A part of a page: rows of text, a table, a picture or a chart, so many dots
+// below the top of the page; a table with its columns' widths, its head
+// (drawn again at the top of every page it goes on to) and the rows on this
+// page; a picture with its dots as shown, shrunk to fit; a chart with its
+// title as cut to the row, the colour asked for its bars, and the bars drawn.
 enum PagePart {
     Text { top: u32, rows: Vec<String> },
     Table { top: u32, widths: Vec<u32>, head: Option<Vec<String>>, rows: Vec<Vec<String>> },
     Picture { top: u32, picture: Picture },
+    Chart { top: u32, title: Option<String>, colour: Option<Colour>, bars: Vec<Bar> },
 }
 
 // A document of text laid out: its title as drawn, its pages, and the page
@@ -783,24 +811,29 @@ struct Pages {
 
 // What came of writing a document of text: its title as the model wrote it,
 // if it gave one, and as drawn; how many pages it has; whether a table in it
-// had more columns than fit, which were left out; the pictures shown, each by
-// its file's number with the picture's own width and height in dots; and the
-// pictures not shown, each by its file's number with why, in words to stand
-// after "because".
+// had more columns than fit, which were left out; whether a chart had more
+// bars than a page holds, how many bars of the charts drawn had no number
+// that could be read, and how many charts had no bar left to draw, all left
+// out; the pictures shown, each by its file's number with the picture's own
+// width and height in dots; and the pictures not shown, each by its file's
+// number with why, in words to stand after "because".
 pub struct Written {
     pub title_written: Option<String>,
     pub title: String,
     pub pages: usize,
     columns_left_out: bool,
+    bars_left_out: bool,
+    bars_unread: usize,
+    charts_empty: usize,
     pub pictures: Vec<(u64, u32, u32)>,
     pub pictures_not_shown: Vec<(u64, String)>,
 }
 
 impl Written {
-    // Whether all of it was drawn: every column of every table, and every
-    // picture.
+    // Whether all of it was drawn: every column of every table, every bar of
+    // every chart, and every picture.
     pub fn whole(&self) -> bool {
-        !self.columns_left_out && self.pictures_not_shown.is_empty()
+        !self.columns_left_out && !self.bars_left_out && self.bars_unread == 0 && self.charts_empty == 0 && self.pictures_not_shown.is_empty()
     }
 }
 
@@ -867,11 +900,14 @@ fn text_rows_laid(pages: &mut Vec<Vec<PagePart>>, used: &mut u32, height: u32, r
     }
 }
 
-// A document of text laid out: its pages, whether a table had more columns
-// than fit, and the pictures shown and not shown (as in `Written`).
+// A document of text laid out: its pages, and what of it was left out and
+// which pictures were shown and not shown (as in `Written`).
 struct Layout {
     pages: Vec<Vec<PagePart>>,
     columns_left_out: bool,
+    bars_left_out: bool,
+    bars_unread: usize,
+    charts_empty: usize,
     pictures: Vec<(u64, u32, u32)>,
     pictures_not_shown: Vec<(u64, String)>,
 }
@@ -884,7 +920,9 @@ struct Layout {
 // page under its head drawn again; a picture, with its caption under it,
 // read from its file and shrunk to fit a whole page, beginning on the next
 // page unless it fits whole on this one, or, when it cannot be shown, rows
-// that say why in its place.
+// that say why in its place; a chart, with its title's row above it, as many
+// of its bars as a whole page holds, beginning on the next page unless it
+// fits whole on this one. A chart with no bar to draw takes no room at all.
 fn laid_out(found: &WrittenLines, room: &Room) -> Layout {
     let style = TABLE_STYLE;
     let height = room.bottom.saturating_sub(room.table_top);
@@ -892,10 +930,19 @@ fn laid_out(found: &WrittenLines, room: &Room) -> Layout {
     let mut pages: Vec<Vec<PagePart>> = vec![Vec::new()];
     let mut used: u32 = 0;
     let mut columns_left_out = false;
+    let mut bars_left_out = false;
+    let mut bars_unread = 0;
+    let mut charts_empty = 0;
     let mut pictures_tried = 0;
     let mut pictures = Vec::new();
     let mut pictures_not_shown = Vec::new();
     for (place, block) in found.blocks.iter().enumerate() {
+        if let Block::Chart(chart) = block {
+            if chart.bars.is_empty() {
+                charts_empty += 1;
+                continue;
+            }
+        }
         if place > 0 && used > 0 {
             if used.saturating_add(text_row()) >= height {
                 pages.push(Vec::new());
@@ -994,9 +1041,32 @@ fn laid_out(found: &WrittenLines, room: &Room) -> Layout {
                     used = 0;
                 }
             }
+            Block::Chart(chart) => {
+                // Its title's row, a row for each bar drawn, and the scale's
+                // row; as many bars as a whole page holds, and at least one.
+                let title_height = if chart.title.is_some() { text_row() } else { 0 };
+                let fit = (height.saturating_sub(title_height).saturating_sub(row_height()) / row_height().max(1)).max(1) as usize;
+                let take = chart.bars.len().min(fit);
+                bars_left_out = bars_left_out || chart.bars.len() > take;
+                bars_unread += chart.unread;
+                let chart_height = title_height.saturating_add(row_height().saturating_mul(take as u32 + 1));
+                if used > 0 && used.saturating_add(chart_height) > height {
+                    pages.push(Vec::new());
+                    used = 0;
+                }
+                if let Some(page) = pages.last_mut() {
+                    page.push(PagePart::Chart {
+                        top: used,
+                        title: chart.title.as_deref().map(|title| shown(title, across)),
+                        colour: chart.colour,
+                        bars: chart.bars[..take].to_vec(),
+                    });
+                }
+                used = used.saturating_add(chart_height);
+            }
         }
     }
-    Layout { pages, columns_left_out, pictures, pictures_not_shown }
+    Layout { pages, columns_left_out, bars_left_out, bars_unread, charts_empty, pictures, pictures_not_shown }
 }
 
 // The mark of the page shown, `page 2 of 5`, for a document of more than one
@@ -1035,6 +1105,14 @@ fn pages_paint(place: &FramePlace, room: &Room, pages: &Pages) {
                 grid_paint(room.left, room.table_top.saturating_add(*top), widths, head.as_ref(), rows, &[None; 5]);
             }
             PagePart::Picture { top, picture } => picture_paint(room.left, room.table_top.saturating_add(*top), picture, look.panel_inside),
+            PagePart::Chart { top, title, colour, bars } => {
+                let mut top = room.table_top.saturating_add(*top);
+                if let Some(title) = title {
+                    screen_text(room.left, top, title, style.text_size, look.panel_text);
+                    top = top.saturating_add(text_row());
+                }
+                chart_paint(room, top, *colour, bars);
+            }
         }
     }
 }
@@ -1060,12 +1138,15 @@ fn picture_paint(left: u32, top: u32, picture: &Picture, back: Colour) {
 }
 
 // The room a page of a document of text has, which the tool `write_document`
-// tells the model: how many rows of text a page holds, and how many signs a
-// row. Gives nothing when this screen has no room for the frame.
-pub fn writing_room() -> Option<(usize, u32)> {
+// tells the model: how many rows of text a page holds, how many signs a row,
+// and how many bars a chart with a title shows, a page at most (see
+// `laid_out`). Gives nothing when this screen has no room for the frame.
+pub fn writing_room() -> Option<(usize, u32, usize)> {
     let (_, room) = room()?;
-    let rows = (room.bottom.saturating_sub(room.table_top) / text_row().max(1)) as usize;
-    Some((rows, room.width / sign_width().max(1)))
+    let height = room.bottom.saturating_sub(room.table_top);
+    let rows = (height / text_row().max(1)) as usize;
+    let bars = (height.saturating_sub(text_row()).saturating_sub(row_height()) / row_height().max(1)).max(1) as usize;
+    Some((rows, room.width / sign_width().max(1), bars))
 }
 
 // The text the model gave `write_document`, as far as it counts, and whether
@@ -1108,7 +1189,7 @@ pub fn writing_lines_kept(text: &str) -> String {
     for line in text.split('\n') {
         let (word, rest) = line_parts(line);
         begun = begun
-            || ["text", "head", "row"].iter().any(|block| word.eq_ignore_ascii_case(block))
+            || ["text", "head", "row", "chart", "bar"].iter().any(|block| word.eq_ignore_ascii_case(block))
             || (word.eq_ignore_ascii_case("picture") && picture_line(rest).is_some());
         if !begun && word.eq_ignore_ascii_case("document") {
             continue;
@@ -1150,6 +1231,9 @@ pub fn writing_laid(text: &str) -> Result<Laid, NotDrawn> {
         title: title.clone(),
         pages: count,
         columns_left_out: layout.columns_left_out,
+        bars_left_out: layout.bars_left_out,
+        bars_unread: layout.bars_unread,
+        charts_empty: layout.charts_empty,
         pictures: layout.pictures,
         pictures_not_shown: layout.pictures_not_shown,
     };
@@ -1185,14 +1269,28 @@ pub fn writing_said(written: &Written, whole: bool) -> String {
 }
 
 // What of a document of text did not fit, as the kernel says it behind what
-// it wrote or opened: columns past the most it draws, and each picture not
-// shown, with why. Nothing when all of it fit.
+// it wrote or opened: columns past the most it draws; bars past what a page
+// holds, bars without a number that could be read, and charts with no bar
+// left to draw; and each picture not shown, with why. Nothing when all of it
+// fit.
 pub fn writing_fit(written: &Written) -> String {
     let mut said = if written.columns_left_out {
         format!("; a table had more columns than fit, and only its first {} were drawn", TABLE_STYLE.columns_most)
     } else {
         String::new()
     };
+    if written.bars_left_out {
+        said.push_str("; a chart had more bars than a page holds, and the rest were left out");
+    }
+    if written.bars_unread > 0 {
+        let (had, were) = if written.bars_unread == 1 { ("bar had", "was") } else { ("bars had", "were") };
+        said.push_str(&format!("; {} {} no number I could read and {} left out", written.bars_unread, had, were));
+    }
+    if written.charts_empty > 0 {
+        let (had, were) = if written.charts_empty == 1 { ("a chart had", "was") } else { ("charts had", "were") };
+        let count = if written.charts_empty == 1 { String::new() } else { format!("{} ", written.charts_empty) };
+        said.push_str(&format!("; {}{} no bar with a number I could read and {} left out", count, had, were));
+    }
     for (file, why) in written.pictures_not_shown.iter() {
         said.push_str(&format!("; the picture of file {} is not shown, because {}", file, why));
     }
@@ -1234,12 +1332,13 @@ pub fn drawing_page_turn(forward: bool) {
     frame_put(shown);
 }
 
-// ---------- A bar chart ----------
+// ---------- A bar chart in a document ----------
 //
-// The tool `draw_chart` (see `tools.rs` and `documents.rs`): bars, one a row,
-// from a zero point, a label at the left of each and its number at the right.
-// The rules are those of "A bar chart" in docs/screen.md. Every number is
-// worked out in whole numbers: the kernel has no floating point.
+// A block of a document of text (see "Charts" in docs/screen.md): bars, one a
+// row, from a zero point, a label at the left of each and its number at the
+// right, under the chart's title. The rules are those of "A bar chart" in
+// docs/screen.md. Every number is worked out in whole numbers: the kernel has
+// no floating point.
 
 // The most signs of a label shown, and of a number as written.
 const CHART_SIGNS_MOST: usize = 12;
@@ -1252,9 +1351,19 @@ const BAR_TOP: u32 = 4;
 const CHART_LETTERS_TOP: u32 = 5;
 const CHART_GAP: u32 = 12;
 
+// A chart of a document as read: its title, if it has one, the colour asked
+// for its bars, the bars whose number could be read, and how many could not.
+struct ChartBlock {
+    title: Option<String>,
+    colour: Option<Colour>,
+    bars: Vec<Bar>,
+    unread: usize,
+}
+
 // A bar as read: its label and its number as the model wrote them, and the
 // number exactly: whether it is below zero, its digits as one whole number,
 // and how many of them are decimals.
+#[derive(Clone)]
 struct Bar {
     label: String,
     written: String,
@@ -1263,49 +1372,9 @@ struct Bar {
     decimals: u32,
 }
 
-// A chart's lines as read: which kept document they change, if they say (0
-// for a new one), its title, the colour asked for its bars, the bars whose
-// number could be read, and how many could not.
-struct ChartLines {
-    document: Option<u64>,
-    title: Option<String>,
-    colour: Option<Colour>,
-    bars: Vec<Bar>,
-    unread: usize,
-}
-
-// Reads a chart's lines: everything but the bars counts only before the
-// first `bar` line, read or not, and of two the later counts; any other line
-// is skipped.
-fn chart_read(text: &str) -> ChartLines {
-    let mut found = ChartLines { document: None, title: None, colour: None, bars: Vec::new(), unread: 0 };
-    let mut begun = false;
-    for line in text.split('\n') {
-        let (word, rest) = line_parts(line);
-        if word.eq_ignore_ascii_case("bar") {
-            begun = true;
-            match bar_read(rest) {
-                Some(bar) => found.bars.push(bar),
-                None => found.unread += 1,
-            }
-        } else if begun {
-            continue;
-        } else if word.eq_ignore_ascii_case("document") {
-            found.document = document_number(rest);
-        } else if word.eq_ignore_ascii_case("title") {
-            found.title = Some(String::from(rest));
-        } else if word.eq_ignore_ascii_case("colours") || word.eq_ignore_ascii_case("colors") {
-            if let Some(colour) = bars_colour(rest) {
-                found.colour = Some(colour);
-            }
-        }
-    }
-    found
-}
-
 // The colour a `colours` line gives the bars: the word `bars` and a colour
 // behind it, parted by spaces, commas, colons or equals signs, as a table's
-// parts are; other parts are passed over.
+// parts are; other parts are passed over; of two, the later.
 fn bars_colour(rest: &str) -> Option<Colour> {
     let words: Vec<&str> = rest.split([' ', '\t', ',', ':', '=']).filter(|word| !word.is_empty()).collect();
     let mut found = None;
@@ -1375,49 +1444,6 @@ fn number_read(text: &str) -> Option<(bool, u128, u32)> {
     Some((negative && digits > 0, digits, decimals))
 }
 
-// A chart as drawn and kept in memory: its title as drawn, the colour asked
-// for its bars (checked against the look each time it is painted), and the
-// bars drawn.
-struct Chart {
-    title: String,
-    colour: Option<Colour>,
-    bars: Vec<Bar>,
-}
-
-// What came of drawing a chart: its title as the model wrote it, if it gave
-// one, and as drawn; how many bars were drawn, how many did not fit and how
-// many had no number that could be read; and the scale's two ends as written.
-pub struct Charted {
-    pub title_written: Option<String>,
-    pub title: String,
-    bars: usize,
-    left_out: usize,
-    unread: usize,
-    from: String,
-    to: String,
-}
-
-impl Charted {
-    // Whether every bar the model wrote was drawn.
-    pub fn whole(&self) -> bool {
-        self.left_out == 0 && self.unread == 0
-    }
-}
-
-// How many bars fit in the room below the title's row, above a last row for
-// the scale.
-fn chart_rows(room: &Room) -> usize {
-    (room.bottom.saturating_sub(room.table_top).saturating_sub(row_height()) / row_height().max(1)) as usize
-}
-
-// The room the tool `draw_chart` tells the model: how many bars fit, and how
-// many signs of a label are shown. Nothing when this screen has no room for
-// the frame.
-pub fn charting_room() -> Option<(usize, usize)> {
-    let (_, room) = room()?;
-    Some((chart_rows(&room), CHART_SIGNS_MOST))
-}
-
 // The scale of the bars drawn: the numbers brought to the most decimals any
 // of them has, as whole numbers; the most negative one's size and the
 // largest above zero; and the texts of the scale's two ends, as written.
@@ -1476,170 +1502,43 @@ fn bar_colour(asked: Option<Colour>, frame: Colour, inside: Colour, letters: Col
     }
 }
 
-// Paints the frame, the title and the chart: each row's label, bar and
-// number, the axis at the zero point, and the scale's two ends below. The
-// frame is painted whole, which wipes out what it showed before.
-fn chart_paint(place: &FramePlace, room: &Room, chart: &Chart) {
+// Paints a chart's bars from `top` down, across the room: each row's label,
+// bar and number, the axis at the zero point, and the scale's two ends in the
+// row below. The page under it was painted already, the frame's inside with
+// it.
+fn chart_paint(room: &Room, top: u32, asked: Option<Colour>, bars: &[Bar]) {
     let size = TABLE_STYLE.text_size;
     let line = TABLE_STYLE.line;
     let look = look();
     let sign = sign_width();
-    frame_paint(place);
-    screen_text(room.left, room.title_top, &chart.title, size, look.panel_text);
-    let labels = chart.bars.iter().map(|bar| shown(&bar.label, CHART_SIGNS_MOST).len()).max().unwrap_or(0) as u32;
-    let numbers = chart.bars.iter().map(|bar| bar.written.len()).max().unwrap_or(0) as u32;
+    let labels = bars.iter().map(|bar| shown(&bar.label, CHART_SIGNS_MOST).len()).max().unwrap_or(0) as u32;
+    let numbers = bars.iter().map(|bar| bar.written.len()).max().unwrap_or(0) as u32;
     let right = room.left.saturating_add(room.width);
     let bars_left = room.left.saturating_add(labels.saturating_mul(sign)).saturating_add(CHART_GAP);
     let bars_right = right.saturating_sub(numbers.saturating_mul(sign)).saturating_sub(CHART_GAP);
     let width = bars_right.saturating_sub(bars_left);
-    let scale = Scale::of(&chart.bars);
+    let scale = Scale::of(bars);
     let zero = bars_left.saturating_add(scale.dots(scale.most_negative, width));
-    let colour = bar_colour(chart.colour, look.panel_frame, look.panel_inside, look.panel_text);
-    let mut top = room.table_top;
-    for bar in &chart.bars {
-        screen_text(room.left, top.saturating_add(CHART_LETTERS_TOP), &shown(&bar.label, CHART_SIGNS_MOST), size, look.panel_text);
+    let colour = bar_colour(asked, look.panel_frame, look.panel_inside, look.panel_text);
+    let mut row_top = top;
+    for bar in bars {
+        screen_text(room.left, row_top.saturating_add(CHART_LETTERS_TOP), &shown(&bar.label, CHART_SIGNS_MOST), size, look.panel_text);
         let length = scale.dots(scale.value(bar), width);
         let left = if bar.negative { zero.saturating_sub(length) } else { zero };
-        screen_rectangle(left, top.saturating_add(BAR_TOP), length, BAR_HEIGHT, colour);
+        screen_rectangle(left, row_top.saturating_add(BAR_TOP), length, BAR_HEIGHT, colour);
         let number = shown(&bar.written, CHART_SIGNS_MOST);
         let number_left = right.saturating_sub((number.len() as u32).saturating_mul(sign));
-        screen_text(number_left, top.saturating_add(CHART_LETTERS_TOP), &number, size, look.panel_text);
-        top = top.saturating_add(row_height());
+        screen_text(number_left, row_top.saturating_add(CHART_LETTERS_TOP), &number, size, look.panel_text);
+        row_top = row_top.saturating_add(row_height());
     }
-    screen_rectangle(zero, room.table_top, line, top.saturating_sub(room.table_top), look.panel_text);
+    screen_rectangle(zero, top, line, row_top.saturating_sub(top), look.panel_text);
     // The scale's ends, the right one alone when the two would leave less
     // than a sign between them.
     let to_left = bars_right.saturating_sub((scale.to.len() as u32).saturating_mul(sign));
     if bars_left.saturating_add((scale.from.len() as u32 + 1).saturating_mul(sign)) <= to_left {
-        screen_text(bars_left, top.saturating_add(CHART_LETTERS_TOP), &scale.from, size, look.panel_text);
+        screen_text(bars_left, row_top.saturating_add(CHART_LETTERS_TOP), &scale.from, size, look.panel_text);
     }
-    screen_text(to_left, top.saturating_add(CHART_LETTERS_TOP), &scale.to, size, look.panel_text);
-}
-
-// The text the model gave `draw_chart`, as far as it counts, and whether it
-// came whole; or what the kernel says when it cannot be read. As for a
-// table: a piece of the key in it is starred, and of a text that was cut off
-// only the lines that came whole count.
-pub fn charting_text(inputs: &str, cut_off: bool) -> Result<(String, bool), String> {
-    if room().is_none() {
-        return Err(String::from("the model asked to draw a chart, but this screen has no room for one."));
-    }
-    let Some((text, whole)) = given_text(inputs, cut_off, "chart") else {
-        return Err(String::from("the model asked to draw a chart, but I could not read it."));
-    };
-    let mut text = key_starred_kept(&text);
-    if !whole {
-        let end = text.rfind('\n').unwrap_or(0);
-        text.truncate(end);
-    }
-    Ok((text, whole))
-}
-
-// What the model asked to be drawn, so that two requests for the same chart
-// give the same text (see `drawing_wanted`).
-pub fn charting_wanted(inputs: &str, cut_off: bool) -> Option<String> {
-    given_text(inputs, cut_off, "chart").map(|(text, _)| text)
-}
-
-// The number on the chart's `document` line, if it has one before its first
-// bar: which kept document it changes, or 0 for a new one.
-pub fn charting_document(text: &str) -> Option<u64> {
-    chart_read(text).document
-}
-
-// A chart as a document keeps it: every line as the model wrote it, but the
-// `document` lines before the first bar, which say only which document it is.
-pub fn charting_lines_kept(text: &str) -> String {
-    let mut kept: Vec<&str> = Vec::new();
-    let mut bars_begun = false;
-    for line in text.split('\n') {
-        let (word, _) = line_parts(line);
-        bars_begun = bars_begun || word.eq_ignore_ascii_case("bar");
-        if !bars_begun && word.eq_ignore_ascii_case("document") {
-            continue;
-        }
-        kept.push(line);
-    }
-    kept.join("\n")
-}
-
-// Reads a chart's lines and draws it in the frame, in place of what it
-// showed, keeping it in memory: the bars that fit, in the order written. A
-// chart with no bar whose number could be read changes nothing.
-pub fn charting_show(text: &str) -> Result<Charted, NotDrawn> {
-    let Some((place, room)) = room() else {
-        return Err(NotDrawn::NoRoom);
-    };
-    let mut found = chart_read(text);
-    if found.bars.is_empty() {
-        return Err(NotDrawn::Empty);
-    }
-    let fit = chart_rows(&room).max(1);
-    let left_out = found.bars.len().saturating_sub(fit);
-    found.bars.truncate(fit);
-    let scale = Scale::of(&found.bars);
-    let title = found.title.as_deref().map(|title| shown(title, (room.width / sign_width().max(1)) as usize)).unwrap_or_default();
-    let charted = Charted {
-        title_written: found.title,
-        title: title.clone(),
-        bars: found.bars.len(),
-        left_out,
-        unread: found.unread,
-        from: scale.from,
-        to: scale.to,
-    };
-    let chart = Chart { title, colour: found.colour, bars: found.bars };
-    chart_paint(&place, &room, &chart);
-    frame_put(InFrame::Chart(chart));
-    Ok(charted)
-}
-
-// What the kernel says about a chart it drew: the chart, by its title, its
-// bars and the scale's ends, and what of it did not fit or did not come.
-pub fn charting_said(charted: &Charted, whole: bool) -> String {
-    let bars = counted(charted.bars, "bar", "bars");
-    let mut said = if charted.title.is_empty() {
-        format!("I drew a chart with {} from {} to {}", bars, charted.from, charted.to)
-    } else {
-        format!("I drew the chart \"{}\", with {} from {} to {}", charted.title, bars, charted.from, charted.to)
-    };
-    said.push_str(&charting_left_out(charted));
-    if !whole {
-        said.push_str("; it was cut off, so I drew only the bars that came whole");
-    }
-    said.push('.');
-    said
-}
-
-// What of a chart was left out, as the kernel says it behind what it drew or
-// opened: bars that did not fit, and bars without a number it could read.
-fn charting_left_out(charted: &Charted) -> String {
-    let mut said = String::new();
-    if charted.left_out > 0 {
-        let (did, were) = if charted.left_out == 1 { ("bar did", "was") } else { ("bars did", "were") };
-        said.push_str(&format!("; {} more {} not fit and {} left out", charted.left_out, did, were));
-    }
-    if charted.unread > 0 {
-        let (had, were) = if charted.unread == 1 { ("bar had", "was") } else { ("bars had", "were") };
-        said.push_str(&format!("; {} {} no number I could read and {} left out", charted.unread, had, were));
-    }
-    said
-}
-
-// How the kernel says what it opened of a chart: its bars, and what was left
-// out.
-pub fn charting_fit(charted: &Charted) -> String {
-    format!(", with {}{}", counted(charted.bars, "bar", "bars"), charting_left_out(charted))
-}
-
-// What the kernel says when the model's chart was not drawn, for a text that
-// came whole or one that was cut off.
-pub fn charting_refused(not: NotDrawn, whole: bool) -> String {
-    String::from(match not {
-        NotDrawn::NoRoom => "the model asked to draw a chart, but this screen has no room for one.",
-        NotDrawn::Empty if whole => "the model asked to draw a chart, but it has no bar with a number I could read.",
-        NotDrawn::Empty => "the model asked to draw a chart, but it was cut off before any of its bars came whole.",
-    })
+    screen_text(to_left, row_top.saturating_add(CHART_LETTERS_TOP), &scale.to, size, look.panel_text);
 }
 
 // How bright a colour is to the eye: its relative luminance, as WCAG 2 (the
